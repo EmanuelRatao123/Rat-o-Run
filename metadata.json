@@ -1,0 +1,6 @@
+{
+  "name": "RATÃO RUN 3D",
+  "description": "Jogo voxel 3D endless runner multiplayer social com modo Sem Pegar Moedas, 10 skins gratuitas, 4 mapas exclusivos, ranking global, votações e painel administrativo.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

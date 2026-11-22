@@ -1,0 +1,378 @@
+{
+  "entities": {
+    "UserPublic": {
+      "title": "UserPublic",
+      "description": "Public player profile and progression stats",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24,
+          "pattern": "^[a-zA-Z0-9_\\- À-ÿ]+$"
+        },
+        "equippedSkin": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "unlockedSkins": {
+          "type": "array",
+          "description": "List of unlocked skin IDs (max 20)"
+        },
+        "bestNoCoinTimeMs": {
+          "type": "number"
+        },
+        "bestDistance": {
+          "type": "number"
+        },
+        "bestScore": {
+          "type": "number"
+        },
+        "totalMatches": {
+          "type": "number"
+        },
+        "totalCoins": {
+          "type": "number"
+        },
+        "favoriteSkin": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "nickname", "equippedSkin", "bestNoCoinTimeMs", "totalMatches", "createdAt", "updatedAt"]
+    },
+    "UserPrivate": {
+      "title": "UserPrivate",
+      "description": "Private user account info (PII isolated)",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "role": {
+          "type": "string",
+          "enum": ["player", "admin"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "role", "createdAt"]
+    },
+    "LeaderboardEntry": {
+      "title": "LeaderboardEntry",
+      "description": "Global No-Coin Survival Ranking entry",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24
+        },
+        "skinId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "mapId": {
+          "type": "string",
+          "enum": ["brasil", "tokyo", "futebol", "capivara"]
+        },
+        "noCoinTimeMs": {
+          "type": "number"
+        },
+        "distance": {
+          "type": "number"
+        },
+        "achievedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "nickname", "skinId", "mapId", "noCoinTimeMs", "achievedAt"]
+    },
+    "MatchRecord": {
+      "title": "MatchRecord",
+      "description": "Completed match record",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "nickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24
+        },
+        "skinId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "mapId": {
+          "type": "string",
+          "enum": ["brasil", "tokyo", "futebol", "capivara"]
+        },
+        "noCoinTimeMs": {
+          "type": "number"
+        },
+        "coins": {
+          "type": "number"
+        },
+        "distance": {
+          "type": "number"
+        },
+        "score": {
+          "type": "number"
+        },
+        "durationMs": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "nickname", "skinId", "mapId", "noCoinTimeMs", "coins", "distance", "score", "durationMs", "createdAt"]
+    },
+    "GlobalMessage": {
+      "title": "GlobalMessage",
+      "description": "Admin broadcast message for all players",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "content": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 400
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["title", "content", "authorUid", "active", "expiresAt", "createdAt"]
+    },
+    "Poll": {
+      "title": "Poll",
+      "description": "Global interactive poll created by admin",
+      "type": "object",
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "options": {
+          "type": "array",
+          "description": "2 to 6 poll option strings"
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "active": {
+          "type": "boolean"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["title", "options", "authorUid", "active", "expiresAt", "createdAt"]
+    },
+    "Vote": {
+      "title": "Vote",
+      "description": "Single user vote on a poll (one per user per poll)",
+      "type": "object",
+      "properties": {
+        "pollId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "optionIndex": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["pollId", "uid", "optionIndex", "createdAt"]
+    },
+    "GiftRecord": {
+      "title": "GiftRecord",
+      "description": "Admin skin gift record for a player",
+      "type": "object",
+      "properties": {
+        "targetUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "targetNickname": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 24
+        },
+        "skinId": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 32
+        },
+        "grantedByUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["targetUid", "targetNickname", "skinId", "grantedByUid", "createdAt"]
+    },
+    "AdminLog": {
+      "title": "AdminLog",
+      "description": "Audit log of admin actions",
+      "type": "object",
+      "properties": {
+        "adminUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "details": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["adminUid", "action", "details", "createdAt"]
+    },
+    "GameSettings": {
+      "title": "GameSettings",
+      "description": "Global game configuration",
+      "type": "object",
+      "properties": {
+        "featuredMap": {
+          "type": "string",
+          "enum": ["brasil", "tokyo", "futebol", "capivara"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["featuredMap", "updatedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserPublic" },
+      "description": "Public user profiles and stats"
+    },
+    "/users/{userId}/private/{docId}": {
+      "schema": { "$ref": "#/entities/UserPrivate" },
+      "description": "Private PII and role document"
+    },
+    "/leaderboard/{userId}": {
+      "schema": { "$ref": "#/entities/LeaderboardEntry" },
+      "description": "Global Sem Pegar Moedas leaderboard"
+    },
+    "/matches/{matchId}": {
+      "schema": { "$ref": "#/entities/MatchRecord" },
+      "description": "Individual match records"
+    },
+    "/globalMessages/{messageId}": {
+      "schema": { "$ref": "#/entities/GlobalMessage" },
+      "description": "Admin broadcast messages"
+    },
+    "/polls/{pollId}": {
+      "schema": { "$ref": "#/entities/Poll" },
+      "description": "Global polls"
+    },
+    "/polls/{pollId}/votes/{voteId}": {
+      "schema": { "$ref": "#/entities/Vote" },
+      "description": "Per-user votes keyed by user UID"
+    },
+    "/gifts/{giftId}": {
+      "schema": { "$ref": "#/entities/GiftRecord" },
+      "description": "Skin gifts sent by admin"
+    },
+    "/adminLogs/{logId}": {
+      "schema": { "$ref": "#/entities/AdminLog" },
+      "description": "Administrative action audit logs"
+    },
+    "/gameSettings/{settingId}": {
+      "schema": { "$ref": "#/entities/GameSettings" },
+      "description": "Global game configuration"
+    }
+  }
+}
