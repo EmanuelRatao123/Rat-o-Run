@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import {
   ALL_SKIN_IDS,
@@ -101,7 +102,9 @@ export interface DatabaseState {
   };
 }
 
-const DATA_DIR = path.resolve(process.cwd(), 'data');
+const DATA_DIR = process.env.VERCEL
+  ? path.join(os.tmpdir(), 'ratao-run-data')
+  : path.resolve(process.cwd(), 'data');
 const DB_FILE = path.join(DATA_DIR, 'ratao-db.json');
 
 function createInitialState(): DatabaseState {

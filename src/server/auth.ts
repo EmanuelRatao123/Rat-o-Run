@@ -1,6 +1,8 @@
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { NextFunction, Request, Response } from 'express';
-import firebaseConfig from '../../firebase-applet-config.json';
 import { ALL_SKIN_IDS, UserProfile } from '../shared/constants.ts';
 import {
   SlidingRateLimiter,
@@ -307,7 +309,19 @@ export async function registerHandler(req: Request, res: Response): Promise<void
     lastSeenAt: now,
   };
 
-  await repoCreateUser(newUser);
+  try {
+    await repoCreateUser(newUser);
+  } catch (err: unknown) {
+    const code =
+      typeof err === 'object' && err !== null && 'code' in err
+        ? String((err as { code?: unknown }).code)
+        : '';
+    if (code === '23505') {
+      res.status(409).json({ error: 'Este nickname já está cadastrado. Escolha outro.' });
+      return;
+    }
+    throw err;
+  }
   const sessionToken = await createSessionForUser(id, 'player');
   setSessionCookie(res, sessionToken);
 
@@ -673,6 +687,42 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
   });
 }
 
+let cachedFirebaseProjectId: string | null = null;
+
+function getFirebaseProjectId(): string {
+  if (cachedFirebaseProjectId !== null) {
+    return cachedFirebaseProjectId;
+  }
+
+  const candidates = [
+    path.resolve(process.cwd(), 'firebase-applet-config.json'),
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../firebase-applet-config.json'),
+  ];
+
+  for (const filePath of candidates) {
+    try {
+      if (fs.existsSync(filePath)) {
+        const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8')) as {
+          projectId?: unknown;
+        };
+        if (typeof parsed.projectId === 'string' && parsed.projectId.trim()) {
+          cachedFirebaseProjectId = parsed.projectId.trim();
+          return cachedFirebaseProjectId;
+        }
+      }
+    } catch (err) {
+      console.error(`Failed to read Firebase config from ${filePath}:`, err);
+    }
+  }
+
+  const envProjectId =
+    process.env.FIREBASE_PROJECT_ID?.trim() ||
+    process.env.VITE_FIREBASE_PROJECT_ID?.trim() ||
+    '';
+  cachedFirebaseProjectId = envProjectId;
+  return cachedFirebaseProjectId;
+}
+
 let cachedGoogleCerts: { certs: Record<string, string>; expiresAt: number } | null = null;
 
 async function getGoogleCerts(): Promise<Record<string, string>> {
@@ -694,6 +744,11 @@ async function getGoogleCerts(): Promise<Record<string, string>> {
 }
 
 async function verifyFirebaseJwt(idToken: string): Promise<{ uid: string; name?: string; email?: string }> {
+  const projectId = getFirebaseProjectId();
+  if (!projectId) {
+    throw new Error('Configuração do Firebase ausente no servidor.');
+  }
+
   const parts = idToken.split('.');
   if (parts.length !== 3) throw new Error('Token inválido.');
   const [headerB64, payloadB64, sigB64] = parts;
@@ -717,10 +772,10 @@ async function verifyFirebaseJwt(idToken: string): Promise<{ uid: string; name?:
   }
 
   const nowSec = Math.floor(Date.now() / 1000);
-  if (payload.aud !== firebaseConfig.projectId) {
+  if (payload.aud !== projectId) {
     throw new Error('Audience inválida.');
   }
-  if (payload.iss !== `https://securetoken.google.com/${firebaseConfig.projectId}`) {
+  if (payload.iss !== `https://securetoken.google.com/${projectId}`) {
     throw new Error('Issuer inválido.');
   }
   if (!payload.sub || typeof payload.sub !== 'string') {
