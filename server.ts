@@ -37,6 +37,17 @@ import {
   startMatchHandler,
   votePollHandler,
 } from './src/server/gameApi.ts';
+import {
+  mpCreateInviteHandler,
+  mpGetRoomHandler,
+  mpLeaveRoomHandler,
+  mpOverviewHandler,
+  mpReadyRoomHandler,
+  mpRespondInviteHandler,
+  mpSearchPlayersHandler,
+  mpStartRoomHandler,
+  mpSyncRoomHandler,
+} from './src/server/multiplayerApi.ts';
 import { ensureDbAndAdminReady } from './src/server/repository.ts';
 
 dotenv.config();
@@ -84,6 +95,17 @@ app.get('/api/profile/:nickname', wrap(publicProfileHandler));
 app.get('/api/social/feed', wrap(socialFeedHandler));
 app.post('/api/gifts/seen', requireAuth, wrap(markGiftsSeenHandler));
 app.post('/api/polls/:pollId/vote', requireAuth, wrap(votePollHandler));
+
+// Multiplayer & X1 routes
+app.get('/api/multiplayer/overview', requireAuth, wrap(mpOverviewHandler));
+app.get('/api/multiplayer/search', requireAuth, wrap(mpSearchPlayersHandler));
+app.post('/api/multiplayer/invites', requireAuth, wrap(mpCreateInviteHandler));
+app.post('/api/multiplayer/invites/:inviteId/respond', requireAuth, wrap(mpRespondInviteHandler));
+app.get('/api/multiplayer/rooms/:roomId', requireAuth, wrap(mpGetRoomHandler));
+app.post('/api/multiplayer/rooms/:roomId/ready', requireAuth, wrap(mpReadyRoomHandler));
+app.post('/api/multiplayer/rooms/:roomId/start', requireAuth, wrap(mpStartRoomHandler));
+app.post('/api/multiplayer/rooms/:roomId/sync', requireAuth, wrap(mpSyncRoomHandler));
+app.post('/api/multiplayer/rooms/:roomId/leave', requireAuth, wrap(mpLeaveRoomHandler));
 
 // Protected Admin Panel routes
 app.get('/api/admin/stats', requireAdmin, wrap(adminStatsHandler));

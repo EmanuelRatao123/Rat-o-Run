@@ -1,0 +1,225 @@
+import { PowerUpType } from './constants.ts';
+
+export type SeededObstacleKind =
+  | 'low_barrier'
+  | 'high_arch'
+  | 'tall_block'
+  | 'train_static'
+  | 'train_moving'
+  | 'ramp'
+  | 'tunnel';
+
+export interface WaveObstacleSpec {
+  kind: SeededObstacleKind;
+  lane: number;
+  z: number;
+}
+
+export interface WaveCoinSpec {
+  lane: number;
+  y: number;
+  z: number;
+}
+
+export interface WavePowerUpSpec {
+  type: PowerUpType;
+  lane: number;
+  y: number;
+  z: number;
+}
+
+export interface TrackWaveSpec {
+  waveIndex: number;
+  startZ: number;
+  nextZ: number;
+  obstacles: WaveObstacleSpec[];
+  coins: WaveCoinSpec[];
+  powerUps: WavePowerUpSpec[];
+}
+
+export function createSeededRng(seed: number): () => number {
+  let state = (Math.floor(seed) >>> 0) || 0x6d2b79f5;
+  return () => {
+    state = (state + 0x6d2b79f5) | 0;
+    let t = Math.imul(state ^ (state >>> 15), 1 | state);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function lerp(a: number, b: number, t: number): number {
+  return a + (b - a) * t;
+}
+
+const LANES = [-1, 0, 1] as const;
+const POWERUP_TYPES: PowerUpType[] = [
+  'magnet',
+  'jetpack',
+  'super_jump',
+  'multiplier',
+  'hoverboard',
+];
+
+function pushCoinLine(
+  coins: WaveCoinSpec[],
+  lane: number,
+  y: number,
+  startZ: number,
+  count: number,
+  spacing: number
+): void {
+  for (let i = 0; i < count; i++) {
+    coins.push({
+      lane,
+      y,
+      z: startZ - i * spacing,
+    });
+  }
+}
+
+/**
+ * Pure deterministic wave generator shared between 3D client engine and server X1 validator.
+ * Depends ONLY on (rng, waveIndex, z) so both multiplayer clients and the server produce
+ * identical obstacle/coin/power-up layouts regardless of frame rate or CPU speed.
+ */
+export function generateTrackWave(
+  rng: () => number,
+  waveIndex: number,
+  z: number
+): TrackWaveSpec {
+  const diff = Math.min(1, waveIndex / 60);
+  const openLane = LANES[Math.floor(rng() * LANES.length)];
+  const patternRoll = rng();
+
+  const obstacles: WaveObstacleSpec[] = [];
+  const coins: WaveCoinSpec[] = [];
+  const powerUps: WavePowerUpSpec[] = [];
+
+  let nextZ = z;
+
+  if (patternRoll < 0.25) {
+    for (const lane of LANES) {
+      if (lane === openLane) {
+        pushCoinLine(coins, lane, 0.85, z, 3, 2.6);
+      } else {
+        const kind: SeededObstacleKind = rng() < 0.55 ? 'low_barrier' : 'tall_block';
+        obstacles.push({ kind, lane, z });
+      }
+    }
+    nextZ = z - lerp(20, 14.5, diff);
+  } else if (patternRoll < 0.48) {
+    for (const lane of LANES) {
+      if (lane === openLane) {
+        obstacles.push({ kind: 'high_arch', lane, z });
+        pushCoinLine(coins, lane, 0.75, z - 1.5, 2, 2.5);
+      } else {
+        obstacles.push({
+          kind: rng() < 0.5 ? 'low_barrier' : 'tall_block',
+          lane,
+          z,
+        });
+      }
+    }
+    nextZ = z - lerp(21, 15, diff);
+  } else if (patternRoll < 0.72) {
+    const trainLane = LANES[(LANES.indexOf(openLane) + 1) % 3];
+    obstacles.push({ kind: 'ramp', lane: trainLane, z: z + 7.6 });
+    obstacles.push({ kind: 'train_static', lane: trainLane, z });
+    pushCoinLine(coins, trainLane, 3.85, z + 2, 4, 2.4);
+
+    const thirdLane = LANES.find((l) => l !== openLane && l !== trainLane)!;
+    if (rng() < 0.65) {
+      obstacles.push({ kind: 'low_barrier', lane: thirdLane, z });
+    }
+    nextZ = z - lerp(27, 21, diff);
+  } else if (patternRoll < 0.88) {
+    const movingLane = LANES[(LANES.indexOf(openLane) + 1) % 3];
+    obstacles.push({ kind: 'train_moving', lane: movingLane, z: z - 18 });
+    const otherLane = LANES.find((l) => l !== openLane && l !== movingLane)!;
+    obstacles.push({ kind: 'high_arch', lane: otherLane, z });
+    pushCoinLine(coins, openLane, 0.85, z, 3, 2.5);
+    nextZ = z - lerp(26, 20, diff);
+  } else {
+    obstacles.push({ kind: 'tunnel', lane: openLane, z });
+    for (const lane of LANES) {
+      if (lane !== openLane) {
+        obstacles.push({ kind: 'tall_block', lane, z });
+      }
+    }
+    nextZ = z - lerp(24, 18, diff);
+  }
+
+  if (rng() < 0.28) {
+    const chosen = POWERUP_TYPES[Math.floor(rng() * POWERUP_TYPES.length)];
+    powerUps.push({
+      type: chosen,
+      lane: openLane,
+      y: 1.15,
+      z: z - 6.5,
+    });
+  }
+
+  return {
+    waveIndex,
+    startZ: z,
+    nextZ,
+    obstacles,
+    coins,
+    powerUps,
+  };
+}
+
+/**
+ * Generates up to `count` waves deterministically from a seed starting at z = -26.
+ * Used for tests and verification.
+ */
+export function generateTrackSequence(seed: number, waveCount: number): TrackWaveSpec[] {
+  const rng = createSeededRng(seed);
+  const waves: TrackWaveSpec[] = [];
+  let z = -26;
+  for (let i = 0; i < waveCount; i++) {
+    const w = generateTrackWave(rng, i, z);
+    waves.push(w);
+    z = w.nextZ;
+  }
+  return waves;
+}
+
+/**
+ * Server-side authoritative verification that a reported coin pickup in X1 matches an actual
+ * coin generated by `seed` around `coinZ` and `coinLane` (accounting for magnet pull distance).
+ */
+export function verifySeededCoinSpawn(
+  seed: number,
+  coinZ: number,
+  coinLane: number
+): boolean {
+  if (!Number.isFinite(coinZ) || !Number.isInteger(coinLane) || coinLane < -1 || coinLane > 1) {
+    return false;
+  }
+  // Runners start at z = 0 and advance along -Z, so coins have negative Z <= -20
+  if (coinZ > -10 || coinZ < -25000) {
+    return false;
+  }
+
+  const rng = createSeededRng(seed);
+  let z = -26;
+  const maxWaves = 1200;
+
+  for (let i = 0; i < maxWaves; i++) {
+    const wave = generateTrackWave(rng, i, z);
+    for (const c of wave.coins) {
+      const dz = Math.abs(c.z - coinZ);
+      const laneDiff = Math.abs(c.lane - coinLane);
+      // Exact match or slight magnet displacement
+      if (dz <= 8.5 && laneDiff <= 1) {
+        return true;
+      }
+    }
+    z = wave.nextZ;
+    if (z < coinZ - 30) {
+      break;
+    }
+  }
+  return false;
+}

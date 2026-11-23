@@ -2,12 +2,19 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
-  ALL_SKIN_IDS,
   AdminLogItem,
+  COMMON_SKIN_IDS,
+  ExclusiveSkinPermissionRecord,
   GlobalMessage,
   MapId,
+  MultiplayerInvite,
+  MultiplayerMatchRecord,
+  MultiplayerParticipant,
+  MultiplayerRoom,
+  PlayerCompetitiveStats,
   SkinGiftItem,
   SkinId,
+  X1ResultRecord,
 } from '../shared/constants.ts';
 import { generateToken, hashPassword } from './crypto.ts';
 
@@ -86,6 +93,15 @@ export interface StoredVote {
   createdAt: string;
 }
 
+export interface StoredMultiplayerEvent {
+  id: string;
+  roomId: string;
+  userId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
 export interface DatabaseState {
   users: Record<string, StoredUser>;
   sessions: Record<string, StoredSession>;
@@ -100,6 +116,14 @@ export interface DatabaseState {
     featuredMap: MapId;
     updatedAt: string;
   };
+  multiplayerRooms: Record<string, MultiplayerRoom>;
+  multiplayerParticipants: MultiplayerParticipant[];
+  multiplayerInvites: MultiplayerInvite[];
+  multiplayerMatches: MultiplayerMatchRecord[];
+  multiplayerEvents: StoredMultiplayerEvent[];
+  x1Results: X1ResultRecord[];
+  playerCompetitiveStats: Record<string, PlayerCompetitiveStats>;
+  exclusiveSkinPermissions: ExclusiveSkinPermissionRecord[];
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -122,6 +146,14 @@ function createInitialState(): DatabaseState {
       featuredMap: 'brasil',
       updatedAt: new Date().toISOString(),
     },
+    multiplayerRooms: {},
+    multiplayerParticipants: [],
+    multiplayerInvites: [],
+    multiplayerMatches: [],
+    multiplayerEvents: [],
+    x1Results: [],
+    playerCompetitiveStats: {},
+    exclusiveSkinPermissions: [],
   };
 }
 
@@ -208,7 +240,7 @@ export async function ensureAdminFromEnv(): Promise<void> {
       role: 'admin',
       mustChangePassword: true,
       equippedSkin: 'ratao',
-      unlockedSkins: [...ALL_SKIN_IDS],
+      unlockedSkins: [...COMMON_SKIN_IDS],
       giftedSkins: [],
       bestNoCoinTimeMs: 0,
       bestDistance: 0,

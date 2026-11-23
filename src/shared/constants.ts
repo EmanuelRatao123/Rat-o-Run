@@ -1,4 +1,4 @@
-export type SkinId =
+export type CommonSkinId =
   | 'ratao'
   | 'capivara'
   | 'macaco'
@@ -10,11 +10,21 @@ export type SkinId =
   | 'homem_de_ferro'
   | 'galo_doido';
 
+export type ExclusiveSkinId =
+  | 'ratao_rei'
+  | 'lenda_suprema'
+  | 'campeao_prata'
+  | 'guerreiro_bronze';
+
+export type SkinId = CommonSkinId | ExclusiveSkinId;
+
 export type MapId = 'brasil' | 'tokyo' | 'futebol' | 'capivara';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
 export type PowerUpType = 'magnet' | 'jetpack' | 'super_jump' | 'multiplier' | 'hoverboard';
+
+export type ExclusiveRule = 'admin' | 'top1' | 'top2' | 'top3';
 
 export interface SkinDefinition {
   id: SkinId;
@@ -24,6 +34,9 @@ export interface SkinDefinition {
   accentColor: string;
   badgeText: string;
   prototypeNote?: string;
+  isExclusive?: boolean;
+  exclusiveRule?: ExclusiveRule;
+  unlockConditionText?: string;
 }
 
 export const SKINS: SkinDefinition[] = [
@@ -114,7 +127,73 @@ export const SKINS: SkinDefinition[] = [
   },
 ];
 
-export const ALL_SKIN_IDS: SkinId[] = SKINS.map((s) => s.id);
+export const EXCLUSIVE_SKINS: SkinDefinition[] = [
+  {
+    id: 'ratao_rei',
+    name: 'Ratão Rei',
+    subtitle: 'Coroa dourada, manto real e escolta de 5 ratinhos',
+    primaryColor: '#eab308',
+    accentColor: '#7e22ce',
+    badgeText: 'EXCLUSIVA ADMIN',
+    isExclusive: true,
+    exclusiveRule: 'admin',
+    unlockConditionText: 'Exclusiva para Administradores do jogo',
+  },
+  {
+    id: 'lenda_suprema',
+    name: 'Lenda Suprema',
+    subtitle: 'Armadura dourada, coroa especial e aura de campeão #1',
+    primaryColor: '#f59e0b',
+    accentColor: '#fef08a',
+    badgeText: 'TOP 1 GLOBAL',
+    isExclusive: true,
+    exclusiveRule: 'top1',
+    unlockConditionText: 'Conquiste o #1 lugar no Ranking Sem Moedas',
+  },
+  {
+    id: 'campeao_prata',
+    name: 'Campeão de Prata',
+    subtitle: 'Armadura prateada metálica com aura estelar do Top 2',
+    primaryColor: '#cbd5e1',
+    accentColor: '#38bdf8',
+    badgeText: 'TOP 2 GLOBAL',
+    isExclusive: true,
+    exclusiveRule: 'top2',
+    unlockConditionText: 'Conquiste o #2 lugar no Ranking Sem Moedas',
+  },
+  {
+    id: 'guerreiro_bronze',
+    name: 'Guerreiro de Bronze',
+    subtitle: 'Armadura de bronze forjada e elmo do Top 3',
+    primaryColor: '#b45309',
+    accentColor: '#fb923c',
+    badgeText: 'TOP 3 GLOBAL',
+    isExclusive: true,
+    exclusiveRule: 'top3',
+    unlockConditionText: 'Conquiste o #3 lugar no Ranking Sem Moedas',
+  },
+];
+
+export const ALL_SKINS: SkinDefinition[] = [...SKINS, ...EXCLUSIVE_SKINS];
+export const COMMON_SKIN_IDS: CommonSkinId[] = SKINS.map((s) => s.id as CommonSkinId);
+export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map((s) => s.id as ExclusiveSkinId);
+export const ALL_SKIN_IDS: SkinId[] = ALL_SKINS.map((s) => s.id);
+
+export function isCommonSkinId(val: unknown): val is CommonSkinId {
+  return typeof val === 'string' && (COMMON_SKIN_IDS as string[]).includes(val);
+}
+
+export function isExclusiveSkinId(val: unknown): val is ExclusiveSkinId {
+  return typeof val === 'string' && (EXCLUSIVE_SKIN_IDS as string[]).includes(val);
+}
+
+export function isValidAnySkinId(val: unknown): val is SkinId {
+  return typeof val === 'string' && (ALL_SKIN_IDS as string[]).includes(val);
+}
+
+export function getSkinDefinition(skinId: SkinId): SkinDefinition {
+  return ALL_SKINS.find((s) => s.id === skinId) || SKINS[0];
+}
 
 export interface MapDefinition {
   id: MapId;
@@ -185,6 +264,16 @@ export const POWERUPS: Record<PowerUpType, PowerUpInfo> = {
   hoverboard: { type: 'hoverboard', name: 'Hoverboard', color: '#06b6d4', durationSec: 10 },
 };
 
+export interface PlayerCompetitiveStats {
+  userId: string;
+  x1Wins: number;
+  x1Losses: number;
+  x1Draws: number;
+  coopMatches: number;
+  coopWins: number;
+  lastMatchAt: string | null;
+}
+
 export interface UserProfile {
   id: string;
   nickname: string;
@@ -193,6 +282,7 @@ export interface UserProfile {
   equippedSkin: SkinId;
   unlockedSkins: SkinId[];
   giftedSkins: SkinId[];
+  allowedExclusiveSkins?: SkinId[];
   bestNoCoinTimeMs: number;
   bestDistance: number;
   bestScore: number;
@@ -203,6 +293,7 @@ export interface UserProfile {
   createdAt: string;
   lastSeenAt: string;
   rank?: number | null;
+  competitiveStats?: PlayerCompetitiveStats;
 }
 
 export interface LeaderboardEntry {
@@ -305,6 +396,153 @@ export interface MatchSummary {
   durationMs: number;
   isNewPersonalRecord: boolean;
   globalRank: number | null;
+}
+
+// --- Multiplayer & X1 Shared Types ---
+
+export type MultiplayerMode = 'coop' | 'x1';
+
+export type RoomStatus =
+  | 'waiting_player'
+  | 'invite_sent'
+  | 'awaiting_confirmation'
+  | 'preparing'
+  | 'countdown'
+  | 'in_progress'
+  | 'finished'
+  | 'cancelled';
+
+export type ParticipantAnimState = 'idle' | 'run' | 'jump' | 'slide' | 'stumble' | 'crash' | 'jetpack';
+
+export interface MultiplayerInvite {
+  id: string;
+  roomId: string;
+  fromUserId: string;
+  fromNickname: string;
+  fromSkinId: SkinId;
+  toUserId: string;
+  toNickname: string;
+  mode: MultiplayerMode;
+  mapId: MapId;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired';
+  createdAt: string;
+  respondedAt: string | null;
+  expiresAt: string;
+}
+
+export interface MultiplayerParticipant {
+  id: string;
+  roomId: string;
+  userId: string;
+  nickname: string;
+  skinId: SkinId;
+  role: 'host' | 'guest';
+  ready: boolean;
+  connected: boolean;
+  lastHeartbeatAt: number;
+  posX: number;
+  posY: number;
+  posZ: number;
+  lane: number;
+  animState: ParticipantAnimState;
+  distance: number;
+  coins: number;
+  score: number;
+  noCoinTimeMs: number;
+  durationMs: number;
+  collisionCount: number;
+  alive: boolean;
+  collectedFirstCoin: boolean;
+  finishedAt: number | null;
+  hoverboard: boolean;
+  jetpack: boolean;
+  updatedAt: string;
+}
+
+export interface MultiplayerRoom {
+  id: string;
+  mode: MultiplayerMode;
+  mapId: MapId;
+  seed: number;
+  hostUserId: string;
+  guestUserId: string | null;
+  status: RoomStatus;
+  countdownStartAt: number | null;
+  startedAt: number | null;
+  finishedAt: number | null;
+  winnerUserId: string | null;
+  loserUserId: string | null;
+  resultReason: string | null;
+  maxDurationMs: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface X1ResultRecord {
+  id: string;
+  roomId: string;
+  matchId: string;
+  winnerUserId: string | null;
+  winnerNickname: string | null;
+  loserUserId: string | null;
+  loserNickname: string | null;
+  isDraw: boolean;
+  reason: string;
+  mapId: MapId;
+  winnerDurationMs: number;
+  loserDurationMs: number;
+  winnerDistance: number;
+  loserDistance: number;
+  createdAt: string;
+}
+
+export interface MultiplayerMatchRecord {
+  id: string;
+  roomId: string;
+  mode: MultiplayerMode;
+  mapId: MapId;
+  seed: number;
+  hostUserId: string;
+  hostNickname: string;
+  hostSkinId: SkinId;
+  guestUserId: string;
+  guestNickname: string;
+  guestSkinId: SkinId;
+  winnerUserId: string | null;
+  resultReason: string;
+  hostDistance: number;
+  hostDurationMs: number;
+  hostCoins: number;
+  hostScore: number;
+  guestDistance: number;
+  guestDurationMs: number;
+  guestCoins: number;
+  guestScore: number;
+  createdAt: string;
+}
+
+export interface ExclusiveSkinPermissionRecord {
+  id: string;
+  userId: string;
+  skinId: ExclusiveSkinId;
+  reason: 'admin' | 'top1' | 'top2' | 'top3';
+  rankPosition: number | null;
+  active: boolean;
+  grantedAt: string;
+  revokedAt: string | null;
+  updatedAt: string;
+}
+
+export interface PublicPlayerLookup {
+  id: string;
+  nickname: string;
+  equippedSkin: SkinId;
+  bestNoCoinTimeMs: number;
+  bestDistance: number;
+  totalMatches: number;
+  rank: number | null;
+  onlineRecently: boolean;
+  competitiveStats: PlayerCompetitiveStats;
 }
 
 export function formatStopwatch(ms: number): string {

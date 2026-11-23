@@ -1,6 +1,7 @@
 import {
   bigint,
   boolean,
+  doublePrecision,
   index,
   integer,
   jsonb,
@@ -8,7 +9,14 @@ import {
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
-import type { MapId, SkinId } from '../shared/constants.ts';
+import type {
+  ExclusiveSkinId,
+  MapId,
+  MultiplayerMode,
+  ParticipantAnimState,
+  RoomStatus,
+  SkinId,
+} from '../shared/constants.ts';
 
 export const users = pgTable(
   'users',
@@ -156,3 +164,214 @@ export const gameSettings = pgTable('game_settings', {
   featuredMap: text('featured_map').$type<MapId>().notNull().default('brasil'),
   updatedAt: text('updated_at').notNull(),
 });
+
+export const multiplayerRooms = pgTable(
+  'multiplayer_rooms',
+  {
+    id: text('id').primaryKey(),
+    mode: text('mode').$type<MultiplayerMode>().notNull(),
+    mapId: text('map_id').$type<MapId>().notNull(),
+    seed: integer('seed').notNull(),
+    hostUserId: text('host_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    guestUserId: text('guest_user_id').references(() => users.id, { onDelete: 'set null' }),
+    status: text('status').$type<RoomStatus>().notNull().default('waiting_player'),
+    countdownStartAt: bigint('countdown_start_at', { mode: 'number' }),
+    startedAt: bigint('started_at', { mode: 'number' }),
+    finishedAt: bigint('finished_at', { mode: 'number' }),
+    winnerUserId: text('winner_user_id'),
+    loserUserId: text('loser_user_id'),
+    resultReason: text('result_reason'),
+    maxDurationMs: integer('max_duration_ms').notNull().default(180000),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('mp_rooms_host_idx').on(table.hostUserId, table.status),
+    index('mp_rooms_guest_idx').on(table.guestUserId, table.status),
+  ]
+);
+
+export const multiplayerParticipants = pgTable(
+  'multiplayer_participants',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id')
+      .notNull()
+      .references(() => multiplayerRooms.id, { onDelete: 'cascade' }),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    nickname: text('nickname').notNull(),
+    skinId: text('skin_id').$type<SkinId>().notNull(),
+    role: text('role').$type<'host' | 'guest'>().notNull(),
+    ready: boolean('ready').notNull().default(false),
+    connected: boolean('connected').notNull().default(true),
+    lastHeartbeatAt: bigint('last_heartbeat_at', { mode: 'number' }).notNull(),
+    posX: doublePrecision('pos_x').notNull().default(0),
+    posY: doublePrecision('pos_y').notNull().default(0),
+    posZ: doublePrecision('pos_z').notNull().default(0),
+    lane: integer('lane').notNull().default(0),
+    animState: text('anim_state').$type<ParticipantAnimState>().notNull().default('idle'),
+    distance: integer('distance').notNull().default(0),
+    coins: integer('coins').notNull().default(0),
+    score: integer('score').notNull().default(0),
+    noCoinTimeMs: integer('no_coin_time_ms').notNull().default(0),
+    durationMs: integer('duration_ms').notNull().default(0),
+    collisionCount: integer('collision_count').notNull().default(0),
+    alive: boolean('alive').notNull().default(true),
+    collectedFirstCoin: boolean('collected_first_coin').notNull().default(false),
+    finishedAt: bigint('finished_at', { mode: 'number' }),
+    hoverboard: boolean('hoverboard').notNull().default(false),
+    jetpack: boolean('jetpack').notNull().default(false),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('mp_participants_room_user_uidx').on(table.roomId, table.userId),
+    index('mp_participants_room_idx').on(table.roomId),
+  ]
+);
+
+export const multiplayerInvites = pgTable(
+  'multiplayer_invites',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id')
+      .notNull()
+      .references(() => multiplayerRooms.id, { onDelete: 'cascade' }),
+    fromUserId: text('from_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    fromNickname: text('from_nickname').notNull(),
+    fromSkinId: text('from_skin_id').$type<SkinId>().notNull(),
+    toUserId: text('to_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    toNickname: text('to_nickname').notNull(),
+    mode: text('mode').$type<MultiplayerMode>().notNull(),
+    mapId: text('map_id').$type<MapId>().notNull(),
+    status: text('status')
+      .$type<'pending' | 'accepted' | 'declined' | 'cancelled' | 'expired'>()
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at').notNull(),
+    respondedAt: text('responded_at'),
+    expiresAt: text('expires_at').notNull(),
+  },
+  (table) => [
+    index('mp_invites_to_status_idx').on(table.toUserId, table.status),
+    index('mp_invites_from_status_idx').on(table.fromUserId, table.status),
+  ]
+);
+
+export const multiplayerMatches = pgTable(
+  'multiplayer_matches',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id').notNull(),
+    mode: text('mode').$type<MultiplayerMode>().notNull(),
+    mapId: text('map_id').$type<MapId>().notNull(),
+    seed: integer('seed').notNull(),
+    hostUserId: text('host_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    hostNickname: text('host_nickname').notNull(),
+    hostSkinId: text('host_skin_id').$type<SkinId>().notNull(),
+    guestUserId: text('guest_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    guestNickname: text('guest_nickname').notNull(),
+    guestSkinId: text('guest_skin_id').$type<SkinId>().notNull(),
+    winnerUserId: text('winner_user_id'),
+    resultReason: text('result_reason').notNull(),
+    hostDistance: integer('host_distance').notNull().default(0),
+    hostDurationMs: integer('host_duration_ms').notNull().default(0),
+    hostCoins: integer('host_coins').notNull().default(0),
+    hostScore: integer('host_score').notNull().default(0),
+    guestDistance: integer('guest_distance').notNull().default(0),
+    guestDurationMs: integer('guest_duration_ms').notNull().default(0),
+    guestCoins: integer('guest_coins').notNull().default(0),
+    guestScore: integer('guest_score').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('mp_matches_host_idx').on(table.hostUserId, table.createdAt),
+    index('mp_matches_guest_idx').on(table.guestUserId, table.createdAt),
+  ]
+);
+
+export const multiplayerEvents = pgTable(
+  'multiplayer_events',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id')
+      .notNull()
+      .references(() => multiplayerRooms.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    eventType: text('event_type').notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('mp_events_room_idx').on(table.roomId, table.createdAt)]
+);
+
+export const x1Results = pgTable(
+  'x1_results',
+  {
+    id: text('id').primaryKey(),
+    roomId: text('room_id').notNull(),
+    matchId: text('match_id').notNull(),
+    winnerUserId: text('winner_user_id'),
+    winnerNickname: text('winner_nickname'),
+    loserUserId: text('loser_user_id'),
+    loserNickname: text('loser_nickname'),
+    isDraw: boolean('is_draw').notNull().default(false),
+    reason: text('reason').notNull(),
+    mapId: text('map_id').$type<MapId>().notNull(),
+    winnerDurationMs: integer('winner_duration_ms').notNull().default(0),
+    loserDurationMs: integer('loser_duration_ms').notNull().default(0),
+    winnerDistance: integer('winner_distance').notNull().default(0),
+    loserDistance: integer('loser_distance').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('x1_results_winner_idx').on(table.winnerUserId, table.createdAt),
+    index('x1_results_loser_idx').on(table.loserUserId, table.createdAt),
+  ]
+);
+
+export const playerCompetitiveStats = pgTable('player_competitive_stats', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  x1Wins: integer('x1_wins').notNull().default(0),
+  x1Losses: integer('x1_losses').notNull().default(0),
+  x1Draws: integer('x1_draws').notNull().default(0),
+  coopMatches: integer('coop_matches').notNull().default(0),
+  coopWins: integer('coop_wins').notNull().default(0),
+  lastMatchAt: text('last_match_at'),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const exclusiveSkinPermissions = pgTable(
+  'exclusive_skin_permissions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    skinId: text('skin_id').$type<ExclusiveSkinId>().notNull(),
+    reason: text('reason').$type<'admin' | 'top1' | 'top2' | 'top3'>().notNull(),
+    rankPosition: integer('rank_position'),
+    active: boolean('active').notNull().default(true),
+    grantedAt: text('granted_at').notNull(),
+    revokedAt: text('revoked_at'),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('excl_perm_user_active_idx').on(table.userId, table.active),
+    index('excl_perm_skin_active_idx').on(table.skinId, table.active),
+  ]
+);
+

@@ -4,6 +4,24 @@ import { createRadialShadowTexture } from './materials.ts';
 
 export type CharacterAnimState = 'idle' | 'run' | 'jump' | 'slide' | 'stumble' | 'crash' | 'jetpack';
 
+export interface FollowerMouseRig {
+  group: THREE.Group;
+  body: THREE.Group;
+  leftLeg: THREE.Mesh;
+  rightLeg: THREE.Mesh;
+  baseX: number;
+  baseZ: number;
+  phase: number;
+}
+
+export interface AuraParticleRig {
+  mesh: THREE.Mesh;
+  radius: number;
+  heightOffset: number;
+  speed: number;
+  angle: number;
+}
+
 export interface CharacterRig {
   root: THREE.Group;
   bodyPivot: THREE.Group;
@@ -15,6 +33,9 @@ export interface CharacterRig {
   rightLegPivot: THREE.Group;
   tailPivot?: THREE.Group;
   capePivot?: THREE.Group;
+  followerMice?: FollowerMouseRig[];
+  auraParticles?: AuraParticleRig[];
+  spawnTimer: number;
   hoverboardGroup: THREE.Group;
   jetpackGroup: THREE.Group;
   magnetAura: THREE.Mesh;
@@ -120,6 +141,8 @@ function buildCharacterBase(
 
   let tailPivot: THREE.Group | undefined;
   let capePivot: THREE.Group | undefined;
+  let followerMice: FollowerMouseRig[] | undefined;
+  let auraParticles: AuraParticleRig[] | undefined;
   let policeBeaconRed: THREE.Mesh | undefined;
   let policeBeaconBlue: THREE.Mesh | undefined;
 
@@ -399,6 +422,166 @@ function buildCharacterBase(
     tailPivot.position.set(0, 0.16, -0.18);
     torsoPivot.add(tailPivot);
     v(tailPivot, { w: 0.14, h: 0.3, d: 0.18, x: 0, y: 0.12, z: -0.12, color: 0x18181b, rx: -0.45 });
+  } else if (skin === 'ratao_rei') {
+    // RATÃO REI: Royal purple & gold robe, crimson ermine cape, ornate golden gemmed crown, golden aura & 5 animated follower mice!
+    v(torsoPivot, { w: 0.58, h: 0.6, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x6b21a8, roughness: 0.45, metalness: 0.25 }); // Royal purple tunic
+    v(torsoPivot, { w: 0.6, h: 0.12, d: 0.36, x: 0, y: 0.56, z: 0, color: 0xf8fafc, roughness: 0.85 }); // Ermine collar
+    v(torsoPivot, { w: 0.58, h: 0.1, d: 0.36, x: 0, y: 0.08, z: 0, color: 0xfacc15, roughness: 0.2, metalness: 0.9 }); // Golden belt
+    v(torsoPivot, { w: 0.18, h: 0.2, d: 0.05, x: 0, y: 0.35, z: 0.18, color: 0xfacc15, emissive: 0xf59e0b, emissiveIntensity: 0.45, metalness: 0.9 }); // Royal crest
+    // Royal Rat Head
+    v(headPivot, { w: 0.5, h: 0.44, d: 0.5, x: 0, y: 0.24, z: 0, color: 0x94a3b8, roughness: 0.58 });
+    v(headPivot, { w: 0.3, h: 0.2, d: 0.26, x: 0, y: 0.16, z: 0.32, color: 0xe2e8f0, roughness: 0.55 });
+    v(headPivot, { w: 0.12, h: 0.09, d: 0.08, x: 0, y: 0.22, z: 0.46, color: 0xf472b6, roughness: 0.3 });
+    v(headPivot, { w: 0.22, h: 0.24, d: 0.08, x: -0.27, y: 0.48, z: -0.04, color: 0x64748b });
+    v(headPivot, { w: 0.14, h: 0.16, d: 0.09, x: -0.27, y: 0.48, z: -0.02, color: 0xfde047 });
+    v(headPivot, { w: 0.22, h: 0.24, d: 0.08, x: 0.27, y: 0.48, z: -0.04, color: 0x64748b });
+    v(headPivot, { w: 0.14, h: 0.16, d: 0.09, x: 0.27, y: 0.48, z: -0.02, color: 0xfde047 });
+    addEyes(0.3, 0.26, 0xfacc15);
+    // Royal Golden Crown with Ruby & Emerald Gems
+    v(headPivot, { w: 0.46, h: 0.12, d: 0.46, x: 0, y: 0.52, z: 0, color: 0xfacc15, metalness: 0.92, roughness: 0.16, emissive: 0xf59e0b, emissiveIntensity: 0.35 });
+    v(headPivot, { w: 0.1, h: 0.16, d: 0.1, x: -0.17, y: 0.65, z: 0.17, color: 0xfde047, metalness: 0.92, roughness: 0.15 });
+    v(headPivot, { w: 0.1, h: 0.16, d: 0.1, x: 0.17, y: 0.65, z: 0.17, color: 0xfde047, metalness: 0.92, roughness: 0.15 });
+    v(headPivot, { w: 0.1, h: 0.16, d: 0.1, x: -0.17, y: 0.65, z: -0.17, color: 0xfde047, metalness: 0.92, roughness: 0.15 });
+    v(headPivot, { w: 0.1, h: 0.16, d: 0.1, x: 0.17, y: 0.65, z: -0.17, color: 0xfde047, metalness: 0.92, roughness: 0.15 });
+    v(headPivot, { w: 0.1, h: 0.1, d: 0.06, x: 0, y: 0.53, z: 0.24, color: 0xef4444, emissive: 0xef4444, emissiveIntensity: 0.9 }); // Front ruby
+    buildLimbs(0x94a3b8, 0x6b21a8, 0x3b0764, 0xfacc15, 0xfef08a, 0.35);
+    // Royal Crimson & Gold Cape
+    capePivot = new THREE.Group();
+    capePivot.position.set(0, 0.58, -0.19);
+    torsoPivot.add(capePivot);
+    v(capePivot, { w: 0.62, h: 0.88, d: 0.06, x: 0, y: -0.43, z: -0.04, color: 0xb91c1c, roughness: 0.55, rx: 0.2 });
+    v(capePivot, { w: 0.66, h: 0.12, d: 0.07, x: 0, y: -0.84, z: -0.12, color: 0xfacc15, metalness: 0.85, roughness: 0.2, rx: 0.2 });
+    // Golden Tail
+    tailPivot = new THREE.Group();
+    tailPivot.position.set(0, 0.1, -0.18);
+    torsoPivot.add(tailPivot);
+    v(tailPivot, { w: 0.08, h: 0.08, d: 0.34, x: 0, y: -0.02, z: -0.16, color: 0xf472b6, rx: -0.2 });
+    // Royal Golden Aura Particles
+    auraParticles = [];
+    for (let i = 0; i < 6; i++) {
+      const m = v(root, {
+        w: 0.09,
+        h: 0.09,
+        d: 0.09,
+        x: 0,
+        y: 1.0,
+        z: 0,
+        color: 0xfef08a,
+        emissive: 0xfacc15,
+        emissiveIntensity: 1.8,
+        roughness: 0.1,
+      });
+      m.castShadow = false;
+      auraParticles.push({
+        mesh: m,
+        radius: 0.72 + (i % 2) * 0.16,
+        heightOffset: 0.45 + (i % 3) * 0.45,
+        speed: 2.2 + i * 0.25,
+        angle: (i / 6) * Math.PI * 2,
+      });
+    }
+    // 5 Animated Royal Follower Mice trailing behind Ratão Rei!
+    followerMice = [];
+    const mouseSlots: [number, number][] = [
+      [-0.72, -1.28],
+      [-0.36, -0.95],
+      [0, -1.55],
+      [0.36, -0.95],
+      [0.72, -1.28],
+    ];
+    mouseSlots.forEach(([mx, mz], idx) => {
+      const mGroup = new THREE.Group();
+      mGroup.position.set(mx, 0, mz);
+      root.add(mGroup);
+
+      const mBody = new THREE.Group();
+      mGroup.add(mBody);
+      // Mini mouse torso, head, ears, snout, tiny royal cape & tail
+      v(mBody, { w: 0.22, h: 0.22, d: 0.22, x: 0, y: 0.24, z: 0, color: 0x7e22ce, roughness: 0.65 });
+      v(mBody, { w: 0.24, h: 0.2, d: 0.24, x: 0, y: 0.44, z: 0.02, color: 0x94a3b8, roughness: 0.65 });
+      v(mBody, { w: 0.14, h: 0.1, d: 0.12, x: 0, y: 0.41, z: 0.16, color: 0xcbd5e1 });
+      v(mBody, { w: 0.06, h: 0.05, d: 0.04, x: 0, y: 0.43, z: 0.23, color: 0xf472b6 });
+      v(mBody, { w: 0.11, h: 0.12, d: 0.04, x: -0.13, y: 0.56, z: 0, color: 0x64748b });
+      v(mBody, { w: 0.11, h: 0.12, d: 0.04, x: 0.13, y: 0.56, z: 0, color: 0x64748b });
+      v(mBody, { w: 0.04, h: 0.04, d: 0.18, x: 0, y: 0.18, z: -0.18, color: 0xf472b6, rx: -0.3 });
+      v(mBody, { w: 0.16, h: 0.05, d: 0.16, x: 0, y: 0.56, z: 0.02, color: 0xfacc15, metalness: 0.9 }); // Mini gold crown band
+
+      const mLeftLeg = v(mBody, { w: 0.08, h: 0.14, d: 0.1, x: -0.06, y: 0.08, z: 0, color: 0x475569 });
+      const mRightLeg = v(mBody, { w: 0.08, h: 0.14, d: 0.1, x: 0.06, y: 0.08, z: 0, color: 0x475569 });
+
+      followerMice!.push({
+        group: mGroup,
+        body: mBody,
+        leftLeg: mLeftLeg,
+        rightLeg: mRightLeg,
+        baseX: mx,
+        baseZ: mz,
+        phase: idx * 1.25,
+      });
+    });
+  } else if (skin === 'lenda_suprema') {
+    // TOP 1: LENDA SUPREMA — Radiant Golden Armor, Special Crown, Golden Aura & Particles
+    v(torsoPivot, { w: 0.6, h: 0.62, d: 0.38, x: 0, y: 0.3, z: 0, color: 0xf59e0b, metalness: 0.92, roughness: 0.16 });
+    v(torsoPivot, { w: 0.68, h: 0.16, d: 0.38, x: 0, y: 0.54, z: 0, color: 0xfde047, metalness: 0.94, roughness: 0.14 }); // Winged pauldrons
+    v(torsoPivot, { w: 0.18, h: 0.18, d: 0.06, x: 0, y: 0.36, z: 0.2, color: 0xffffff, emissive: 0xfef08a, emissiveIntensity: 2.0 });
+    v(headPivot, { w: 0.5, h: 0.48, d: 0.5, x: 0, y: 0.25, z: 0, color: 0xfacc15, metalness: 0.92, roughness: 0.15 });
+    v(headPivot, { w: 0.36, h: 0.12, d: 0.06, x: 0, y: 0.27, z: 0.25, color: 0xffffff, emissive: 0xfef08a, emissiveIntensity: 2.2 }); // Glowing eyes visor
+    // Special Champion Crown
+    v(headPivot, { w: 0.54, h: 0.14, d: 0.54, x: 0, y: 0.52, z: 0, color: 0xfde047, metalness: 0.95, roughness: 0.1, emissive: 0xf59e0b, emissiveIntensity: 0.6 });
+    v(headPivot, { w: 0.14, h: 0.22, d: 0.12, x: 0, y: 0.66, z: 0.2, color: 0xffffff, emissive: 0xfef08a, emissiveIntensity: 1.5 });
+    v(headPivot, { w: 0.12, h: 0.18, d: 0.12, x: -0.2, y: 0.62, z: 0.18, color: 0xfacc15, metalness: 0.95 });
+    v(headPivot, { w: 0.12, h: 0.18, d: 0.12, x: 0.2, y: 0.62, z: 0.18, color: 0xfacc15, metalness: 0.95 });
+    buildLimbs(0xfef08a, 0xf59e0b, 0xd97706, 0xfde047, 0xffffff, 0.16);
+    capePivot = new THREE.Group();
+    capePivot.position.set(0, 0.58, -0.2);
+    torsoPivot.add(capePivot);
+    v(capePivot, { w: 0.6, h: 0.85, d: 0.05, x: 0, y: -0.41, z: -0.04, color: 0xfef9c3, emissive: 0xfacc15, emissiveIntensity: 0.3, rx: 0.2 });
+    auraParticles = [];
+    for (let i = 0; i < 6; i++) {
+      const m = v(root, { w: 0.1, h: 0.1, d: 0.1, x: 0, y: 1.0, z: 0, color: 0xfef08a, emissive: 0xfacc15, emissiveIntensity: 2.0 });
+      m.castShadow = false;
+      auraParticles.push({ mesh: m, radius: 0.78, heightOffset: 0.4 + (i % 3) * 0.48, speed: 2.8, angle: (i / 6) * Math.PI * 2 });
+    }
+  } else if (skin === 'campeao_prata') {
+    // TOP 2: CAMPEÃO DE PRATA — Metallic Silver Armor, Cyan Visor & Silver Particles
+    v(torsoPivot, { w: 0.58, h: 0.6, d: 0.36, x: 0, y: 0.3, z: 0, color: 0xcbd5e1, metalness: 0.9, roughness: 0.2 });
+    v(torsoPivot, { w: 0.64, h: 0.14, d: 0.36, x: 0, y: 0.54, z: 0, color: 0xe2e8f0, metalness: 0.92, roughness: 0.18 });
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.05, x: 0, y: 0.36, z: 0.19, color: 0x38bdf8, emissive: 0x0ea5e9, emissiveIntensity: 1.8 });
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.25, z: 0, color: 0xe2e8f0, metalness: 0.92, roughness: 0.18 });
+    v(headPivot, { w: 0.34, h: 0.1, d: 0.06, x: 0, y: 0.27, z: 0.24, color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 1.8 });
+    v(headPivot, { w: 0.14, h: 0.24, d: 0.44, x: 0, y: 0.55, z: -0.02, color: 0x94a3b8, metalness: 0.9 }); // Silver crest
+    buildLimbs(0xe2e8f0, 0x94a3b8, 0x64748b, 0xf8fafc, 0x38bdf8, 0.2);
+    capePivot = new THREE.Group();
+    capePivot.position.set(0, 0.58, -0.19);
+    torsoPivot.add(capePivot);
+    v(capePivot, { w: 0.56, h: 0.8, d: 0.05, x: 0, y: -0.39, z: -0.04, color: 0x0284c7, roughness: 0.45, rx: 0.18 });
+    auraParticles = [];
+    for (let i = 0; i < 5; i++) {
+      const m = v(root, { w: 0.08, h: 0.08, d: 0.08, x: 0, y: 1.0, z: 0, color: 0xe2e8f0, emissive: 0x38bdf8, emissiveIntensity: 1.7 });
+      m.castShadow = false;
+      auraParticles.push({ mesh: m, radius: 0.72, heightOffset: 0.45 + (i % 3) * 0.42, speed: 2.3, angle: (i / 5) * Math.PI * 2 });
+    }
+  } else if (skin === 'guerreiro_bronze') {
+    // TOP 3: GUERREIRO DE BRONZE — Forged Bronze Armor, Horned Crest & Ember Particles
+    v(torsoPivot, { w: 0.58, h: 0.6, d: 0.36, x: 0, y: 0.3, z: 0, color: 0xb45309, metalness: 0.85, roughness: 0.28 });
+    v(torsoPivot, { w: 0.64, h: 0.14, d: 0.36, x: 0, y: 0.54, z: 0, color: 0xd97706, metalness: 0.86, roughness: 0.26 });
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.05, x: 0, y: 0.36, z: 0.19, color: 0xfb923c, emissive: 0xf97316, emissiveIntensity: 1.7 });
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.25, z: 0, color: 0xb45309, metalness: 0.86, roughness: 0.26 });
+    v(headPivot, { w: 0.34, h: 0.09, d: 0.06, x: 0, y: 0.27, z: 0.24, color: 0xfb923c, emissive: 0xf97316, emissiveIntensity: 1.7 });
+    // Warrior bronze horns/crest
+    v(headPivot, { w: 0.1, h: 0.22, d: 0.1, x: -0.24, y: 0.54, z: 0.04, color: 0xf59e0b, metalness: 0.88, rz: 0.25 });
+    v(headPivot, { w: 0.1, h: 0.22, d: 0.1, x: 0.24, y: 0.54, z: 0.04, color: 0xf59e0b, metalness: 0.88, rz: -0.25 });
+    buildLimbs(0xd97706, 0x92400e, 0x78350f, 0xd97706, 0xfb923c, 0.28);
+    capePivot = new THREE.Group();
+    capePivot.position.set(0, 0.58, -0.19);
+    torsoPivot.add(capePivot);
+    v(capePivot, { w: 0.54, h: 0.76, d: 0.05, x: 0, y: -0.37, z: -0.04, color: 0x7c2d12, roughness: 0.65, rx: 0.18 });
+    auraParticles = [];
+    for (let i = 0; i < 5; i++) {
+      const m = v(root, { w: 0.08, h: 0.08, d: 0.08, x: 0, y: 1.0, z: 0, color: 0xfb923c, emissive: 0xf97316, emissiveIntensity: 1.6 });
+      m.castShadow = false;
+      auraParticles.push({ mesh: m, radius: 0.72, heightOffset: 0.45 + (i % 3) * 0.42, speed: 2.1, angle: (i / 5) * Math.PI * 2 });
+    }
   } else {
     // Police Pursuer
     v(torsoPivot, { w: 0.58, h: 0.6, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x1e3a8a, roughness: 0.65 });
@@ -513,6 +696,9 @@ function buildCharacterBase(
     rightLegPivot,
     tailPivot,
     capePivot,
+    followerMice,
+    auraParticles,
+    spawnTimer: 0,
     hoverboardGroup,
     jetpackGroup,
     magnetAura,
@@ -536,6 +722,126 @@ export function createPoliceRig(castShadow = true): CharacterRig {
   return buildCharacterBase('police', castShadow);
 }
 
+export function createFloatingNameTag(nickname: string, badgeColor = '#f59e0b'): {
+  sprite: THREE.Sprite;
+  dispose: () => void;
+} {
+  const canvas = document.createElement('canvas');
+  canvas.width = 320;
+  canvas.height = 80;
+  const ctx = canvas.getContext('2d')!;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Pill plate background in WebGL sprite
+  ctx.fillStyle = 'rgba(2, 6, 23, 0.86)';
+  ctx.strokeStyle = badgeColor;
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.roundRect(14, 14, 292, 52, 18);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.font = 'bold 26px sans-serif';
+  ctx.fillStyle = '#ffffff';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(nickname.slice(0, 16), 160, 41);
+
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(2.1, 0.52, 1);
+  sprite.position.set(0, 2.35, 0);
+  return {
+    sprite,
+    dispose: () => {
+      tex.dispose();
+      mat.dispose();
+    },
+  };
+}
+
+function animateExclusiveExtras(
+  rig: CharacterRig,
+  state: CharacterAnimState,
+  elapsed: number,
+  dt: number,
+  speedFactor: number
+): void {
+  // Subtle royal entrance pop animation
+  if (rig.spawnTimer < 0.65) {
+    rig.spawnTimer = Math.min(0.65, rig.spawnTimer + dt);
+    const t = rig.spawnTimer / 0.65;
+    const s = t < 0.7 ? 0.85 + (t / 0.7) * 0.21 : 1.06 - ((t - 0.7) / 0.3) * 0.06;
+    rig.bodyPivot.scale.setScalar(s);
+  } else if (rig.bodyPivot.scale.x !== 1) {
+    rig.bodyPivot.scale.setScalar(1);
+  }
+
+  // Orbiting exclusive aura particles
+  if (rig.auraParticles) {
+    for (const pt of rig.auraParticles) {
+      const a = pt.angle + elapsed * pt.speed;
+      pt.mesh.position.set(
+        Math.cos(a) * pt.radius,
+        pt.heightOffset + Math.sin(elapsed * 3.5 + pt.angle) * 0.16,
+        Math.sin(a) * pt.radius
+      );
+      pt.mesh.rotation.y += dt * 3;
+      pt.mesh.rotation.x += dt * 2;
+    }
+  }
+
+  // Ratão Rei's 5 animated follower mice
+  if (rig.followerMice) {
+    const k = Math.min(1, 1 - Math.exp(-14 * dt));
+    for (const m of rig.followerMice) {
+      if (state === 'idle') {
+        m.body.position.y = THREE.MathUtils.lerp(
+          m.body.position.y,
+          Math.abs(Math.sin(elapsed * 3.2 + m.phase)) * 0.05,
+          k
+        );
+        m.body.rotation.x = THREE.MathUtils.lerp(m.body.rotation.x, 0, k);
+        m.leftLeg.rotation.x = THREE.MathUtils.lerp(m.leftLeg.rotation.x, 0, k);
+        m.rightLeg.rotation.x = THREE.MathUtils.lerp(m.rightLeg.rotation.x, 0, k);
+        m.group.position.x = THREE.MathUtils.lerp(
+          m.group.position.x,
+          m.baseX + Math.sin(elapsed * 1.8 + m.phase) * 0.06,
+          k
+        );
+      } else if (state === 'run' || state === 'stumble') {
+        const stride = Math.sin(elapsed * 16 * speedFactor + m.phase);
+        m.body.position.y = THREE.MathUtils.lerp(m.body.position.y, Math.abs(stride) * 0.1, k);
+        m.body.rotation.x = THREE.MathUtils.lerp(m.body.rotation.x, 0.14, k);
+        m.leftLeg.rotation.x = stride * 0.9;
+        m.rightLeg.rotation.x = -stride * 0.9;
+        m.group.position.x = THREE.MathUtils.lerp(
+          m.group.position.x,
+          m.baseX + Math.sin(elapsed * 5 + m.phase) * 0.08,
+          k
+        );
+      } else if (state === 'jump' || state === 'jetpack') {
+        m.body.position.y = THREE.MathUtils.lerp(
+          m.body.position.y,
+          0.16 + Math.sin(elapsed * 8 + m.phase) * 0.08,
+          k
+        );
+        m.body.rotation.x = THREE.MathUtils.lerp(m.body.rotation.x, -0.18, k);
+        m.leftLeg.rotation.x = 0.6;
+        m.rightLeg.rotation.x = -0.5;
+      } else if (state === 'slide') {
+        m.body.position.y = THREE.MathUtils.lerp(m.body.position.y, -0.05, k);
+        m.body.rotation.x = THREE.MathUtils.lerp(m.body.rotation.x, -0.55, k);
+      } else {
+        m.body.position.y = THREE.MathUtils.lerp(m.body.position.y, 0, k);
+        m.body.rotation.x = THREE.MathUtils.lerp(m.body.rotation.x, -0.4, k);
+      }
+    }
+  }
+}
+
 export function animateCharacterRig(
   rig: CharacterRig,
   state: CharacterAnimState,
@@ -544,6 +850,7 @@ export function animateCharacterRig(
   speedFactor = 1
 ): void {
   const k = Math.min(1, 1 - Math.exp(-16 * dt));
+  animateExclusiveExtras(rig, state, elapsed, dt, speedFactor);
 
   if (state === 'idle') {
     const breath = Math.sin(elapsed * 3.0);

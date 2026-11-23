@@ -30,6 +30,7 @@ import {
   SkinId,
   UserProfile,
   formatStopwatch,
+  getSkinDefinition,
 } from '../shared/constants.ts';
 
 interface AdminPortalModalProps {
@@ -700,7 +701,7 @@ export function AdminPortalModal({
                         Skin Mais Usada
                       </div>
                       <div className="font-display text-base font-bold text-amber-300 mt-1 truncate">
-                        {SKINS.find((s) => s.id === stats.mostUsedSkin)?.name || stats.mostUsedSkin}
+                        {getSkinDefinition(stats.mostUsedSkin).name}
                       </div>
                     </div>
                     <div className="col-span-2 p-3.5 rounded-xl bg-slate-950 border border-slate-800">
@@ -1120,7 +1121,7 @@ export function AdminPortalModal({
                               </div>
                               <div className="text-[11px] text-slate-400">
                                 {p.totalMatches} partidas ·{' '}
-                                {SKINS.find((s) => s.id === p.equippedSkin)?.name || p.equippedSkin}
+                                {getSkinDefinition(p.equippedSkin).name}
                               </div>
                             </div>
                             <div className="text-right">
@@ -1199,7 +1200,7 @@ export function AdminPortalModal({
                                     : 'bg-slate-900 border border-slate-800 text-slate-300'
                                 }`}
                               >
-                                {SKINS.find((s) => s.id === sk)?.name || sk}
+                                {getSkinDefinition(sk).name}
                               </span>
                             ))}
                           </div>

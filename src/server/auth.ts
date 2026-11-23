@@ -3,7 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { NextFunction, Request, Response } from 'express';
-import { ALL_SKIN_IDS, UserProfile } from '../shared/constants.ts';
+import { COMMON_SKIN_IDS, PlayerCompetitiveStats, SkinId, UserProfile } from '../shared/constants.ts';
 import {
   SlidingRateLimiter,
   generateToken,
@@ -19,6 +19,8 @@ import {
   repoFindAdminAccount,
   repoFindUserByGoogleUid,
   repoFindUserByNickname,
+  repoGetAllowedExclusiveSkinsForUser,
+  repoGetCompetitiveStatsForUser,
   repoGetValidSessionUser,
   repoHasAdminAccount,
   repoRecordAdminLog,
@@ -94,15 +96,21 @@ function clearAdminSessionCookie(res: Response): void {
   });
 }
 
-export function sanitizeUserProfile(user: StoredUser, rank: number | null = null): UserProfile {
+export function sanitizeUserProfile(
+  user: StoredUser,
+  rank: number | null = null,
+  allowedExclusiveSkins: SkinId[] = [],
+  competitiveStats?: PlayerCompetitiveStats
+): UserProfile {
   return {
     id: user.id,
     nickname: user.nickname,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
     equippedSkin: user.equippedSkin,
-    unlockedSkins: user.unlockedSkins,
-    giftedSkins: user.giftedSkins,
+    unlockedSkins: user.unlockedSkins.filter((s) => (COMMON_SKIN_IDS as string[]).includes(s)),
+    giftedSkins: user.giftedSkins.filter((s) => (COMMON_SKIN_IDS as string[]).includes(s)),
+    allowedExclusiveSkins,
     bestNoCoinTimeMs: user.bestNoCoinTimeMs,
     bestDistance: user.bestDistance,
     bestScore: user.bestScore,
@@ -113,6 +121,7 @@ export function sanitizeUserProfile(user: StoredUser, rank: number | null = null
     createdAt: user.createdAt,
     lastSeenAt: user.lastSeenAt,
     rank,
+    competitiveStats,
   };
 }
 
@@ -296,7 +305,7 @@ export async function registerHandler(req: Request, res: Response): Promise<void
     role: 'player',
     mustChangePassword: false,
     equippedSkin: 'ratao',
-    unlockedSkins: [...ALL_SKIN_IDS],
+    unlockedSkins: [...COMMON_SKIN_IDS],
     giftedSkins: [],
     bestNoCoinTimeMs: 0,
     bestDistance: 0,
@@ -326,7 +335,15 @@ export async function registerHandler(req: Request, res: Response): Promise<void
   setSessionCookie(res, sessionToken);
 
   res.status(201).json({
-    user: sanitizeUserProfile(newUser, null),
+    user: sanitizeUserProfile(newUser, null, [], {
+      userId: id,
+      x1Wins: 0,
+      x1Losses: 0,
+      x1Draws: 0,
+      coopMatches: 0,
+      coopWins: 0,
+      lastMatchAt: null,
+    }),
     sessionToken,
   });
 }
@@ -382,9 +399,13 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   const sessionToken = await createSessionForUser(user.id, user.role === 'admin' ? 'admin' : 'player');
   setSessionCookie(res, sessionToken);
 
-  const rank = await repoComputePlayerRank(user.id);
+  const [rank, allowedExcl, compStats] = await Promise.all([
+    repoComputePlayerRank(user.id),
+    repoGetAllowedExclusiveSkinsForUser(user),
+    repoGetCompetitiveStatsForUser(user.id),
+  ]);
   res.json({
-    user: sanitizeUserProfile(user, rank),
+    user: sanitizeUserProfile(user, rank, allowedExcl, compStats),
     sessionToken,
   });
 }
@@ -603,9 +624,13 @@ export async function meHandler(req: AuthedRequest, res: Response): Promise<void
     res.status(401).json({ error: 'Não autenticado.' });
     return;
   }
-  const rank = await repoComputePlayerRank(req.authUser.id);
+  const [rank, allowedExcl, compStats] = await Promise.all([
+    repoComputePlayerRank(req.authUser.id),
+    repoGetAllowedExclusiveSkinsForUser(req.authUser),
+    repoGetCompetitiveStatsForUser(req.authUser.id),
+  ]);
   res.json({
-    user: sanitizeUserProfile(req.authUser, rank),
+    user: sanitizeUserProfile(req.authUser, rank, allowedExcl, compStats),
   });
 }
 
@@ -658,7 +683,7 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
     role: 'admin',
     mustChangePassword: false,
     equippedSkin: 'ratao',
-    unlockedSkins: [...ALL_SKIN_IDS],
+    unlockedSkins: [...COMMON_SKIN_IDS],
     giftedSkins: [],
     bestNoCoinTimeMs: 0,
     bestDistance: 0,
@@ -681,7 +706,7 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
   );
 
   res.status(201).json({
-    user: sanitizeUserProfile(adminUser, null),
+    user: sanitizeUserProfile(adminUser, null, ['ratao_rei']),
     sessionToken: adminSessionToken,
     adminSessionToken,
   });
@@ -826,7 +851,7 @@ export async function googleAuthHandler(req: Request, res: Response): Promise<vo
         role: 'player',
         mustChangePassword: false,
         equippedSkin: 'ratao',
-        unlockedSkins: [...ALL_SKIN_IDS],
+        unlockedSkins: [...COMMON_SKIN_IDS],
         giftedSkins: [],
         bestNoCoinTimeMs: 0,
         bestDistance: 0,
@@ -848,9 +873,13 @@ export async function googleAuthHandler(req: Request, res: Response): Promise<vo
     const sessionToken = await createSessionForUser(user.id, 'player');
     setSessionCookie(res, sessionToken);
 
-    const rank = await repoComputePlayerRank(user.id);
+    const [rank, allowedExcl, compStats] = await Promise.all([
+      repoComputePlayerRank(user.id),
+      repoGetAllowedExclusiveSkinsForUser(user),
+      repoGetCompetitiveStatsForUser(user.id),
+    ]);
     res.json({
-      user: sanitizeUserProfile(user, rank),
+      user: sanitizeUserProfile(user, rank, allowedExcl, compStats),
       sessionToken,
     });
   } catch (err) {

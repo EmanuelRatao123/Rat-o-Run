@@ -6,10 +6,19 @@ import {
   LeaderboardEntry,
   MapId,
   MatchSummary,
+  MultiplayerInvite,
+  MultiplayerMatchRecord,
+  MultiplayerMode,
+  MultiplayerParticipant,
+  MultiplayerRoom,
+  ParticipantAnimState,
+  PlayerCompetitiveStats,
   PollItem,
+  PublicPlayerLookup,
   SkinGiftItem,
   SkinId,
   UserProfile,
+  X1ResultRecord,
 } from '../shared/constants.ts';
 
 let memorySessionToken: string | null = null;
@@ -196,6 +205,8 @@ export const api = {
         totalCoins: number;
         favoriteSkin: SkinId;
         rank: number | null;
+        competitiveStats: PlayerCompetitiveStats;
+        recentX1: X1ResultRecord[];
       };
     }>(`/api/profile/${encodeURIComponent(nickname)}`),
 
@@ -257,4 +268,115 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  multiplayer: {
+    overview: () =>
+      apiFetch<{
+        incomingInvites: MultiplayerInvite[];
+        outgoingInvites: MultiplayerInvite[];
+        activeRoom: {
+          room: MultiplayerRoom;
+          participants: MultiplayerParticipant[];
+          serverNow: number;
+        } | null;
+        competitiveStats: PlayerCompetitiveStats;
+        recentMatches: MultiplayerMatchRecord[];
+        recentX1: X1ResultRecord[];
+      }>('/api/multiplayer/overview'),
+
+    search: (nickname: string) =>
+      apiFetch<{ players: PublicPlayerLookup[] }>(
+        `/api/multiplayer/search?nickname=${encodeURIComponent(nickname)}`
+      ),
+
+    createInvite: (payload: {
+      targetNickname: string;
+      mode: MultiplayerMode;
+      mapId: MapId;
+    }) =>
+      apiFetch<{
+        invite: MultiplayerInvite;
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+      }>('/api/multiplayer/invites', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+
+    respondInvite: (inviteId: string, action: 'accept' | 'decline' | 'cancel') =>
+      apiFetch<{
+        ok: boolean;
+        status: string;
+        room?: MultiplayerRoom;
+        participants?: MultiplayerParticipant[];
+      }>(`/api/multiplayer/invites/${encodeURIComponent(inviteId)}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+
+    getRoom: (roomId: string) =>
+      apiFetch<{
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+        serverNow: number;
+      }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}`),
+
+    setReady: (roomId: string, ready: boolean, mapId?: MapId) =>
+      apiFetch<{
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+        serverNow: number;
+      }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}/ready`, {
+        method: 'POST',
+        body: JSON.stringify({ ready, mapId }),
+      }),
+
+    startRoom: (roomId: string) =>
+      apiFetch<{
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+        serverNow: number;
+      }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}/start`, {
+        method: 'POST',
+      }),
+
+    syncRoom: (
+      roomId: string,
+      payload: {
+        posX: number;
+        posY: number;
+        posZ: number;
+        lane: number;
+        animState: ParticipantAnimState;
+        distance: number;
+        coins: number;
+        score: number;
+        noCoinTimeMs: number;
+        durationMs: number;
+        collisionCount: number;
+        alive: boolean;
+        hoverboard: boolean;
+        jetpack: boolean;
+        event?:
+          | { type: 'coin_collected'; coinZ: number; coinLane: number }
+          | { type: 'crashed' };
+      }
+    ) =>
+      apiFetch<{
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+        serverNow: number;
+      }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}/sync`, {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+
+    leaveRoom: (roomId: string) =>
+      apiFetch<{
+        room: MultiplayerRoom;
+        participants: MultiplayerParticipant[];
+      }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}/leave`, {
+        method: 'POST',
+      }),
+  },
 };

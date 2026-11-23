@@ -1,12 +1,14 @@
 import { Request, Response } from 'express';
 import {
-  ALL_SKIN_IDS,
   MapId,
   SkinId,
+  isCommonSkinId,
+  isValidAnySkinId,
 } from '../shared/constants.ts';
 import { AuthedRequest } from './auth.ts';
 import { generateToken, signHmac, verifyHmac } from './crypto.ts';
 import {
+  repoCanUserEquipSkin,
   repoCloseGlobalPoll,
   repoCompleteMatchAndRecord,
   repoComputePlayerRank,
@@ -17,7 +19,9 @@ import {
   repoFindUserByNickname,
   repoGetActiveMatch,
   repoGetAdminDashboardData,
+  repoGetCompetitiveStatsForUser,
   repoGetLeaderboard,
+  repoGetRecentX1ResultsForUser,
   repoGetSocialFeed,
   repoGiftSkinToPlayer,
   repoMarkGiftsSeen,
@@ -28,9 +32,7 @@ import {
 
 const VALID_MAPS: MapId[] = ['brasil', 'tokyo', 'futebol', 'capivara'];
 
-function isValidSkinId(val: unknown): val is SkinId {
-  return typeof val === 'string' && (ALL_SKIN_IDS as string[]).includes(val);
-}
+const isValidSkinId = isValidAnySkinId;
 
 function isValidMapId(val: unknown): val is MapId {
   return typeof val === 'string' && (VALID_MAPS as string[]).includes(val);
@@ -41,6 +43,11 @@ export async function equipSkinHandler(req: AuthedRequest, res: Response): Promi
   const { skinId } = req.body ?? {};
   if (!isValidSkinId(skinId)) {
     res.status(400).json({ error: 'Skin inválida.' });
+    return;
+  }
+  const allowed = await repoCanUserEquipSkin(user, skinId);
+  if (!allowed) {
+    res.status(403).json({ error: 'Você não possui permissão para equipar esta skin exclusiva.' });
     return;
   }
   await repoUpdateUserEquippedSkin(user.id, skinId);
@@ -54,7 +61,11 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
     res.status(400).json({ error: 'Mapa inválido.' });
     return;
   }
-  const chosenSkin = isValidSkinId(skinId) ? skinId : user.equippedSkin;
+  const chosenSkin: SkinId = isValidSkinId(skinId) ? skinId : user.equippedSkin;
+  if (!(await repoCanUserEquipSkin(user, chosenSkin))) {
+    res.status(403).json({ error: 'Skin exclusiva não autorizada para esta conta.' });
+    return;
+  }
   const matchId = `m_${generateToken(10)}`;
   const startedAt = Date.now();
   const payload = `${matchId}:${user.id}:${startedAt}:${mapId}:${chosenSkin}`;
@@ -214,7 +225,11 @@ export async function publicProfileHandler(req: Request, res: Response): Promise
     return;
   }
 
-  const rank = await repoComputePlayerRank(user.id);
+  const [rank, competitiveStats, recentX1] = await Promise.all([
+    repoComputePlayerRank(user.id),
+    repoGetCompetitiveStatsForUser(user.id),
+    repoGetRecentX1ResultsForUser(user.id, 8),
+  ]);
   res.json({
     profile: {
       id: user.id,
@@ -228,6 +243,8 @@ export async function publicProfileHandler(req: Request, res: Response): Promise
       totalCoins: user.totalCoins,
       favoriteSkin: user.favoriteSkin,
       rank,
+      competitiveStats,
+      recentX1,
     },
   });
 }
@@ -383,6 +400,10 @@ export async function adminGiftSkinHandler(req: AuthedRequest, res: Response): P
   }
   if (!isValidSkinId(skinId)) {
     res.status(400).json({ error: 'Skin selecionada inválida.' });
+    return;
+  }
+  if (!isCommonSkinId(skinId)) {
+    res.status(403).json({ error: 'Skins exclusivas não podem ser enviadas como presente.' });
     return;
   }
 

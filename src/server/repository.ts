@@ -1,29 +1,39 @@
-import { and, count, desc, eq, gt, ilike, or, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, ilike, inArray, or, sql } from 'drizzle-orm';
 import { ensureNeonSchema, getNeonDb, isNeonConfigured } from '../db/neon.ts';
 import {
   activeMatches,
   adminLogs,
+  exclusiveSkinPermissions,
   gameSettings,
   globalMessages,
   matches,
+  playerCompetitiveStats,
   pollVotes,
   polls,
   sessions,
   skinGifts,
   users,
+  x1Results,
 } from '../db/schema.ts';
 import {
   ALL_SKIN_IDS,
   AdminLogItem,
   AdminPlayerRecord,
   AdminStats,
+  COMMON_SKIN_IDS,
+  ExclusiveSkinId,
   GlobalMessage,
   LeaderboardEntry,
   MapId,
+  PlayerCompetitiveStats,
   PollItem,
   SKINS,
   SkinGiftItem,
   SkinId,
+  X1ResultRecord,
+  isCommonSkinId,
+  isExclusiveSkinId,
+  isValidAnySkinId,
 } from '../shared/constants.ts';
 import { generateToken, hashPassword } from './crypto.ts';
 import {
@@ -39,11 +49,7 @@ import {
   saveDb as saveLocalDb,
 } from './store.ts';
 
-const VALID_SKIN_SET = new Set<string>(ALL_SKIN_IDS);
-
-function isValidSkinId(val: unknown): val is SkinId {
-  return typeof val === 'string' && VALID_SKIN_SET.has(val);
-}
+const isValidSkinId = isValidAnySkinId;
 
 function mapNeonUserRow(row: typeof users.$inferSelect): StoredUser {
   return {
@@ -119,7 +125,7 @@ export async function ensureDbAndAdminReady(): Promise<void> {
       role: 'admin',
       mustChangePassword: true,
       equippedSkin: 'ratao',
-      unlockedSkins: [...ALL_SKIN_IDS],
+      unlockedSkins: [...COMMON_SKIN_IDS],
       giftedSkins: [],
       bestNoCoinTimeMs: 0,
       bestDistance: 0,
@@ -441,6 +447,7 @@ export async function repoCompleteMatchAndRecord(params: {
     storedUser.lastSeenAt = match.createdAt;
     saveLocalDb();
 
+    await repoSyncExclusiveSkinPermissions();
     const globalRank = await repoComputePlayerRank(user.id);
     return { ok: true, isNewPersonalRecord, globalRank };
   }
@@ -502,6 +509,7 @@ export async function repoCompleteMatchAndRecord(params: {
     })
     .where(eq(users.id, user.id));
 
+  await repoSyncExclusiveSkinPermissions();
   const globalRank = await repoComputePlayerRank(user.id);
   return { ok: true, isNewPersonalRecord, globalRank };
 }
@@ -1137,6 +1145,9 @@ export async function repoGiftSkinToPlayer(params: {
   | { status: 'duplicate'; targetNickname: string; skinName: string }
 > {
   const { adminNickname, targetNickname, skinId } = params;
+  if (!isCommonSkinId(skinId)) {
+    return { status: 'not_found' };
+  }
   const target = await repoFindUserByNickname(targetNickname);
   if (!target) {
     return { status: 'not_found' };
@@ -1308,3 +1319,282 @@ export async function repoSearchPlayersForAdmin(query: string): Promise<AdminPla
     };
   });
 }
+
+// --- Exclusive Skin Permissions & Competitive Stats Engine ---
+
+const RANK_SKIN_MAP: { rank: 1 | 2 | 3; skinId: ExclusiveSkinId; reason: 'top1' | 'top2' | 'top3' }[] = [
+  { rank: 1, skinId: 'lenda_suprema', reason: 'top1' },
+  { rank: 2, skinId: 'campeao_prata', reason: 'top2' },
+  { rank: 3, skinId: 'guerreiro_bronze', reason: 'top3' },
+];
+
+export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
+  const now = new Date().toISOString();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const ranked = Object.values(db.users)
+      .filter((u) => u.totalMatches > 0 || u.bestNoCoinTimeMs > 0)
+      .sort((a, b) => b.bestNoCoinTimeMs - a.bestNoCoinTimeMs || b.bestDistance - a.bestDistance)
+      .slice(0, 3);
+
+    const desiredByUser = new Map<string, Set<ExclusiveSkinId>>();
+
+    // Admin strictly gets ratao_rei
+    for (const u of Object.values(db.users)) {
+      if (u.role === 'admin') {
+        const set = desiredByUser.get(u.id) || new Set<ExclusiveSkinId>();
+        set.add('ratao_rei');
+        desiredByUser.set(u.id, set);
+      }
+    }
+
+    // Top 1 / Top 2 / Top 3 get their corresponding exclusive skins
+    RANK_SKIN_MAP.forEach((slot, idx) => {
+      const holder = ranked[idx];
+      if (!holder) return;
+      const set = desiredByUser.get(holder.id) || new Set<ExclusiveSkinId>();
+      set.add(slot.skinId);
+      desiredByUser.set(holder.id, set);
+    });
+
+    // Revoke stale active permissions
+    let changed = false;
+    for (const perm of db.exclusiveSkinPermissions) {
+      if (!perm.active) continue;
+      const desired = desiredByUser.get(perm.userId);
+      if (!desired || !desired.has(perm.skinId)) {
+        perm.active = false;
+        perm.revokedAt = now;
+        perm.updatedAt = now;
+        changed = true;
+      }
+    }
+
+    // Grant missing desired permissions
+    for (const [uid, skins] of desiredByUser.entries()) {
+      for (const skinId of skins) {
+        const already = db.exclusiveSkinPermissions.find(
+          (p) => p.userId === uid && p.skinId === skinId && p.active
+        );
+        if (!already) {
+          const rankSlot = RANK_SKIN_MAP.find((r) => r.skinId === skinId);
+          db.exclusiveSkinPermissions.push({
+            id: `eperm_${generateToken(8)}`,
+            userId: uid,
+            skinId,
+            reason: rankSlot ? rankSlot.reason : 'admin',
+            rankPosition: rankSlot ? rankSlot.rank : null,
+            active: true,
+            grantedAt: now,
+            revokedAt: null,
+            updatedAt: now,
+          });
+          changed = true;
+        }
+      }
+    }
+
+    // Revert equipped skin if a user currently has an exclusive skin they no longer have permission for
+    for (const u of Object.values(db.users)) {
+      if (isExclusiveSkinId(u.equippedSkin)) {
+        const allowed = desiredByUser.get(u.id);
+        if (!allowed || !allowed.has(u.equippedSkin)) {
+          u.equippedSkin = 'ratao';
+          changed = true;
+        }
+      }
+    }
+
+    if (changed) saveLocalDb();
+    return;
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+
+  const rankedFilter = or(gt(users.totalMatches, 0), gt(users.bestNoCoinTimeMs, 0));
+  const [topUsers, adminUsers, activePerms] = await Promise.all([
+    db
+      .select()
+      .from(users)
+      .where(rankedFilter)
+      .orderBy(desc(users.bestNoCoinTimeMs), desc(users.bestDistance))
+      .limit(3),
+    db.select().from(users).where(eq(users.role, 'admin')),
+    db
+      .select()
+      .from(exclusiveSkinPermissions)
+      .where(eq(exclusiveSkinPermissions.active, true)),
+  ]);
+
+  const desiredByUser = new Map<string, Set<ExclusiveSkinId>>();
+  for (const adm of adminUsers) {
+    const set = desiredByUser.get(adm.id) || new Set<ExclusiveSkinId>();
+    set.add('ratao_rei');
+    desiredByUser.set(adm.id, set);
+  }
+  RANK_SKIN_MAP.forEach((slot, idx) => {
+    const holder = topUsers[idx];
+    if (!holder) return;
+    const set = desiredByUser.get(holder.id) || new Set<ExclusiveSkinId>();
+    set.add(slot.skinId);
+    desiredByUser.set(holder.id, set);
+  });
+
+  const revokeIds: string[] = [];
+  for (const perm of activePerms) {
+    const desired = desiredByUser.get(perm.userId);
+    if (!desired || !desired.has(perm.skinId)) {
+      revokeIds.push(perm.id);
+    }
+  }
+  if (revokeIds.length > 0) {
+    await db
+      .update(exclusiveSkinPermissions)
+      .set({ active: false, revokedAt: now, updatedAt: now })
+      .where(inArray(exclusiveSkinPermissions.id, revokeIds));
+  }
+
+  for (const [uid, skins] of desiredByUser.entries()) {
+    for (const skinId of skins) {
+      const exists = activePerms.some((p) => p.userId === uid && p.skinId === skinId);
+      if (!exists) {
+        const rankSlot = RANK_SKIN_MAP.find((r) => r.skinId === skinId);
+        await db.insert(exclusiveSkinPermissions).values({
+          id: `eperm_${generateToken(8)}`,
+          userId: uid,
+          skinId,
+          reason: rankSlot ? rankSlot.reason : 'admin',
+          rankPosition: rankSlot ? rankSlot.rank : null,
+          active: true,
+          grantedAt: now,
+          revokedAt: null,
+          updatedAt: now,
+        });
+      }
+    }
+  }
+
+  // Revert any displaced user who currently has an exclusive skin equipped without active permission
+  const exclusiveHolders = await db
+    .select()
+    .from(users)
+    .where(inArray(users.equippedSkin, ['ratao_rei', 'lenda_suprema', 'campeao_prata', 'guerreiro_bronze']));
+  for (const u of exclusiveHolders) {
+    const allowed = desiredByUser.get(u.id);
+    if (!allowed || !allowed.has(u.equippedSkin as ExclusiveSkinId)) {
+      await db.update(users).set({ equippedSkin: 'ratao' }).where(eq(users.id, u.id));
+    }
+  }
+}
+
+export async function repoGetAllowedExclusiveSkinsForUser(user: StoredUser): Promise<SkinId[]> {
+  await repoSyncExclusiveSkinPermissions();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const freshUser = db.users[user.id] || user;
+    user.equippedSkin = freshUser.equippedSkin;
+    const perms = db.exclusiveSkinPermissions
+      .filter((p) => p.userId === user.id && p.active)
+      .map((p) => p.skinId);
+    const set = new Set<SkinId>(perms);
+    if (freshUser.role === 'admin') set.add('ratao_rei');
+    else set.delete('ratao_rei');
+    return Array.from(set);
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const [freshRows, perms] = await Promise.all([
+    db.select().from(users).where(eq(users.id, user.id)).limit(1),
+    db
+      .select()
+      .from(exclusiveSkinPermissions)
+      .where(and(eq(exclusiveSkinPermissions.userId, user.id), eq(exclusiveSkinPermissions.active, true))),
+  ]);
+  if (freshRows[0]) {
+    user.equippedSkin = freshRows[0].equippedSkin;
+  }
+  const set = new Set<SkinId>(perms.map((p) => p.skinId));
+  if (user.role === 'admin') set.add('ratao_rei');
+  else set.delete('ratao_rei');
+  return Array.from(set);
+}
+
+export async function repoCanUserEquipSkin(user: StoredUser, skinId: SkinId): Promise<boolean> {
+  if (isCommonSkinId(skinId)) return true;
+  if (skinId === 'ratao_rei' && user.role !== 'admin') return false;
+  const allowed = await repoGetAllowedExclusiveSkinsForUser(user);
+  return allowed.includes(skinId);
+}
+
+export async function repoGetCompetitiveStatsForUser(userId: string): Promise<PlayerCompetitiveStats> {
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const row = db.playerCompetitiveStats[userId];
+    return (
+      row || {
+        userId,
+        x1Wins: 0,
+        x1Losses: 0,
+        x1Draws: 0,
+        coopMatches: 0,
+        coopWins: 0,
+        lastMatchAt: null,
+      }
+    );
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const rows = await db
+    .select()
+    .from(playerCompetitiveStats)
+    .where(eq(playerCompetitiveStats.userId, userId))
+    .limit(1);
+  if (!rows[0]) {
+    return {
+      userId,
+      x1Wins: 0,
+      x1Losses: 0,
+      x1Draws: 0,
+      coopMatches: 0,
+      coopWins: 0,
+      lastMatchAt: null,
+    };
+  }
+  return {
+    userId: rows[0].userId,
+    x1Wins: rows[0].x1Wins,
+    x1Losses: rows[0].x1Losses,
+    x1Draws: rows[0].x1Draws,
+    coopMatches: rows[0].coopMatches,
+    coopWins: rows[0].coopWins,
+    lastMatchAt: rows[0].lastMatchAt,
+  };
+}
+
+export async function repoGetRecentX1ResultsForUser(
+  userId: string,
+  limitCount = 10
+): Promise<X1ResultRecord[]> {
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    return db.x1Results
+      .filter((r) => r.winnerUserId === userId || r.loserUserId === userId)
+      .slice(0, limitCount);
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const rows = await db
+    .select()
+    .from(x1Results)
+    .where(or(eq(x1Results.winnerUserId, userId), eq(x1Results.loserUserId, userId)))
+    .orderBy(desc(x1Results.createdAt))
+    .limit(limitCount);
+  return rows;
+}
+

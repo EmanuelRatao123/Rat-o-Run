@@ -1,7 +1,26 @@
-import { Calendar, Coins, Crown, Flag, Gamepad, Search, Timer, User, X } from 'lucide-react';
+import {
+  Calendar,
+  Coins,
+  Crown,
+  Flag,
+  Gamepad,
+  Search,
+  Swords,
+  Timer,
+  User,
+  Users,
+  X,
+} from 'lucide-react';
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api.ts';
-import { SKINS, SkinId, UserProfile, formatStopwatch } from '../shared/constants.ts';
+import {
+  PlayerCompetitiveStats,
+  SkinId,
+  UserProfile,
+  X1ResultRecord,
+  formatStopwatch,
+  getSkinDefinition,
+} from '../shared/constants.ts';
 import { ScenePreview3D } from './ScenePreview3D.tsx';
 
 interface ProfileModalProps {
@@ -22,6 +41,8 @@ interface PublicProfileData {
   totalCoins: number;
   favoriteSkin: SkinId;
   rank: number | null;
+  competitiveStats: PlayerCompetitiveStats;
+  recentX1: X1ResultRecord[];
 }
 
 export function ProfileModal({
@@ -59,8 +80,8 @@ export function ProfileModal({
     void loadProfile(searchNick);
   };
 
-  const equippedDef = profile ? SKINS.find((s) => s.id === profile.equippedSkin) : null;
-  const favDef = profile ? SKINS.find((s) => s.id === profile.favoriteSkin) : null;
+  const equippedDef = profile ? getSkinDefinition(profile.equippedSkin) : null;
+  const favDef = profile ? getSkinDefinition(profile.favoriteSkin) : null;
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-3 sm:p-6">
@@ -104,88 +125,154 @@ export function ProfileModal({
               {error}
             </div>
           ) : profile ? (
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
-              {/* Avatar 3D */}
-              <div className="md:col-span-5 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex flex-col">
-                <div className="h-56 relative">
-                  <ScenePreview3D
-                    skinId={profile.equippedSkin}
-                    mapId="brasil"
-                    mode="turntable"
-                    quality="low"
-                  />
+            <div className="space-y-5">
+              <div className="grid grid-cols-1 md:grid-cols-12 gap-5">
+                {/* Avatar 3D */}
+                <div className="md:col-span-5 bg-slate-950 rounded-2xl border border-slate-800 overflow-hidden flex flex-col">
+                  <div className="h-56 relative">
+                    <ScenePreview3D
+                      skinId={profile.equippedSkin}
+                      mapId="brasil"
+                      mode="turntable"
+                      quality="low"
+                    />
+                  </div>
+                  <div className="p-3.5 bg-slate-900 border-t border-slate-800 text-center">
+                    <div className="font-display text-xl font-bold text-white">
+                      {profile.nickname}
+                    </div>
+                    <div className="text-xs text-amber-300 font-semibold">
+                      Skin Equipada: {equippedDef?.name || profile.equippedSkin}
+                    </div>
+                    <div className="mt-1.5 text-[11px] text-slate-400 flex items-center justify-center gap-1">
+                      <Calendar className="w-3 h-3" />
+                      Desde {new Date(profile.createdAt).toLocaleDateString('pt-BR')}
+                    </div>
+                  </div>
                 </div>
-                <div className="p-3.5 bg-slate-900 border-t border-slate-800 text-center">
-                  <div className="font-display text-xl font-bold text-white">
-                    {profile.nickname}
+
+                {/* Stats Grid */}
+                <div className="md:col-span-7 grid grid-cols-2 gap-3 content-start">
+                  <div className="col-span-2 p-4 rounded-xl bg-amber-500/10 border border-amber-400/50 flex items-center justify-between">
+                    <div>
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                        <Timer className="w-3.5 h-3.5" /> Recorde Sem Moedas
+                      </div>
+                      <div className="font-mono-num text-3xl font-extrabold text-white mt-0.5">
+                        {formatStopwatch(profile.bestNoCoinTimeMs)}
+                      </div>
+                    </div>
+                    <div className="text-right">
+                      <div className="text-[11px] font-bold uppercase text-slate-400">
+                        Posição Global
+                      </div>
+                      <div className="font-mono-num text-2xl font-extrabold text-emerald-400 flex items-center justify-end gap-1">
+                        <Crown className="w-5 h-5 text-amber-400" />
+                        {profile.rank ? `#${profile.rank}` : '—'}
+                      </div>
+                    </div>
                   </div>
-                  <div className="text-xs text-amber-300 font-semibold">
-                    Skin Equipada: {equippedDef?.name || profile.equippedSkin}
+
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                      <Flag className="w-3.5 h-3.5 text-sky-400" /> Distância Máxima
+                    </div>
+                    <div className="font-mono-num text-xl font-bold text-white mt-1">
+                      {profile.bestDistance}m
+                    </div>
                   </div>
-                  <div className="mt-1.5 text-[11px] text-slate-400 flex items-center justify-center gap-1">
-                    <Calendar className="w-3 h-3" />
-                    Desde {new Date(profile.createdAt).toLocaleDateString('pt-BR')}
+
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                      <Gamepad className="w-3.5 h-3.5 text-rose-400" /> Total de Partidas
+                    </div>
+                    <div className="font-mono-num text-xl font-bold text-white mt-1">
+                      {profile.totalMatches}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
+                      <Coins className="w-3.5 h-3.5 text-amber-400" /> Moedas Coletadas
+                    </div>
+                    <div className="font-mono-num text-xl font-bold text-amber-300 mt-1">
+                      {profile.totalCoins.toLocaleString('pt-BR')}
+                    </div>
+                  </div>
+
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">
+                      Skin Favorita
+                    </div>
+                    <div className="font-display text-base font-bold text-emerald-300 mt-1 truncate">
+                      {favDef?.name || profile.favoriteSkin}
+                    </div>
                   </div>
                 </div>
               </div>
 
-              {/* Stats Grid */}
-              <div className="md:col-span-7 grid grid-cols-2 gap-3 content-start">
-                <div className="col-span-2 p-4 rounded-xl bg-amber-500/10 border border-amber-400/50 flex items-center justify-between">
-                  <div>
-                    <div className="text-[11px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
-                      <Timer className="w-3.5 h-3.5" /> Recorde Sem Moedas
-                    </div>
-                    <div className="font-mono-num text-3xl font-extrabold text-white mt-0.5">
-                      {formatStopwatch(profile.bestNoCoinTimeMs)}
-                    </div>
+              {/* Competitive X1 & Co-op Stats */}
+              <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="text-xs font-extrabold uppercase tracking-wider text-rose-300 flex items-center gap-1.5">
+                    <Swords className="w-4 h-4" /> Estatísticas X1 & Multiplayer
                   </div>
-                  <div className="text-right">
-                    <div className="text-[11px] font-bold uppercase text-slate-400">
-                      Posição Global
-                    </div>
-                    <div className="font-mono-num text-2xl font-extrabold text-emerald-400 flex items-center justify-end gap-1">
-                      <Crown className="w-5 h-5 text-amber-400" />
-                      {profile.rank ? `#${profile.rank}` : '—'}
-                    </div>
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <Flag className="w-3.5 h-3.5 text-sky-400" /> Distância Máxima
-                  </div>
-                  <div className="font-mono-num text-xl font-bold text-white mt-1">
-                    {profile.bestDistance}m
+                  <div className="flex items-center gap-3 text-xs">
+                    <span className="text-emerald-400 font-bold">
+                      {profile.competitiveStats.x1Wins} Vitórias
+                    </span>
+                    <span className="text-rose-400 font-bold">
+                      {profile.competitiveStats.x1Losses} Derrotas
+                    </span>
+                    <span className="text-sky-400 font-bold">
+                      {profile.competitiveStats.x1Draws} Empates
+                    </span>
+                    <span className="text-slate-400 flex items-center gap-1">
+                      <Users className="w-3.5 h-3.5 text-sky-400" />{' '}
+                      {profile.competitiveStats.coopMatches} Co-op
+                    </span>
                   </div>
                 </div>
 
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <Gamepad className="w-3.5 h-3.5 text-rose-400" /> Total de Partidas
+                {profile.recentX1.length > 0 && (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 pt-1">
+                    {profile.recentX1.slice(0, 4).map((x) => {
+                      const isWin = !x.isDraw && x.winnerUserId === profile.id;
+                      const opponentName =
+                        x.winnerUserId === profile.id
+                          ? x.loserNickname || 'Adversário'
+                          : x.winnerNickname || 'Adversário';
+                      const playerDuration =
+                        x.winnerUserId === profile.id
+                          ? x.winnerDurationMs
+                          : x.loserDurationMs;
+                      return (
+                        <div
+                          key={x.id}
+                          className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-800 text-xs flex items-center justify-between"
+                        >
+                          <div>
+                            <span
+                              className={`font-extrabold mr-1.5 ${
+                                isWin
+                                  ? 'text-emerald-400'
+                                  : x.isDraw
+                                    ? 'text-sky-400'
+                                    : 'text-rose-400'
+                              }`}
+                            >
+                              {isWin ? 'V' : x.isDraw ? 'E' : 'D'}
+                            </span>
+                            <span className="text-slate-200">vs {opponentName}</span>
+                          </div>
+                          <span className="font-mono-num text-[11px] text-slate-400">
+                            {formatStopwatch(playerDuration)}
+                          </span>
+                        </div>
+                      );
+                    })}
                   </div>
-                  <div className="font-mono-num text-xl font-bold text-white mt-1">
-                    {profile.totalMatches}
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                    <Coins className="w-3.5 h-3.5 text-amber-400" /> Moedas Coletadas
-                  </div>
-                  <div className="font-mono-num text-xl font-bold text-amber-300 mt-1">
-                    {profile.totalCoins.toLocaleString('pt-BR')}
-                  </div>
-                </div>
-
-                <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                  <div className="text-[11px] text-slate-400 font-bold uppercase">
-                    Skin Favorita
-                  </div>
-                  <div className="font-display text-base font-bold text-emerald-300 mt-1 truncate">
-                    {favDef?.name || profile.favoriteSkin}
-                  </div>
-                </div>
+                )}
               </div>
             </div>
           ) : null}

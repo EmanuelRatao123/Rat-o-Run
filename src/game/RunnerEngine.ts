@@ -2,16 +2,21 @@ import * as THREE from 'three';
 import {
   GraphicsQuality,
   MapId,
+  MultiplayerMode,
+  MultiplayerParticipant,
   POWERUPS,
+  ParticipantAnimState,
   PowerUpType,
   SkinId,
 } from '../shared/constants.ts';
+import { createSeededRng, generateTrackWave } from '../shared/trackGenerator.ts';
 import { gameAudio } from './audio.ts';
 import {
   CharacterAnimState,
   CharacterRig,
   animateCharacterRig,
   createCharacterRig,
+  createFloatingNameTag,
   createPoliceRig,
 } from './characters.ts';
 import { MAP_THEMES, MapSceneryBuilder, SceneryChunk } from './maps.ts';
@@ -51,6 +56,44 @@ export interface RunResultPayload {
   durationMs: number;
 }
 
+export interface MultiplayerRunnerOptions {
+  mode: MultiplayerMode;
+  seed: number;
+  isHost: boolean;
+  opponentNickname: string;
+  opponentSkin: SkinId;
+  frozenAtStart?: boolean;
+  onCoinCollected?: (coinZ: number, coinLane: number) => void;
+  onLocalCrashed?: (payload: RunResultPayload) => void;
+}
+
+export interface MultiplayerTelemetrySnapshot {
+  posX: number;
+  posY: number;
+  posZ: number;
+  lane: number;
+  animState: ParticipantAnimState;
+  distance: number;
+  coins: number;
+  score: number;
+  noCoinTimeMs: number;
+  durationMs: number;
+  collisionCount: number;
+  alive: boolean;
+  hoverboard: boolean;
+  jetpack: boolean;
+}
+
+interface RemotePlayerVisualState {
+  targetX: number;
+  targetY: number;
+  targetZ: number;
+  animState: ParticipantAnimState;
+  hoverboard: boolean;
+  jetpack: boolean;
+  alive: boolean;
+}
+
 interface Particle {
   mesh: THREE.Mesh;
   vx: number;
@@ -83,17 +126,34 @@ export class RunnerEngine {
 
   private playerRig: CharacterRig;
   private policeRig: CharacterRig;
+  private remoteRig?: CharacterRig;
+  private remoteNameTag?: { sprite: THREE.Sprite; dispose: () => void };
+  private remoteState: RemotePlayerVisualState = {
+    targetX: 0,
+    targetY: 0,
+    targetZ: 0,
+    animState: 'idle',
+    hoverboard: false,
+    jetpack: false,
+    alive: true,
+  };
 
   private mapId: MapId;
   private skinId: SkinId;
   private quality: GraphicsQuality;
+  private multiplayer?: MultiplayerRunnerOptions;
+  private rng: () => number;
+  private waveIndex = 0;
 
   private onHudUpdate: (hud: HudSnapshot) => void;
   private onGameOver: (result: RunResultPayload) => void;
 
   private running = false;
   private paused = false;
+  private frozen = false;
+  private coopLocalDead = false;
   private ended = false;
+  private endAnimState: CharacterAnimState = 'crash';
   private disposed = false;
 
   private frameId = 0;
@@ -116,6 +176,7 @@ export class RunnerEngine {
   private hitstopTimer = 0;
   private shakeIntensity = 0;
   private stepSoundCooldown = 0;
+  private currentAnimState: ParticipantAnimState = 'idle';
 
   // Police chase (2 seconds after 1st collision)
   private collisionCount = 0;
@@ -159,6 +220,7 @@ export class RunnerEngine {
     quality: GraphicsQuality;
     onHudUpdate: (hud: HudSnapshot) => void;
     onGameOver: (result: RunResultPayload) => void;
+    multiplayer?: MultiplayerRunnerOptions;
   }) {
     this.container = opts.container;
     this.mapId = opts.mapId;
@@ -166,6 +228,16 @@ export class RunnerEngine {
     this.quality = opts.quality;
     this.onHudUpdate = opts.onHudUpdate;
     this.onGameOver = opts.onGameOver;
+    this.multiplayer = opts.multiplayer;
+    this.frozen = Boolean(opts.multiplayer?.frozenAtStart);
+    this.rng = createSeededRng(
+      opts.multiplayer?.seed ?? (Math.floor(Math.random() * 0x7fffffff) + 1)
+    );
+
+    if (opts.multiplayer) {
+      this.playerX = opts.multiplayer.isHost ? -0.65 : 0.65;
+      this.remoteState.targetX = opts.multiplayer.isHost ? 0.65 : -0.65;
+    }
 
     this.ctx = createStudioRenderer(this.container, this.quality);
     const theme = MAP_THEMES[this.mapId];
@@ -220,7 +292,27 @@ export class RunnerEngine {
     // Characters (models face +Z locally; rotate PI radians to run forward along -Z)
     this.playerRig = createCharacterRig(this.skinId, this.ctx.renderer.shadowMap.enabled);
     this.playerRig.root.rotation.y = Math.PI;
+    this.playerRig.root.position.set(this.playerX, 0, 0);
     this.scene.add(this.playerRig.root);
+
+    if (opts.multiplayer) {
+      this.remoteRig = createCharacterRig(
+        opts.multiplayer.opponentSkin,
+        this.ctx.renderer.shadowMap.enabled
+      );
+      this.remoteRig.root.rotation.y = Math.PI;
+      this.remoteRig.root.position.set(
+        this.remoteState.targetX,
+        this.remoteState.targetY,
+        this.remoteState.targetZ
+      );
+      this.remoteNameTag = createFloatingNameTag(
+        opts.multiplayer.opponentNickname,
+        opts.multiplayer.mode === 'x1' ? '#ef4444' : '#38bdf8'
+      );
+      this.remoteRig.root.add(this.remoteNameTag.sprite);
+      this.scene.add(this.remoteRig.root);
+    }
 
     this.policeRig = createPoliceRig(this.ctx.renderer.shadowMap.enabled);
     this.policeRig.root.rotation.y = Math.PI;
@@ -249,7 +341,7 @@ export class RunnerEngine {
       ) {
         return;
       }
-      if (!this.running || this.paused || this.ended) return;
+      if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
       if (e.code === 'ArrowLeft' || e.code === 'KeyA') {
         e.preventDefault();
         this.moveLeft();
@@ -266,7 +358,8 @@ export class RunnerEngine {
     };
 
     this.blurHandler = () => {
-      if (this.running && !this.paused && !this.ended) {
+      // Never auto-pause active multiplayer matches on window blur
+      if (!this.multiplayer && this.running && !this.paused && !this.ended) {
         this.setPaused(true);
       }
     };
@@ -318,14 +411,60 @@ export class RunnerEngine {
   }
 
   public setPaused(paused: boolean): void {
+    if (this.multiplayer) return;
     this.paused = paused;
     if (!paused) {
       this.lastTimestamp = performance.now();
     }
   }
 
+  public setFrozen(frozen: boolean): void {
+    this.frozen = frozen;
+    if (!frozen) {
+      this.lastTimestamp = performance.now();
+    }
+  }
+
+  public updateRemotePlayerState(remote: MultiplayerParticipant): void {
+    this.remoteState = {
+      targetX: remote.posX,
+      targetY: remote.posY,
+      targetZ: remote.posZ,
+      animState: remote.animState,
+      hoverboard: Boolean(remote.hoverboard),
+      jetpack: Boolean(remote.jetpack),
+      alive: remote.alive,
+    };
+  }
+
+  public getMultiplayerTelemetry(): MultiplayerTelemetrySnapshot {
+    return {
+      posX: Number(this.playerX.toFixed(3)),
+      posY: Number(this.playerY.toFixed(3)),
+      posZ: Number(this.playerZ.toFixed(3)),
+      lane: this.targetLane,
+      animState: this.coopLocalDead ? 'crash' : this.currentAnimState,
+      distance: Math.floor(this.distance),
+      coins: this.coinCount,
+      score: Math.floor(this.score),
+      noCoinTimeMs: Math.round(this.noCoinTimeMs),
+      durationMs: Math.round(this.durationMs),
+      collisionCount: this.collisionCount,
+      alive: !this.ended && !this.coopLocalDead,
+      hoverboard: this.powerTimers.hoverboard > 0,
+      jetpack: this.powerTimers.jetpack > 0,
+    };
+  }
+
+  public forceEndExternal(animState: CharacterAnimState = 'idle'): void {
+    this.frozen = false;
+    this.ended = true;
+    this.endAnimState = animState;
+    this.emitHud(0);
+  }
+
   public moveLeft(): void {
-    if (!this.running || this.paused || this.ended) return;
+    if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
     if (this.targetLane > -1) {
       this.targetLane -= 1;
       gameAudio.playLaneSwitch();
@@ -333,7 +472,7 @@ export class RunnerEngine {
   }
 
   public moveRight(): void {
-    if (!this.running || this.paused || this.ended) return;
+    if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
     if (this.targetLane < 1) {
       this.targetLane += 1;
       gameAudio.playLaneSwitch();
@@ -341,12 +480,12 @@ export class RunnerEngine {
   }
 
   public jump(): void {
-    if (!this.running || this.paused || this.ended) return;
+    if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
     this.jumpBufferTimer = 0.14;
   }
 
   public slide(): void {
-    if (!this.running || this.paused || this.ended) return;
+    if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
     if (this.powerTimers.jetpack > 0) return;
     if (!this.grounded) {
       // Fast-fall slam!
@@ -380,6 +519,26 @@ export class RunnerEngine {
     }
   }
 
+  private updateRemoteVisuals(dt: number): void {
+    if (!this.remoteRig) return;
+    const r = this.remoteRig.root.position;
+    const nx = THREE.MathUtils.damp(r.x, this.remoteState.targetX, 16, dt);
+    const ny = THREE.MathUtils.damp(r.y, this.remoteState.targetY, 16, dt);
+    // Keep Z interpolating fast so remote runner matches live progress
+    const nz = THREE.MathUtils.damp(r.z, this.remoteState.targetZ, 16, dt);
+    r.set(nx, ny, nz);
+    this.remoteRig.hoverboardGroup.visible = this.remoteState.hoverboard;
+    this.remoteRig.jetpackGroup.visible = this.remoteState.jetpack;
+    this.remoteRig.contactShadow.position.y = Math.max(0.025, -ny + 0.025);
+    animateCharacterRig(
+      this.remoteRig,
+      this.remoteState.animState,
+      this.totalElapsed,
+      dt,
+      1.05
+    );
+  }
+
   private tick(): void {
     if (this.disposed) return;
     const now = performance.now();
@@ -387,12 +546,44 @@ export class RunnerEngine {
     this.lastTimestamp = now;
     const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
 
-    if (!this.paused && !this.ended) {
+    if (this.frozen) {
+      this.totalElapsed += dt;
+      this.currentAnimState = 'idle';
+      animateCharacterRig(this.playerRig, 'idle', this.totalElapsed, dt);
+      if (this.remoteRig) {
+        animateCharacterRig(this.remoteRig, 'idle', this.totalElapsed, dt);
+      }
+      this.camera.position.set(0, 4.1, 6.9);
+      this.camera.lookAt(0, 1.35, -12);
+    } else if (this.coopLocalDead && !this.ended) {
+      this.totalElapsed += dt;
+      this.updateRemoteVisuals(dt);
+      animateCharacterRig(this.playerRig, 'crash', this.totalElapsed, dt);
+      animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
+      this.updateParticles(dt);
+
+      const focusPos = this.remoteRig ? this.remoteRig.root.position : this.playerRig.root.position;
+      for (const chunk of this.chunks) {
+        if (chunk.group.position.z - focusPos.z > CHUNK_LENGTH * 1.1) {
+          chunk.group.position.z -= NUM_CHUNKS * CHUNK_LENGTH;
+        }
+      }
+      while (this.nextSpawnZ > focusPos.z - 140) {
+        this.spawnWave();
+      }
+      this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, focusPos.x * 0.65, 8, dt);
+      this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, Math.max(4.1, focusPos.y + 3.8), 8, dt);
+      this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, focusPos.z + 6.9, 8, dt);
+      this.camera.lookAt(focusPos.x * 0.45, focusPos.y + 1.35, focusPos.z - 12);
+    } else if (!this.paused && !this.ended) {
       this.stepSimulation(dt);
     } else if (this.ended) {
       this.totalElapsed += dt;
-      animateCharacterRig(this.playerRig, 'crash', this.totalElapsed, dt);
+      animateCharacterRig(this.playerRig, this.endAnimState, this.totalElapsed, dt);
       animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
+      if (this.remoteRig) {
+        animateCharacterRig(this.remoteRig, this.remoteState.alive ? 'idle' : 'crash', this.totalElapsed, dt);
+      }
     }
 
     this.ctx.renderer.render(this.scene, this.camera);
@@ -549,8 +740,10 @@ export class RunnerEngine {
     else if (this.stumbleTimer > 0) animState = 'stumble';
     else if (this.slideTimer > 0) animState = 'slide';
     else if (!this.grounded) animState = 'jump';
+    this.currentAnimState = animState;
 
     animateCharacterRig(this.playerRig, animState, this.totalElapsed, dt, currentSpeed / BASE_SPEED);
+    this.updateRemoteVisuals(dt);
 
     // Hit flash fade
     const flashOn = this.invulnTimer > 0 && Math.floor(this.invulnTimer * 20) % 2 === 0;
@@ -750,20 +943,28 @@ export class RunnerEngine {
       this.policeRig.root.visible = true;
       gameAudio.playStumbleAndWhistle();
     } else {
-      // Second collision in the same match: Captured! Game Over!
-      this.ended = true;
+      // Second collision in the same match: Captured! Game Over (or Co-op spectate friend)!
       this.policeRig.root.visible = true;
       this.policeRig.root.position.set(this.playerX - 0.5, this.playerY, this.playerZ + 1.0);
       gameAudio.playCaptured();
       this.emitHud(0);
-      this.onGameOver({
+      const resultPayload: RunResultPayload = {
         noCoinTimeMs: Math.round(this.noCoinTimeMs),
         collectedCoin: this.collectedCoin,
         coins: this.coinCount,
         distance: Math.floor(this.distance),
         score: Math.floor(this.score),
         durationMs: Math.round(this.durationMs),
-      });
+      };
+
+      if (this.multiplayer?.mode === 'coop') {
+        this.coopLocalDead = true;
+        this.multiplayer.onLocalCrashed?.(resultPayload);
+      } else {
+        this.ended = true;
+        this.endAnimState = 'crash';
+        this.onGameOver(resultPayload);
+      }
     }
   }
 
@@ -807,6 +1008,8 @@ export class RunnerEngine {
         } else {
           gameAudio.playCoin(this.coinCount);
         }
+
+        this.multiplayer?.onCoinCollected?.(coin.z, coin.lane);
 
         this.spawnBurst(coin.x, coin.y, coin.z, 0xfacc15, 7);
         this.scene.remove(coin.mesh);
@@ -882,99 +1085,33 @@ export class RunnerEngine {
   }
 
   private spawnWave(): void {
-    const z = this.nextSpawnZ;
-    const diff = Math.min(1, this.durationMs / 75000);
-    const lanes = [-1, 0, 1];
-    const openLane = lanes[Math.floor(Math.random() * lanes.length)];
-    const patternRoll = Math.random();
-
-    if (patternRoll < 0.25) {
-      // Pattern A: 2 lanes blocked with low barriers or tall blocks, 1 lane open with optional coins
-      for (const lane of lanes) {
-        if (lane === openLane) {
-          this.spawnCoinLine(lane, 0.85, z, 3, 2.6);
-        } else {
-          const kind: ObstacleKind = Math.random() < 0.55 ? 'low_barrier' : 'tall_block';
-          this.addObstacle(kind, lane, z);
-        }
-      }
-      this.nextSpawnZ -= THREE.MathUtils.lerp(20, 14.5, diff);
-    } else if (patternRoll < 0.48) {
-      // Pattern B: Overhead Slide Arches + Low Barrier (100% passable by slide or jump!)
-      for (const lane of lanes) {
-        if (lane === openLane) {
-          this.addObstacle('high_arch', lane, z);
-          this.spawnCoinLine(lane, 0.75, z - 1.5, 2, 2.5);
-        } else {
-          this.addObstacle(Math.random() < 0.5 ? 'low_barrier' : 'tall_block', lane, z);
-        }
-      }
-      this.nextSpawnZ -= THREE.MathUtils.lerp(21, 15, diff);
-    } else if (patternRoll < 0.72) {
-      // Pattern C: Train + Ramp combo (player can run up ramp onto train roof or dodge to open lane)
-      const trainLane = lanes[(lanes.indexOf(openLane) + 1) % 3];
-      this.addObstacle('ramp', trainLane, z + 7.6);
-      this.addObstacle('train_static', trainLane, z);
-      // Coins on train roof!
-      this.spawnCoinLine(trainLane, 3.85, z + 2, 4, 2.4);
-
-      const thirdLane = lanes.find((l) => l !== openLane && l !== trainLane)!;
-      if (Math.random() < 0.65) {
-        this.addObstacle('low_barrier', thirdLane, z);
-      }
-      this.nextSpawnZ -= THREE.MathUtils.lerp(27, 21, diff);
-    } else if (patternRoll < 0.88) {
-      // Pattern D: Moving oncoming train in 1 lane + tunnel or barrier in another, 1+ lane open
-      const movingLane = lanes[(lanes.indexOf(openLane) + 1) % 3];
-      this.addObstacle('train_moving', movingLane, z - 18);
-      const otherLane = lanes.find((l) => l !== openLane && l !== movingLane)!;
-      this.addObstacle('high_arch', otherLane, z);
-      this.spawnCoinLine(openLane, 0.85, z, 3, 2.5);
-      this.nextSpawnZ -= THREE.MathUtils.lerp(26, 20, diff);
-    } else {
-      // Pattern E: Tunnel corridor + side barriers
-      this.addObstacle('tunnel', openLane, z);
-      for (const lane of lanes) {
-        if (lane !== openLane) {
-          this.addObstacle('tall_block', lane, z);
-        }
-      }
-      this.nextSpawnZ -= THREE.MathUtils.lerp(24, 18, diff);
+    const wave = generateTrackWave(this.rng, this.waveIndex++, this.nextSpawnZ);
+    for (const obs of wave.obstacles) {
+      this.addObstacle(obs.kind, obs.lane, obs.z);
     }
-
-    // Occasional PowerUp spawn in open lane
-    if (Math.random() < 0.28) {
-      const types: PowerUpType[] = ['magnet', 'jetpack', 'super_jump', 'multiplier', 'hoverboard'];
-      const chosen = types[Math.floor(Math.random() * types.length)];
+    for (const c of wave.coins) {
+      const coin = this.obstacleFactory.createCoin(this.nextEntityId++, c.lane, c.y, c.z);
+      this.scene.add(coin.mesh);
+      this.coins.push(coin);
+    }
+    for (const p of wave.powerUps) {
       const pu = this.obstacleFactory.createPowerUp(
         this.nextEntityId++,
-        chosen,
-        openLane,
-        1.15,
-        z - 6.5
+        p.type,
+        p.lane,
+        p.y,
+        p.z
       );
       this.scene.add(pu.mesh);
       this.powerUps.push(pu);
     }
+    this.nextSpawnZ = wave.nextZ;
   }
 
   private addObstacle(kind: ObstacleKind, lane: number, z: number): void {
     const obs = this.obstacleFactory.createObstacle(this.nextEntityId++, kind, lane, z, this.mapId);
     this.scene.add(obs.mesh);
     this.obstacles.push(obs);
-  }
-
-  private spawnCoinLine(lane: number, y: number, startZ: number, count: number, spacing: number): void {
-    for (let i = 0; i < count; i++) {
-      const c = this.obstacleFactory.createCoin(
-        this.nextEntityId++,
-        lane,
-        y,
-        startZ - i * spacing
-      );
-      this.scene.add(c.mesh);
-      this.coins.push(c);
-    }
   }
 
   public dispose(): void {
@@ -1000,6 +1137,8 @@ export class RunnerEngine {
 
     this.playerRig.dispose();
     this.policeRig.dispose();
+    this.remoteNameTag?.dispose();
+    this.remoteRig?.dispose();
     this.sceneryBuilder.dispose();
     this.obstacleFactory.dispose();
     this.ctx.dispose();

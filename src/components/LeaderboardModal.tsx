@@ -4,9 +4,9 @@ import { api } from '../services/api.ts';
 import {
   LeaderboardEntry,
   MAPS,
-  SKINS,
   UserProfile,
   formatStopwatch,
+  getSkinDefinition,
 } from '../shared/constants.ts';
 
 interface LeaderboardModalProps {
@@ -128,7 +128,7 @@ export function LeaderboardModal({
                   {leader.nickname}
                 </button>
                 <div className="text-xs text-slate-300">
-                  {SKINS.find((s) => s.id === leader.skinId)?.name || leader.skinId} ·{' '}
+                  {getSkinDefinition(leader.skinId).name} ·{' '}
                   {MAPS.find((m) => m.id === leader.mapId)?.name || leader.mapId}
                 </div>
               </div>
@@ -158,7 +158,7 @@ export function LeaderboardModal({
             <div className="space-y-2">
               {entries.map((entry) => {
                 const isMe = entry.userId === currentUser.id;
-                const skinDef = SKINS.find((s) => s.id === entry.skinId);
+                const skinDef = getSkinDefinition(entry.skinId);
                 return (
                   <div
                     key={entry.userId}

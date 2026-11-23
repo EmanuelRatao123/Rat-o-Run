@@ -1,4 +1,5 @@
 import {
+  BellRing,
   ChevronDown,
   ChevronUp,
   Gift,
@@ -9,17 +10,20 @@ import {
   ShieldAlert,
   Sliders,
   Sparkles,
+  Swords,
   Timer,
   Trophy,
   User,
+  Users,
   Vote,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminPortalModal } from './components/AdminPortalModal.tsx';
 import { AuthScreen } from './components/AuthScreen.tsx';
-import { GameView } from './components/GameView.tsx';
+import { GameView, MultiplayerSessionConfig } from './components/GameView.tsx';
 import { LeaderboardModal } from './components/LeaderboardModal.tsx';
 import { MapsModal } from './components/MapsModal.tsx';
+import { MultiplayerModal } from './components/MultiplayerModal.tsx';
 import { PollsAndMessagesModal } from './components/PollsAndMessagesModal.tsx';
 import { ProfileModal } from './components/ProfileModal.tsx';
 import { RataoLogo } from './components/RataoLogo.tsx';
@@ -32,11 +36,15 @@ import {
   GraphicsQuality,
   MAPS,
   MapId,
+  MultiplayerInvite,
+  MultiplayerMode,
+  MultiplayerParticipant,
+  MultiplayerRoom,
   PollItem,
-  SKINS,
   SkinGiftItem,
   UserProfile,
   formatStopwatch,
+  getSkinDefinition,
 } from './shared/constants.ts';
 import {
   createF8DoubleTapDetector,
@@ -49,7 +57,8 @@ type ActiveModal =
   | 'maps'
   | 'ranking'
   | 'polls'
-  | 'profile';
+  | 'profile'
+  | 'multiplayer';
 
 export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
@@ -59,6 +68,15 @@ export default function App() {
   const [selectedMap, setSelectedMap] = useState<MapId>('brasil');
   const [quality, setQuality] = useState<GraphicsQuality>('medium');
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
+  const [multiplayerMode, setMultiplayerMode] = useState<MultiplayerMode>('coop');
+  const [mpLobbyRoom, setMpLobbyRoom] = useState<{
+    room: MultiplayerRoom;
+    participants: MultiplayerParticipant[];
+  } | null>(null);
+  const [activeMpSession, setActiveMpSession] = useState<MultiplayerSessionConfig | null>(null);
+  const [pendingInvites, setPendingInvites] = useState<MultiplayerInvite[]>([]);
+  const [inviteBusy, setInviteBusy] = useState(false);
+
   const [inspectNickname, setInspectNickname] = useState<string | undefined>(undefined);
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
@@ -163,6 +181,28 @@ export default function App() {
     };
   }, []);
 
+  const refreshMultiplayerOverview = useCallback(async () => {
+    try {
+      const ov = await api.multiplayer.overview();
+      setPendingInvites(ov.incomingInvites);
+      if (
+        ov.activeRoom &&
+        (ov.activeRoom.room.status === 'countdown' ||
+          ov.activeRoom.room.status === 'in_progress')
+      ) {
+        setActiveMpSession({
+          room: ov.activeRoom.room,
+          participants: ov.activeRoom.participants,
+          serverNow: ov.activeRoom.serverNow,
+        });
+        setActiveModal(null);
+        setPlaying(true);
+      }
+    } catch {
+      // Ignore transient polling errors
+    }
+  }, []);
+
   // Periodic server polling every 8 seconds for messages, polls & skin gifts
   useEffect(() => {
     if (!user) return;
@@ -173,11 +213,24 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [user, refreshSocialFeed]);
 
+  // Live polling every 3 seconds for multiplayer invites & active room reconnect
+  useEffect(() => {
+    if (!user || playing) return;
+    void refreshMultiplayerOverview();
+    const timer = window.setInterval(() => {
+      void refreshMultiplayerOverview();
+    }, 3000);
+    return () => window.clearInterval(timer);
+  }, [user, playing, refreshMultiplayerOverview]);
+
   const handleLogout = async () => {
     await api.logout().catch(() => {});
     setMemorySessionToken(null);
     setUser(null);
     setPlaying(false);
+    setActiveMpSession(null);
+    setMpLobbyRoom(null);
+    setPendingInvites([]);
     setActiveModal(null);
   };
 
@@ -190,7 +243,29 @@ export default function App() {
   const handleStartGame = () => {
     gameAudio.unlock();
     gameAudio.playUiClick();
+    setActiveMpSession(null);
     setPlaying(true);
+  };
+
+  const handleRespondBannerInvite = async (
+    invite: MultiplayerInvite,
+    action: 'accept' | 'decline'
+  ) => {
+    gameAudio.unlock();
+    setInviteBusy(true);
+    try {
+      const res = await api.multiplayer.respondInvite(invite.id, action);
+      setPendingInvites((prev) => prev.filter((i) => i.id !== invite.id));
+      if (action === 'accept' && res.room && res.participants) {
+        setMultiplayerMode(res.room.mode);
+        setMpLobbyRoom({ room: res.room, participants: res.participants });
+        setActiveModal('multiplayer');
+      }
+    } catch {
+      void refreshMultiplayerOverview();
+    } finally {
+      setInviteBusy(false);
+    }
   };
 
   const closeAdminPortal = () => {
@@ -211,9 +286,7 @@ export default function App() {
     );
   }
 
-  const equippedSkinDef = user
-    ? SKINS.find((s) => s.id === user.equippedSkin) || SKINS[0]
-    : SKINS[0];
+  const equippedSkinDef = getSkinDefinition(user ? user.equippedSkin : 'ratao');
   const currentMapDef = MAPS.find((m) => m.id === selectedMap) || MAPS[0];
   const openPollsCount = polls.filter((p) => p.active && p.userVotedIndex === null).length;
 
@@ -228,14 +301,18 @@ export default function App() {
       ) : playing ? (
         <GameView
           user={user}
-          mapId={selectedMap}
+          mapId={activeMpSession ? activeMpSession.room.mapId : selectedMap}
           skinId={user.equippedSkin}
           quality={quality}
           activeMessages={messages}
+          multiplayerSession={activeMpSession}
           onExitToMenu={() => {
             setPlaying(false);
+            setActiveMpSession(null);
+            setMpLobbyRoom(null);
             void refreshUser();
             void refreshSocialFeed();
+            void refreshMultiplayerOverview();
           }}
         />
       ) : (
@@ -376,13 +453,39 @@ export default function App() {
               </button>
 
               {!dockCollapsed && (
-                <div className="pointer-events-auto w-full max-w-4xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
+                <div className="pointer-events-auto w-full max-w-5xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
                   <button
                     type="button"
                     onClick={handleStartGame}
                     className="px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
                   >
                     <Play className="w-5 h-5 fill-current" /> JOGAR
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      gameAudio.unlock();
+                      gameAudio.playUiClick();
+                      setMultiplayerMode('coop');
+                      setActiveModal('multiplayer');
+                    }}
+                    className="px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-display font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <Users className="w-4 h-4" /> JOGAR COM AMIGO
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      gameAudio.unlock();
+                      gameAudio.playUiClick();
+                      setMultiplayerMode('x1');
+                      setActiveModal('multiplayer');
+                    }}
+                    className="px-4 py-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-display font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer shadow-md"
+                  >
+                    <Swords className="w-4 h-4" /> X1 SEM MOEDAS
                   </button>
 
                   <button
@@ -450,6 +553,46 @@ export default function App() {
             </div>
           </div>
 
+          {/* Live On-Screen Multiplayer Invite Notification */}
+          {pendingInvites.length > 0 && activeModal !== 'multiplayer' && (
+            <div className="fixed top-20 right-4 z-40 w-80 max-w-[calc(100vw-2rem)] bg-slate-950/95 border-2 border-amber-400 rounded-2xl p-4 shadow-2xl space-y-3">
+              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-amber-300">
+                <BellRing className="w-4 h-4 animate-bounce" /> CONVITE MULTIPLAYER
+              </div>
+              <div className="text-xs text-slate-200 leading-relaxed">
+                <strong className="text-white">{pendingInvites[0].fromNickname}</strong> convidou você para{' '}
+                <strong className="text-amber-300">
+                  {pendingInvites[0].mode === 'x1'
+                    ? 'X1 Sem Moedas'
+                    : 'Jogar com Amigo'}
+                </strong>{' '}
+                no mapa{' '}
+                <strong>
+                  {MAPS.find((m) => m.id === pendingInvites[0].mapId)?.name || pendingInvites[0].mapId}
+                </strong>
+                .
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  disabled={inviteBusy}
+                  onClick={() => void handleRespondBannerInvite(pendingInvites[0], 'accept')}
+                  className="py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-bold text-xs cursor-pointer"
+                >
+                  ACEITAR
+                </button>
+                <button
+                  type="button"
+                  disabled={inviteBusy}
+                  onClick={() => void handleRespondBannerInvite(pendingInvites[0], 'decline')}
+                  className="py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-display font-bold text-xs cursor-pointer"
+                >
+                  RECUSAR
+                </button>
+              </div>
+            </div>
+          )}
+
           {/* Unseen Skin Gift Notification Modal */}
           {unseenGifts.length > 0 && (
             <div className="fixed inset-0 z-40 bg-slate-950/85 flex items-center justify-center p-4">
@@ -469,7 +612,7 @@ export default function App() {
                       key={g.id}
                       className="p-3 rounded-xl bg-slate-950 border border-fuchsia-500/40 text-sm font-bold text-fuchsia-200"
                     >
-                      {SKINS.find((s) => s.id === g.skinId)?.name || g.skinId}
+                      {getSkinDefinition(g.skinId).name}
                     </div>
                   ))}
                 </div>
@@ -529,6 +672,26 @@ export default function App() {
               currentUser={user}
               initialNickname={inspectNickname}
               onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {activeModal === 'multiplayer' && (
+            <MultiplayerModal
+              currentUser={user}
+              initialMode={multiplayerMode}
+              selectedMap={selectedMap}
+              initialRoom={mpLobbyRoom}
+              onEnterMatch={(room, participants) => {
+                gameAudio.unlock();
+                setActiveMpSession({ room, participants });
+                setActiveModal(null);
+                setPlaying(true);
+              }}
+              onClose={() => {
+                setMpLobbyRoom(null);
+                setActiveModal(null);
+                void refreshMultiplayerOverview();
+              }}
             />
           )}
         </div>
