@@ -14,6 +14,10 @@ import {
 import { createSeededRng, generateTrackWave } from '../shared/trackGenerator.ts';
 import { gameAudio } from './audio.ts';
 import {
+  CollisionStateController,
+  SpeedState,
+} from './collisionState.ts';
+import {
   CharacterAnimState,
   CharacterRig,
   animateCharacterRig,
@@ -46,6 +50,7 @@ export interface HudSnapshot {
   policeActive: boolean;
   policeRemainingSec: number;
   collisionCount: number;
+  speedState: SpeedState;
   activePowerUps: { type: PowerUpType; remainingSec: number; maxSec: number }[];
   speedKmh: number;
 }
@@ -170,16 +175,13 @@ export class RunnerEngine {
   private slideTimer = 0;
   private jumpBufferTimer = 0;
   private coyoteTimer = 0;
-  private invulnTimer = 0;
-  private stumbleTimer = 0;
   private hitstopTimer = 0;
   private shakeIntensity = 0;
   private stepSoundCooldown = 0;
   private currentAnimState: ParticipantAnimState = 'idle';
 
-  // Police chase (2 seconds after 1st collision)
-  private collisionCount = 0;
-  private policeChaseTimer = 0;
+  // Speed recovery & police chase state (2 seconds after collision while fast)
+  private collisionState = new CollisionStateController();
   private policeZOffset = 10;
 
   // Mode: Sem Pegar Moedas
@@ -527,7 +529,7 @@ export class RunnerEngine {
       score: Math.floor(this.score),
       noCoinTimeMs: Math.round(this.noCoinTimeMs),
       durationMs: Math.round(this.durationMs),
-      collisionCount: this.collisionCount,
+      collisionCount: this.collisionState.getTelemetryHitCount(),
       alive: !this.ended && !this.coopLocalDead,
       hoverboard: this.powerTimers.hoverboard > 0,
       jetpack: this.powerTimers.jetpack > 0,
@@ -714,29 +716,19 @@ export class RunnerEngine {
       }
     });
 
-    if (this.invulnTimer > 0) this.invulnTimer -= dt;
-    if (this.stumbleTimer > 0) this.stumbleTimer -= dt;
+    const { recoveredToNormal } = this.collisionState.step(dt);
+    if (recoveredToNormal) {
+      // Escaped! Police drops back and normal speed is restored
+      this.policeZOffset = 3.2;
+    }
     if (this.slideTimer > 0) this.slideTimer -= dt;
     if (this.jumpBufferTimer > 0) this.jumpBufferTimer -= dt;
 
     // Speed progression
     const progressSpeed = Math.min(MAX_SPEED, BASE_SPEED + (this.durationMs / 1000) * 0.22);
-    let currentSpeed = progressSpeed;
-    if (this.powerTimers.jetpack > 0) {
-      currentSpeed *= 1.35;
-    } else if (this.policeChaseTimer > 0) {
-      currentSpeed *= 0.62;
-    }
+    const currentSpeed =
+      progressSpeed * this.collisionState.getSpeedMultiplier(this.powerTimers.jetpack > 0);
     this.currentSpeed = currentSpeed;
-
-    // Police Chase Timer (2 seconds)
-    if (this.policeChaseTimer > 0) {
-      this.policeChaseTimer = Math.max(0, this.policeChaseTimer - dt);
-      if (this.policeChaseTimer === 0) {
-        // Escaped! Police drops back
-        this.policeZOffset = 3.2;
-      }
-    }
 
     // Move forward along -Z
     const moveZ = currentSpeed * dt;
@@ -842,7 +834,7 @@ export class RunnerEngine {
     // Determine character animation state
     let animState: CharacterAnimState = 'run';
     if (this.powerTimers.jetpack > 0) animState = 'jetpack';
-    else if (this.stumbleTimer > 0) animState = 'stumble';
+    else if (this.collisionState.getStumbleRemainingSec() > 0) animState = 'stumble';
     else if (this.slideTimer > 0) animState = 'slide';
     else if (!this.grounded) animState = 'jump';
     this.currentAnimState = animState;
@@ -851,7 +843,8 @@ export class RunnerEngine {
     this.updateRemoteVisuals(dt);
 
     // Hit flash fade
-    const flashOn = this.invulnTimer > 0 && Math.floor(this.invulnTimer * 20) % 2 === 0;
+    const lockSec = this.collisionState.getCollisionLockSec();
+    const flashOn = lockSec > 0 && Math.floor(lockSec * 20) % 2 === 0;
     for (const mat of this.playerRig.flashMaterials) {
       if (flashOn) {
         mat.emissive.setHex(0xef4444);
@@ -863,7 +856,7 @@ export class RunnerEngine {
     }
 
     // Police Pursuer Positioning & Animation
-    if (this.policeChaseTimer > 0) {
+    if (this.collisionState.isSlow()) {
       this.policeRig.root.visible = true;
       this.policeZOffset = THREE.MathUtils.damp(this.policeZOffset, 2.25, 8, dt);
       const policeX = THREE.MathUtils.damp(this.policeRig.root.position.x, this.playerX, 9, dt);
@@ -957,9 +950,10 @@ export class RunnerEngine {
       coins: this.coinCount,
       distance: Math.floor(this.distance),
       score: Math.floor(this.score),
-      policeActive: this.policeChaseTimer > 0,
-      policeRemainingSec: this.policeChaseTimer,
-      collisionCount: this.collisionCount,
+      policeActive: this.collisionState.isSlow(),
+      policeRemainingSec: this.collisionState.getSlowRemainingSec(),
+      collisionCount: this.collisionState.getTelemetryHitCount(),
+      speedState: this.collisionState.getSpeedState(),
       activePowerUps,
       speedKmh: Math.round(currentSpeed * 2.4),
     });
@@ -988,7 +982,13 @@ export class RunnerEngine {
         continue;
       }
 
-      if (obs.hitTriggered || this.invulnTimer > 0 || this.powerTimers.jetpack > 0) {
+      if (
+        this.ended ||
+        this.coopLocalDead ||
+        obs.hitTriggered ||
+        this.collisionState.isLocked() ||
+        this.powerTimers.jetpack > 0
+      ) {
         continue;
       }
 
@@ -1018,59 +1018,67 @@ export class RunnerEngine {
 
       if (collided) {
         obs.hitTriggered = true;
-        this.handleObstacleCollision();
+        this.handleObstacleCollision(obs.id);
+        break;
       }
     }
   }
 
-  private handleObstacleCollision(): void {
-    // Hoverboard shield absorbs 1 crash
-    if (this.powerTimers.hoverboard > 0) {
+  private handleObstacleCollision(obstacleId: number): void {
+    const resolution = this.collisionState.resolveObstacleCollision({
+      obstacleId,
+      hoverboardActive: this.powerTimers.hoverboard > 0,
+      jetpackActive: this.powerTimers.jetpack > 0,
+      alreadyEnded: this.ended || this.coopLocalDead,
+    });
+
+    if (resolution.outcome === 'ignored') {
+      return;
+    }
+
+    if (resolution.outcome === 'hoverboard_absorbed') {
       this.powerTimers.hoverboard = 0;
-      this.invulnTimer = 1.0;
       this.shakeIntensity = 0.35;
       gameAudio.playPowerUp();
       this.spawnBurst(this.playerX, this.playerY + 0.6, this.playerZ, 0x06b6d4, 14);
       return;
     }
 
-    this.collisionCount += 1;
     this.hitstopTimer = 0.055;
     this.shakeIntensity = 0.55;
     this.spawnBurst(this.playerX, this.playerY + 0.8, this.playerZ, 0xef4444, 14);
 
-    if (this.collisionCount === 1) {
-      // First collision: Stumble + 2-second police chase!
-      this.stumbleTimer = 0.75;
-      this.invulnTimer = 0.85;
-      this.policeChaseTimer = 2.0;
+    if (resolution.outcome === 'slowed') {
+      // Collision while fast/normal -> enter SLOW state, stumble animation & 2s police chase
       this.policeZOffset = 5.5;
       this.policeRig.root.visible = true;
       gameAudio.playStumbleAndWhistle();
-    } else {
-      // Second collision in the same match: Captured! Game Over (or Co-op spectate friend)!
-      this.policeRig.root.visible = true;
-      this.policeRig.root.position.set(this.playerX - 0.5, this.playerY, this.playerZ + 1.0);
-      gameAudio.playCaptured();
-      this.emitHud(0);
-      const resultPayload: RunResultPayload = {
-        noCoinTimeMs: this.soloMode === 'normal' && !this.multiplayer ? 0 : Math.round(this.noCoinTimeMs),
-        collectedCoin: this.collectedCoin,
-        coins: this.coinCount,
-        distance: Math.floor(this.distance),
-        score: Math.floor(this.score),
-        durationMs: Math.round(this.durationMs),
-        endReason: 'police',
-      };
+      this.emitHud(this.currentSpeed);
+      return;
+    }
 
-      if (this.multiplayer?.mode === 'coop') {
-        this.coopLocalDead = true;
-        this.multiplayer.onLocalCrashed?.(resultPayload);
-      } else {
-        this.ended = true;
-        this.endAnimState = 'crash';
-        this.onGameOver(resultPayload);
-      }
+    // Collision while STILL in SLOW state -> Captured! Game Over (or Co-op spectate friend)
+    this.policeRig.root.visible = true;
+    this.policeRig.root.position.set(this.playerX - 0.5, this.playerY, this.playerZ + 1.0);
+    gameAudio.playCaptured();
+    this.emitHud(0);
+    const resultPayload: RunResultPayload = {
+      noCoinTimeMs: this.soloMode === 'normal' && !this.multiplayer ? 0 : Math.round(this.noCoinTimeMs),
+      collectedCoin: this.collectedCoin,
+      coins: this.coinCount,
+      distance: Math.floor(this.distance),
+      score: Math.floor(this.score),
+      durationMs: Math.round(this.durationMs),
+      endReason: 'police',
+    };
+
+    if (this.multiplayer?.mode === 'coop') {
+      this.coopLocalDead = true;
+      this.multiplayer.onLocalCrashed?.(resultPayload);
+    } else {
+      this.ended = true;
+      this.endAnimState = 'crash';
+      this.onGameOver(resultPayload);
     }
   }
 

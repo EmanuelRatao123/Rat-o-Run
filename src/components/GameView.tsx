@@ -114,6 +114,7 @@ export function GameView({
     policeActive: false,
     policeRemainingSec: 0,
     collisionCount: 0,
+    speedState: 'normal',
     activePowerUps: [],
     speedKmh: 40,
   });
@@ -268,6 +269,7 @@ export function GameView({
       policeActive: false,
       policeRemainingSec: 0,
       collisionCount: 0,
+      speedState: 'normal',
       activePowerUps: [],
       speedKmh: 40,
     });
@@ -294,7 +296,7 @@ export function GameView({
           if (!cancelled) setHud(snapshot);
         },
         onGameOver: () => {
-          // X1 2nd collision crash triggers server loss/adjudication
+          // Collision while slow triggers server loss/adjudication
           if (!cancelled && !crashEventSentRef.current) {
             crashEventSentRef.current = true;
             void sendMultiplayerSync(room.id, { type: 'crashed' }, true);
