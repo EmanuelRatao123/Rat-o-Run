@@ -88,9 +88,9 @@ export function SkinsModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-3 sm:p-6">
-      <div className="w-full max-w-5xl max-h-[92vh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+      <div className="w-full max-w-5xl max-h-[92dvh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
         {/* Header */}
-        <div className="px-5 py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
+        <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="font-display text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
               <Sparkles className="w-5 h-5 text-amber-400" />
@@ -103,15 +103,15 @@ export function SkinsModal({
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+            className="min-w-[44px] min-h-[44px] p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer flex items-center justify-center"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-hidden">
+        <div className="flex-1 grid grid-cols-1 lg:grid-cols-12 overflow-y-auto lg:overflow-hidden">
           {/* Left: 3D Turntable Preview */}
-          <div className="lg:col-span-5 bg-slate-950 relative min-h-[280px] sm:min-h-[360px] border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col">
+          <div className="lg:col-span-5 bg-slate-950 relative min-h-[210px] sm:min-h-[300px] border-b lg:border-b-0 lg:border-r border-slate-800 flex flex-col">
             <div className="flex-1 relative">
               <ScenePreview3D
                 skinId={previewSkin}

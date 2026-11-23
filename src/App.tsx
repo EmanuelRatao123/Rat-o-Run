@@ -8,9 +8,13 @@ import {
   Lightbulb,
   LogOut,
   Map as MapIcon,
+  Maximize2,
+  Minimize2,
+  Monitor,
   Play,
   ShieldAlert,
   Sliders,
+  Smartphone,
   Sparkles,
   Swords,
   Ticket,
@@ -37,6 +41,7 @@ import { ScenePreview3D } from './components/ScenePreview3D.tsx';
 import { SkinsModal } from './components/SkinsModal.tsx';
 import { SuggestionsModal } from './components/SuggestionsModal.tsx';
 import { gameAudio } from './game/audio.ts';
+import { useFullscreen, useMobileMode } from './hooks/useDeviceDisplay.ts';
 import { api, setMemorySessionToken } from './services/api.ts';
 import {
   GlobalMessage,
@@ -93,6 +98,10 @@ export default function App() {
   const [inspectNickname, setInspectNickname] = useState<string | undefined>(undefined);
   const [dockCollapsed, setDockCollapsed] = useState(false);
   const [showQualityMenu, setShowQualityMenu] = useState(false);
+
+  const { mobileMode, toggleMobileMode } = useMobileMode();
+  const { isFullscreen, fullscreenNotice, clearFullscreenNotice, toggleFullscreen } =
+    useFullscreen();
 
   // Social sync state (periodic polling compatible with serverless)
   const [messages, setMessages] = useState<GlobalMessage[]>([]);
@@ -322,6 +331,8 @@ export default function App() {
     <div className="relative w-full h-full overflow-hidden bg-slate-950">
       {!user ? (
         <AuthScreen
+          isFullscreen={isFullscreen}
+          onToggleFullscreen={toggleFullscreen}
           onAuthenticated={(u) => {
             setUser(u);
           }}
@@ -333,6 +344,16 @@ export default function App() {
           skinId={user.equippedSkin}
           quality={quality}
           soloMode={soloMode}
+          mobileMode={mobileMode}
+          isFullscreen={isFullscreen}
+          onToggleMobileMode={() => {
+            gameAudio.playUiClick();
+            toggleMobileMode();
+          }}
+          onToggleFullscreen={() => {
+            gameAudio.playUiClick();
+            void toggleFullscreen();
+          }}
           multiplayerSession={activeMpSession}
           onExitToMenu={() => {
             setPlaying(false);
@@ -357,46 +378,69 @@ export default function App() {
           </div>
 
           {/* Perimeter HUD Shell (zero backdrop-filter over WebGL, unobstructed center) */}
-          <div className="relative z-10 w-full h-full pointer-events-none flex flex-col justify-between p-4 sm:p-6">
+          <div className="relative z-10 w-full h-full pointer-events-none flex flex-col justify-between safe-area-hud p-3 sm:p-6">
             {/* Top Bar */}
-            <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-2.5 sm:gap-3">
               {/* Top-Left: Logo + Player Personal Record + Total Coins Collected */}
-              <div className="pointer-events-auto flex flex-col gap-2.5">
+              <div className="pointer-events-auto flex flex-col gap-2">
                 <RataoLogo compact />
-                <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2 flex flex-wrap items-center gap-3.5 sm:gap-4 shadow-lg">
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
-                      JOGADOR
+                {mobileMode ? (
+                  <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 flex items-center gap-3 shadow-lg">
+                    <div className="min-w-0">
+                      <div className="text-[9px] font-bold uppercase tracking-wider text-slate-400">
+                        {user.nickname}
+                      </div>
+                      <div className="font-mono-num font-extrabold text-xs text-amber-300 flex items-center gap-1 whitespace-nowrap">
+                        <Timer className="w-3 h-3 text-amber-400 shrink-0" />
+                        {formatStopwatch(user.bestNoCoinTimeMs)}
+                      </div>
                     </div>
-                    <div className="font-display font-bold text-sm sm:text-base text-white">
-                      {user.nickname}
-                    </div>
-                  </div>
-                  <div className="h-7 w-px bg-slate-800" />
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                      <Timer className="w-3 h-3" /> RECORDE SEM MOEDAS
-                    </div>
-                    <div className="font-mono-num font-extrabold text-sm sm:text-base text-amber-300">
-                      {formatStopwatch(user.bestNoCoinTimeMs)}
-                    </div>
-                  </div>
-                  <div className="h-7 w-px bg-slate-800" />
-                  <div>
-                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
-                      <Coins className="w-3 h-3" /> MOEDAS TOTAIS COLETADAS
-                    </div>
-                    <div className="font-mono-num font-extrabold text-sm sm:text-base text-white">
-                      {accumulatedCoins.toLocaleString('pt-BR')}
+                    <div className="h-6 w-px bg-slate-800 shrink-0" />
+                    <div>
+                      <div className="text-[9px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                        <Coins className="w-3 h-3 shrink-0" /> MOEDAS
+                      </div>
+                      <div className="font-mono-num font-extrabold text-xs text-white whitespace-nowrap">
+                        {accumulatedCoins.toLocaleString('pt-BR')}
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2 flex flex-wrap items-center gap-3.5 sm:gap-4 shadow-lg">
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                        JOGADOR
+                      </div>
+                      <div className="font-display font-bold text-sm sm:text-base text-white">
+                        {user.nickname}
+                      </div>
+                    </div>
+                    <div className="h-7 w-px bg-slate-800" />
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                        <Timer className="w-3 h-3" /> RECORDE SEM MOEDAS
+                      </div>
+                      <div className="font-mono-num font-extrabold text-sm sm:text-base text-amber-300">
+                        {formatStopwatch(user.bestNoCoinTimeMs)}
+                      </div>
+                    </div>
+                    <div className="h-7 w-px bg-slate-800" />
+                    <div>
+                      <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                        <Coins className="w-3 h-3" /> MOEDAS TOTAIS COLETADAS
+                      </div>
+                      <div className="font-mono-num font-extrabold text-sm sm:text-base text-white">
+                        {accumulatedCoins.toLocaleString('pt-BR')}
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div className="hidden" />
 
-              {/* Top-Right: Map, Profile, Quality & Logout */}
-              <div className="pointer-events-auto flex items-center gap-2">
+              {/* Top-Right: Map, Profile, Mobile Mode, Fullscreen, Quality & Logout */}
+              <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
                 <button
                   type="button"
                   onClick={() => {
@@ -404,7 +448,7 @@ export default function App() {
                     setActiveModal('maps');
                   }}
                   title="Escolher Mapa"
-                  className="bg-slate-950/90 border border-slate-700/80 hover:border-emerald-400/70 rounded-xl px-3 py-2 text-left cursor-pointer transition flex items-center gap-2"
+                  className="min-w-[44px] min-h-[44px] bg-slate-950/90 border border-slate-700/80 hover:border-emerald-400/70 rounded-xl px-2.5 sm:px-3 py-2 text-left cursor-pointer transition flex items-center justify-center gap-2"
                 >
                   <MapIcon className="w-4 h-4 text-emerald-400 shrink-0" />
                   <div className="hidden sm:flex flex-col leading-tight">
@@ -425,10 +469,58 @@ export default function App() {
                     setActiveModal('profile');
                   }}
                   title="Meu Perfil"
-                  className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                  className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold"
                 >
                   <User className="w-4 h-4 text-rose-400" />
-                  <span className="hidden md:inline">PERFIL</span>
+                  <span className="hidden md:inline whitespace-nowrap">PERFIL</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.playUiClick();
+                    toggleMobileMode();
+                  }}
+                  title={mobileMode ? 'Alternar para Modo PC' : 'Ativar Modo Mobile'}
+                  aria-label={mobileMode ? 'Modo Mobile ativo' : 'Ativar Modo Mobile'}
+                  className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold transition ${
+                    mobileMode
+                      ? 'bg-sky-500/20 border-sky-400 text-sky-200'
+                      : 'bg-slate-950/90 border-slate-700 text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  {mobileMode ? (
+                    <Smartphone className="w-4 h-4 text-sky-300" />
+                  ) : (
+                    <Monitor className="w-4 h-4 text-slate-300" />
+                  )}
+                  <span className="hidden xl:inline whitespace-nowrap">
+                    {mobileMode ? 'MOBILE' : 'PC'}
+                  </span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.playUiClick();
+                    void toggleFullscreen();
+                  }}
+                  title={isFullscreen ? 'Sair da tela cheia' : 'Colocar em tela cheia'}
+                  aria-label={isFullscreen ? 'Sair da tela cheia' : 'Colocar em tela cheia'}
+                  className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold transition ${
+                    isFullscreen
+                      ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                      : 'bg-slate-950/90 border-slate-700 text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  {isFullscreen ? (
+                    <Minimize2 className="w-4 h-4 text-amber-300" />
+                  ) : (
+                    <Maximize2 className="w-4 h-4 text-amber-300" />
+                  )}
+                  <span className="hidden lg:inline whitespace-nowrap">
+                    {isFullscreen ? 'SAIR TELA CHEIA' : 'TELA CHEIA'}
+                  </span>
                 </button>
 
                 <div className="relative">
@@ -436,10 +528,10 @@ export default function App() {
                     type="button"
                     onClick={() => setShowQualityMenu((v) => !v)}
                     title="Qualidade gráfica"
-                    className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                    className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold"
                   >
                     <Sliders className="w-4 h-4 text-sky-400" />
-                    <span className="hidden sm:inline uppercase">
+                    <span className="hidden sm:inline uppercase whitespace-nowrap">
                       {quality === 'low' ? 'Baixo' : quality === 'medium' ? 'Médio' : 'Alto'}
                     </span>
                   </button>
@@ -459,7 +551,7 @@ export default function App() {
                             setQuality(q.id);
                             setShowQualityMenu(false);
                           }}
-                          className={`w-full text-left px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer ${
+                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold cursor-pointer ${
                             quality === q.id
                               ? 'bg-sky-600 text-white'
                               : 'text-slate-300 hover:bg-slate-800'
@@ -476,7 +568,7 @@ export default function App() {
                   type="button"
                   onClick={handleLogout}
                   title="Sair da conta"
-                  className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-rose-300 hover:bg-rose-950 cursor-pointer"
+                  className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-rose-300 hover:bg-rose-950 cursor-pointer flex items-center justify-center"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -488,7 +580,7 @@ export default function App() {
               <button
                 type="button"
                 onClick={() => setDockCollapsed((v) => !v)}
-                className="pointer-events-auto mb-1.5 px-3 py-1 rounded-t-xl bg-slate-950/90 border border-b-0 border-slate-700 text-[11px] font-bold text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
+                className="pointer-events-auto mb-1.5 px-3 py-1.5 rounded-t-xl bg-slate-950/90 border border-b-0 border-slate-700 text-[11px] font-bold text-slate-300 hover:text-white flex items-center gap-1 cursor-pointer"
               >
                 {dockCollapsed ? (
                   <>
@@ -501,65 +593,130 @@ export default function App() {
                 )}
               </button>
 
-              {!dockCollapsed && (
-                <div className="pointer-events-auto w-full max-w-4xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.unlock();
-                      gameAudio.playUiClick();
-                      setActiveModal('play');
-                    }}
-                    className="px-7 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
-                  >
-                    <Play className="w-5 h-5 fill-current" /> JOGAR
-                  </button>
+              {!dockCollapsed &&
+                (mobileMode ? (
+                  <div className="pointer-events-auto w-full max-w-md bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 shadow-2xl space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.unlock();
+                        gameAudio.playUiClick();
+                        setActiveModal('play');
+                      }}
+                      className="w-full min-h-[48px] py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center justify-center gap-2 cursor-pointer transition transform active:scale-95"
+                    >
+                      <Play className="w-5 h-5 fill-current" /> JOGAR
+                    </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playUiClick();
-                      setActiveModal('skins');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Sparkles className="w-4 h-4 text-amber-400" /> SKINS
-                  </button>
+                    <div className="grid grid-cols-4 gap-1.5">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
+                          setActiveModal('skins');
+                        }}
+                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span>SKINS</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playUiClick();
-                      setActiveModal('ranking');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Trophy className="w-4 h-4 text-amber-400" /> RANKING
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
+                          setActiveModal('ranking');
+                        }}
+                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <Trophy className="w-4 h-4 text-amber-400" />
+                        <span>RANKING</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playUiClick();
-                      setActiveModal('promo');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Ticket className="w-4 h-4 text-emerald-400" /> RESGATAR CÓDIGO
-                  </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
+                          setActiveModal('promo');
+                        }}
+                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <Ticket className="w-4 h-4 text-emerald-400" />
+                        <span>CÓDIGO</span>
+                      </button>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playUiClick();
-                      setActiveModal('suggestions');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <Lightbulb className="w-4 h-4 text-amber-300" /> ENVIAR SUGESTÃO
-                  </button>
-                </div>
-              )}
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
+                          setActiveModal('suggestions');
+                        }}
+                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <Lightbulb className="w-4 h-4 text-amber-300" />
+                        <span>IDEIAS</span>
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="pointer-events-auto w-full max-w-4xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.unlock();
+                        gameAudio.playUiClick();
+                        setActiveModal('play');
+                      }}
+                      className="px-7 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
+                    >
+                      <Play className="w-5 h-5 fill-current" /> JOGAR
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
+                        setActiveModal('skins');
+                      }}
+                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Sparkles className="w-4 h-4 text-amber-400" /> SKINS
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
+                        setActiveModal('ranking');
+                      }}
+                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Trophy className="w-4 h-4 text-amber-400" /> RANKING
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
+                        setActiveModal('promo');
+                      }}
+                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Ticket className="w-4 h-4 text-emerald-400" /> RESGATAR CÓDIGO
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
+                        setActiveModal('suggestions');
+                      }}
+                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Lightbulb className="w-4 h-4 text-amber-300" /> ENVIAR SUGESTÃO
+                    </button>
+                  </div>
+                ))}
             </div>
           </div>
 
@@ -656,11 +813,11 @@ export default function App() {
 
           {/* Play Mode Chooser Modal */}
           {activeModal === 'play' && (
-            <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-4">
-              <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
-                <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+            <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-3 sm:p-4">
+              <div className="w-full max-w-2xl max-h-[90dvh] bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden flex flex-col shadow-2xl">
+                <div className="px-4 sm:px-5 py-3.5 sm:py-4 border-b border-slate-800 flex items-center justify-between gap-3 shrink-0">
                   <div>
-                    <h2 className="font-display text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                    <h2 className="font-display text-lg sm:text-2xl font-bold text-white flex items-center gap-2">
                       <Play className="w-5 h-5 text-amber-400 fill-current" /> ESCOLHER MODO DE JOGO
                     </h2>
                     <p className="text-xs text-slate-400">
@@ -668,25 +825,25 @@ export default function App() {
                       <strong className="text-white">{equippedSkinDef.name}</strong>
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-2 shrink-0">
                     <button
                       type="button"
                       onClick={() => setActiveModal('maps')}
-                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                      className="min-h-[40px] px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
                     >
                       <MapIcon className="w-3.5 h-3.5" /> Trocar Mapa
                     </button>
                     <button
                       type="button"
                       onClick={() => setActiveModal(null)}
-                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                      className="min-w-[44px] min-h-[44px] p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer flex items-center justify-center"
                     >
                       <X className="w-5 h-5" />
                     </button>
                   </div>
                 </div>
 
-                <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                <div className="p-4 sm:p-5 grid grid-cols-1 sm:grid-cols-2 gap-3.5 overflow-y-auto">
                   <button
                     type="button"
                     onClick={() => handleStartSoloMode('normal')}
@@ -890,6 +1047,21 @@ export default function App() {
         <div className="fixed bottom-4 right-4 z-[60] pointer-events-none px-3.5 py-2 rounded-xl bg-slate-900/95 border border-amber-500/60 text-amber-200 text-xs font-semibold flex items-center gap-2 shadow-xl">
           <ShieldAlert className="w-4 h-4 text-amber-400 shrink-0" />
           <span>{securityToast}</span>
+        </div>
+      )}
+
+      {/* Discreet Fullscreen Fallback Notice */}
+      {fullscreenNotice && (
+        <div className="fixed bottom-4 left-4 z-[60] max-w-xs px-3.5 py-2.5 rounded-xl bg-slate-900/95 border border-sky-500/60 text-sky-200 text-xs font-semibold flex items-center gap-2 shadow-xl">
+          <Maximize2 className="w-4 h-4 text-sky-400 shrink-0" />
+          <span className="flex-1">{fullscreenNotice}</span>
+          <button
+            type="button"
+            onClick={clearFullscreenNotice}
+            className="text-slate-400 hover:text-white cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
         </div>
       )}
 

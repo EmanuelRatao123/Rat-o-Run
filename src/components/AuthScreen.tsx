@@ -1,5 +1,5 @@
 import { signInWithPopup } from 'firebase/auth';
-import { KeyRound, LogIn, ShieldCheck, UserPlus } from 'lucide-react';
+import { KeyRound, LogIn, Maximize2, Minimize2, ShieldCheck, UserPlus } from 'lucide-react';
 import React, { useState } from 'react';
 import { auth, googleProvider } from '../lib/firebase.ts';
 import { api, setMemorySessionToken } from '../services/api.ts';
@@ -10,11 +10,17 @@ import { ScenePreview3D } from './ScenePreview3D.tsx';
 
 interface AuthScreenProps {
   onAuthenticated: (user: UserProfile) => void;
+  isFullscreen?: boolean;
+  onToggleFullscreen?: () => void;
 }
 
 type AuthMode = 'login' | 'register' | 'recover';
 
-export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
+export function AuthScreen({
+  onAuthenticated,
+  isFullscreen = false,
+  onToggleFullscreen,
+}: AuthScreenProps) {
   const [mode, setMode] = useState<AuthMode>('login');
   const [nickname, setNickname] = useState('');
   const [password, setPassword] = useState('');
@@ -91,12 +97,31 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
         <ScenePreview3D skinId="ratao" mapId="brasil" mode="showcase" quality="medium" />
       </div>
 
-      {/* Gradient Scrim keeping character visible on right */}
-      <div className="absolute inset-0 bg-gradient-to-r from-slate-950/95 via-slate-950/75 to-slate-950/20 pointer-events-none" />
+      {/* Gradient Scrim keeping character visible on desktop right */}
+      <div className="absolute inset-0 bg-gradient-to-b sm:bg-gradient-to-r from-slate-950/90 via-slate-950/75 to-slate-950/35 pointer-events-none" />
 
-      <div className="relative z-10 h-full flex items-center justify-start px-5 sm:px-12 lg:px-20 py-6 overflow-y-auto">
-        <div className="w-full max-w-md bg-slate-900/95 border border-slate-700/80 rounded-2xl p-6 sm:p-8 shadow-2xl">
-          <div className="mb-6">
+      {onToggleFullscreen && (
+        <button
+          type="button"
+          onClick={onToggleFullscreen}
+          title={isFullscreen ? 'Sair da tela cheia' : 'Colocar em tela cheia'}
+          aria-label={isFullscreen ? 'Sair da tela cheia' : 'Colocar em tela cheia'}
+          className={`fixed top-3 right-3 sm:top-5 sm:right-5 z-20 min-w-[44px] min-h-[44px] px-3 rounded-xl border font-bold text-xs flex items-center gap-1.5 cursor-pointer transition ${
+            isFullscreen
+              ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+              : 'bg-slate-950/90 border-slate-700 text-slate-200 hover:bg-slate-800'
+          }`}
+        >
+          {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
+          <span className="hidden sm:inline whitespace-nowrap">
+            {isFullscreen ? 'Sair Tela Cheia' : 'Tela Cheia'}
+          </span>
+        </button>
+      )}
+
+      <div className="relative z-10 h-full flex items-center justify-center lg:justify-start safe-area-hud px-4 sm:px-12 lg:px-20 overflow-y-auto">
+        <div className="w-full max-w-md my-auto bg-slate-900/95 border border-slate-700/80 rounded-2xl p-5 sm:p-8 shadow-2xl">
+          <div className="mb-5">
             <RataoLogo />
           </div>
 
@@ -109,7 +134,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 setError(null);
                 setSuccessMsg(null);
               }}
-              className={`py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition ${
+              className={`min-h-[44px] py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition cursor-pointer ${
                 mode === 'login'
                   ? 'bg-rose-600 text-white shadow'
                   : 'text-slate-400 hover:text-white'
@@ -124,7 +149,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 setError(null);
                 setSuccessMsg(null);
               }}
-              className={`py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition ${
+              className={`min-h-[44px] py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition cursor-pointer ${
                 mode === 'register'
                   ? 'bg-rose-600 text-white shadow'
                   : 'text-slate-400 hover:text-white'
@@ -139,7 +164,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
                 setError(null);
                 setSuccessMsg(null);
               }}
-              className={`py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition ${
+              className={`min-h-[44px] py-2 px-2 rounded-lg text-xs sm:text-sm font-bold transition cursor-pointer ${
                 mode === 'recover'
                   ? 'bg-amber-500 text-slate-950 shadow'
                   : 'text-slate-400 hover:text-white'
@@ -241,7 +266,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base tracking-wide shadow-lg shadow-rose-900/40 flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
+              className="w-full min-h-[48px] py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base tracking-wide shadow-lg shadow-rose-900/40 flex items-center justify-center gap-2 transition disabled:opacity-50 cursor-pointer"
             >
               {mode === 'login' && (
                 <>
@@ -271,7 +296,7 @@ export function AuthScreen({ onAuthenticated }: AuthScreenProps) {
             type="button"
             onClick={handleGoogleSignIn}
             disabled={loading}
-            className="w-full py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-sm flex items-center justify-center gap-2.5 transition disabled:opacity-50 cursor-pointer"
+            className="w-full min-h-[44px] py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-white font-bold text-sm flex items-center justify-center gap-2.5 transition disabled:opacity-50 cursor-pointer"
           >
             <ShieldCheck className="w-4 h-4 text-sky-400" />
             Entrar com Google (Nuvem Firebase)

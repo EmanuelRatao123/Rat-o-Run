@@ -44,8 +44,8 @@ export function ScenePreview3D({
     const scene = new THREE.Scene();
     scene.environment = ctx.pmremEnvTexture;
 
-    const aspect = Math.max(1, container.clientWidth) / Math.max(1, container.clientHeight);
-    const camera = new THREE.PerspectiveCamera(46, aspect, 0.2, 130);
+    let currentAspect = Math.max(1, container.clientWidth) / Math.max(1, container.clientHeight);
+    const camera = new THREE.PerspectiveCamera(46, currentAspect, 0.2, 130);
 
     const hemi = new THREE.HemisphereLight(0xffffff, 0x1e293b, 0.85);
     scene.add(hemi);
@@ -136,11 +136,18 @@ export function ScenePreview3D({
       if (disposed || !container) return;
       const w = Math.max(1, container.clientWidth);
       const h = Math.max(1, container.clientHeight);
-      camera.aspect = w / h;
+      currentAspect = w / h;
+      camera.fov = currentAspect < 0.85 ? 52 : 46;
+      camera.aspect = currentAspect;
       camera.updateProjectionMatrix();
       ctx.renderer.setSize(w, h);
     };
+    onResize();
     window.addEventListener('resize', onResize);
+    window.addEventListener('orientationchange', onResize);
+    const resizeObserver =
+      typeof ResizeObserver !== 'undefined' ? new ResizeObserver(onResize) : null;
+    resizeObserver?.observe(container);
 
     if (!ctx.isSoftwareGl) {
       ctx.renderer.compile(scene, camera);
@@ -168,11 +175,17 @@ export function ScenePreview3D({
         const targetAnim = animRef.current || 'idle';
         animateCharacterRig(charRig, targetAnim, elapsed, dt, targetAnim === 'run' ? 0.85 : 1);
       } else {
-        // Showcase behind-shoulder hero framing with calm negative space
-        charRig.root.position.set(1.1, 0, 0.8);
-        charRig.root.rotation.y = -0.38 + Math.sin(elapsed * 0.45) * 0.14;
-        camera.position.set(0.35, 2.05, 4.75);
-        camera.lookAt(0.25, 1.15, -3.5);
+        // Showcase hero framing — centered cleanly on narrow mobile, behind-shoulder on desktop
+        const isPortraitMobile = currentAspect < 0.85;
+        charRig.root.position.set(isPortraitMobile ? 0 : 1.1, isPortraitMobile ? 0.1 : 0, isPortraitMobile ? 0.4 : 0.8);
+        charRig.root.rotation.y = (isPortraitMobile ? -0.15 : -0.38) + Math.sin(elapsed * 0.45) * 0.14;
+        if (isPortraitMobile) {
+          camera.position.set(0, 2.0, 5.4);
+          camera.lookAt(0, 0.95, -2.5);
+        } else {
+          camera.position.set(0.35, 2.05, 4.75);
+          camera.lookAt(0.25, 1.15, -3.5);
+        }
         animateCharacterRig(charRig, animRef.current || 'run', elapsed, dt, 0.72);
       }
 
@@ -222,6 +235,8 @@ export function ScenePreview3D({
       cancelAnimationFrame(frameId);
       clearTimeout(timerId);
       window.removeEventListener('resize', onResize);
+      window.removeEventListener('orientationchange', onResize);
+      resizeObserver?.disconnect();
       if (interactiveRotate) {
         ctx.renderer.domElement.removeEventListener('pointerdown', onPointerDown);
         window.removeEventListener('pointermove', onPointerMove);

@@ -205,6 +205,8 @@ export class RunnerEngine {
   private keyDownHandler: (e: KeyboardEvent) => void;
   private blurHandler: () => void;
   private resizeHandler: () => void;
+  private resizeObserver?: ResizeObserver;
+  private portraitFactor = 0;
   private touchStartX = 0;
   private touchStartY = 0;
   private touchActive = false;
@@ -271,8 +273,10 @@ export class RunnerEngine {
     this.scene.environment = this.ctx.pmremEnvTexture;
 
     const aspect = Math.max(1, this.container.clientWidth) / Math.max(1, this.container.clientHeight);
-    this.camera = new THREE.PerspectiveCamera(62, aspect, 0.2, 160);
-    this.camera.position.set(0, 4.4, 7.2);
+    this.portraitFactor = aspect < 0.9 ? THREE.MathUtils.clamp((0.9 - aspect) / 0.45, 0, 1) : 0;
+    const initialFov = 62 + this.portraitFactor * 16;
+    this.camera = new THREE.PerspectiveCamera(initialFov, aspect, 0.2, 160);
+    this.camera.position.set(0, 4.4 + this.portraitFactor * 0.5, 7.2 + this.portraitFactor * 1.4);
     this.camera.lookAt(0, 1.4, -10);
 
     // 3-point studio outdoor lighting
@@ -400,9 +404,10 @@ export class RunnerEngine {
 
     this.touchMoveHandler = (e: TouchEvent) => {
       if (!this.touchActive || e.touches.length !== 1) return;
+      if (e.cancelable) e.preventDefault();
       const dx = e.touches[0].clientX - this.touchStartX;
       const dy = e.touches[0].clientY - this.touchStartY;
-      const threshold = 26;
+      const threshold = 18;
       if (Math.abs(dx) > threshold || Math.abs(dy) > threshold) {
         if (Math.abs(dx) > Math.abs(dy)) {
           if (dx < 0) this.moveLeft();
@@ -422,9 +427,15 @@ export class RunnerEngine {
     window.addEventListener('keydown', this.keyDownHandler);
     window.addEventListener('blur', this.blurHandler);
     window.addEventListener('resize', this.resizeHandler);
+    window.addEventListener('orientationchange', this.resizeHandler);
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => this.handleResize());
+      this.resizeObserver.observe(this.container);
+    }
     this.ctx.renderer.domElement.addEventListener('touchstart', this.touchStartHandler, { passive: true });
-    this.ctx.renderer.domElement.addEventListener('touchmove', this.touchMoveHandler, { passive: true });
+    this.ctx.renderer.domElement.addEventListener('touchmove', this.touchMoveHandler, { passive: false });
     this.ctx.renderer.domElement.addEventListener('touchend', this.touchEndHandler, { passive: true });
+    this.ctx.renderer.domElement.addEventListener('touchcancel', this.touchEndHandler, { passive: true });
   }
 
   public start(): void {
@@ -570,7 +581,10 @@ export class RunnerEngine {
     if (this.disposed) return;
     const w = Math.max(1, this.container.clientWidth);
     const h = Math.max(1, this.container.clientHeight);
-    this.camera.aspect = w / h;
+    const aspect = w / h;
+    this.portraitFactor = aspect < 0.9 ? THREE.MathUtils.clamp((0.9 - aspect) / 0.45, 0, 1) : 0;
+    this.camera.fov = 62 + this.portraitFactor * 16;
+    this.camera.aspect = aspect;
     this.camera.updateProjectionMatrix();
     this.ctx.renderer.setSize(w, h);
   }
@@ -622,7 +636,11 @@ export class RunnerEngine {
       if (this.remoteRig) {
         animateCharacterRig(this.remoteRig, 'idle', this.totalElapsed, dt);
       }
-      this.camera.position.set(0, 4.1, 6.9);
+      this.camera.position.set(
+        0,
+        4.1 + this.portraitFactor * 0.5,
+        6.9 + this.portraitFactor * 1.4
+      );
       this.camera.lookAt(0, 1.35, -12);
     } else if (this.coopLocalDead && !this.ended) {
       this.totalElapsed += dt;
@@ -641,8 +659,18 @@ export class RunnerEngine {
         this.spawnWave();
       }
       this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, focusPos.x * 0.65, 8, dt);
-      this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, Math.max(4.1, focusPos.y + 3.8), 8, dt);
-      this.camera.position.z = THREE.MathUtils.damp(this.camera.position.z, focusPos.z + 6.9, 8, dt);
+      this.camera.position.y = THREE.MathUtils.damp(
+        this.camera.position.y,
+        Math.max(4.1, focusPos.y + 3.8) + this.portraitFactor * 0.45,
+        8,
+        dt
+      );
+      this.camera.position.z = THREE.MathUtils.damp(
+        this.camera.position.z,
+        focusPos.z + 6.9 + this.portraitFactor * 1.4,
+        8,
+        dt
+      );
       this.camera.lookAt(focusPos.x * 0.45, focusPos.y + 1.35, focusPos.z - 12);
     } else if (!this.paused && !this.ended) {
       this.stepSimulation(dt);
@@ -893,8 +921,8 @@ export class RunnerEngine {
     }
 
     const camTargetX = this.playerX * 0.65 + shakeX;
-    const camTargetY = Math.max(4.1, this.playerY + 3.8) + shakeY;
-    const camTargetZ = this.playerZ + 6.9;
+    const camTargetY = Math.max(4.1, this.playerY + 3.8) + this.portraitFactor * 0.45 + shakeY;
+    const camTargetZ = this.playerZ + 6.9 + this.portraitFactor * 1.4;
 
     this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, camTargetX, 10, dt);
     this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, camTargetY, 8, dt);
@@ -1228,9 +1256,12 @@ export class RunnerEngine {
     window.removeEventListener('keydown', this.keyDownHandler);
     window.removeEventListener('blur', this.blurHandler);
     window.removeEventListener('resize', this.resizeHandler);
+    window.removeEventListener('orientationchange', this.resizeHandler);
+    this.resizeObserver?.disconnect();
     this.ctx.renderer.domElement.removeEventListener('touchstart', this.touchStartHandler);
     this.ctx.renderer.domElement.removeEventListener('touchmove', this.touchMoveHandler);
     this.ctx.renderer.domElement.removeEventListener('touchend', this.touchEndHandler);
+    this.ctx.renderer.domElement.removeEventListener('touchcancel', this.touchEndHandler);
 
     for (const p of this.particles) {
       this.scene.remove(p.mesh);
