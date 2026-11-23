@@ -1,12 +1,18 @@
 import { Request, Response } from 'express';
 import {
+  LeaderboardCategory,
   MapId,
   SkinId,
-  isCommonSkinId,
+  SoloGameMode,
+  isGiftableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
 import { AuthedRequest } from './auth.ts';
 import { generateToken, signHmac, verifyHmac } from './crypto.ts';
+import {
+  repoGetCustomCharacterConfig,
+  repoGetUnreadNotificationsForUser,
+} from './featureRepository.ts';
 import {
   repoCanUserEquipSkin,
   repoCloseGlobalPoll,
@@ -19,10 +25,12 @@ import {
   repoFindUserByNickname,
   repoGetActiveMatch,
   repoGetAdminDashboardData,
+  repoGetCoinsLeaderboard,
   repoGetCompetitiveStatsForUser,
   repoGetLeaderboard,
   repoGetRecentX1ResultsForUser,
   repoGetSocialFeed,
+  repoGetWalletStatsForUser,
   repoGiftSkinToPlayer,
   repoMarkGiftsSeen,
   repoSearchPlayersForAdmin,
@@ -56,11 +64,16 @@ export async function equipSkinHandler(req: AuthedRequest, res: Response): Promi
 
 export async function startMatchHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
-  const { mapId, skinId } = req.body ?? {};
+  const { mapId, skinId, mode } = req.body ?? {};
   if (!isValidMapId(mapId)) {
     res.status(400).json({ error: 'Mapa inválido.' });
     return;
   }
+  if (mode !== undefined && mode !== 'normal' && mode !== 'no_coin') {
+    res.status(400).json({ error: 'Modo de jogo inválido.' });
+    return;
+  }
+  const chosenMode: SoloGameMode = mode === 'normal' ? 'normal' : 'no_coin';
   const chosenSkin: SkinId = isValidSkinId(skinId) ? skinId : user.equippedSkin;
   if (!(await repoCanUserEquipSkin(user, chosenSkin))) {
     res.status(403).json({ error: 'Skin exclusiva não autorizada para esta conta.' });
@@ -68,12 +81,13 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
   }
   const matchId = `m_${generateToken(10)}`;
   const startedAt = Date.now();
-  const payload = `${matchId}:${user.id}:${startedAt}:${mapId}:${chosenSkin}`;
+  const payload = `${matchId}:${user.id}:${startedAt}:${mapId}:${chosenSkin}:${chosenMode}`;
   const signature = signHmac(payload);
 
   await repoCreateActiveMatch({
     matchId,
     userId: user.id,
+    mode: chosenMode,
     mapId,
     skinId: chosenSkin,
     startedAt,
@@ -81,7 +95,7 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
     completed: false,
   });
 
-  res.json({ matchId, startedAt, signature });
+  res.json({ matchId, startedAt, signature, mode: chosenMode });
 }
 
 export async function finishMatchHandler(req: AuthedRequest, res: Response): Promise<void> {
@@ -95,6 +109,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     distance,
     score,
     durationMs,
+    endReason,
   } = req.body ?? {};
 
   if (typeof matchId !== 'string' || typeof signature !== 'string') {
@@ -108,8 +123,14 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     return;
   }
 
-  const expectedPayload = `${active.matchId}:${user.id}:${active.startedAt}:${active.mapId}:${active.skinId}`;
-  if (active.signature !== signature || !verifyHmac(expectedPayload, signature)) {
+  const activeMode: SoloGameMode = active.mode === 'normal' ? 'normal' : 'no_coin';
+  const expectedPayload = `${active.matchId}:${user.id}:${active.startedAt}:${active.mapId}:${active.skinId}:${activeMode}`;
+  const legacyPayload = `${active.matchId}:${user.id}:${active.startedAt}:${active.mapId}:${active.skinId}`;
+  const sigMatches =
+    active.signature === signature &&
+    (verifyHmac(expectedPayload, signature) || verifyHmac(legacyPayload, signature));
+
+  if (!sigMatches) {
     res.status(403).json({ error: 'Assinatura de partida inválida.' });
     return;
   }
@@ -118,7 +139,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
   const wallElapsedMs = Math.max(0, now - active.startedAt);
 
   const safeDuration = Number(durationMs);
-  const safeNoCoin = Number(noCoinTimeMs);
+  const safeNoCoin = activeMode === 'no_coin' ? Number(noCoinTimeMs) : 0;
   const safeCoins = Number(coins);
   const safeDistance = Number(distance);
   const safeScore = Number(score);
@@ -145,14 +166,27 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     res.status(422).json({ error: 'Duração incompatível com o tempo real da partida.' });
     return;
   }
-  if (safeNoCoin > safeDuration + 150) {
-    res.status(422).json({ error: 'Tempo sem moedas não pode superar a duração da partida.' });
-    return;
+  if (activeMode === 'no_coin') {
+    if (safeNoCoin > safeDuration + 150) {
+      res.status(422).json({ error: 'Tempo sem moedas não pode superar a duração da partida.' });
+      return;
+    }
+    if (!safeCollectedCoin && safeCoins > 0) {
+      res.status(422).json({ error: 'Inconsistência de coleta de moedas.' });
+      return;
+    }
+    if (safeCollectedCoin && safeCoins > 5) {
+      res.status(422).json({ error: 'Tentativa No Coin inválida detectada.' });
+      return;
+    }
+  } else {
+    const maxPlausibleCoins = Math.floor((safeDuration / 1000) * 40 + 50);
+    if (safeCoins > maxPlausibleCoins) {
+      res.status(422).json({ error: 'Quantidade de moedas incompatível com a duração da partida.' });
+      return;
+    }
   }
-  if (!safeCollectedCoin && safeCoins > 0) {
-    res.status(422).json({ error: 'Inconsistência de coleta de moedas.' });
-    return;
-  }
+
   const maxPlausibleDistance = (safeDuration / 1000) * 75 + 40;
   if (safeDistance > maxPlausibleDistance) {
     res.status(422).json({ error: 'Distância incompatível com os limites físicos do jogo.' });
@@ -164,7 +198,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     return;
   }
 
-  const roundedNoCoin = Math.round(safeNoCoin);
+  const roundedNoCoin = activeMode === 'no_coin' ? Math.round(safeNoCoin) : 0;
   const roundedDistance = Math.round(safeDistance);
   const roundedScore = Math.round(safeScore);
   const roundedCoins = Math.round(safeCoins);
@@ -176,6 +210,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       id: matchId,
       userId: user.id,
       nickname: user.nickname,
+      mode: activeMode,
       skinId: active.skinId,
       mapId: active.mapId,
       noCoinTimeMs: roundedNoCoin,
@@ -193,9 +228,13 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     return;
   }
 
+  const normalizedEndReason: 'police' | 'coin' =
+    activeMode === 'no_coin' && (endReason === 'coin' || safeCollectedCoin) ? 'coin' : 'police';
+
   res.json({
     summary: {
       matchId,
+      mode: activeMode,
       mapId: active.mapId,
       skinId: active.skinId,
       noCoinTimeMs: roundedNoCoin,
@@ -206,14 +245,38 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       durationMs: roundedDuration,
       isNewPersonalRecord: outcome.isNewPersonalRecord,
       globalRank: outcome.globalRank,
+      endReason: normalizedEndReason,
     },
   });
 }
 
 export async function leaderboardHandler(req: AuthedRequest, res: Response): Promise<void> {
-  const rawLimit = Number(req.query.limit || 100);
-  const limit = [10, 50, 100].includes(rawLimit) ? rawLimit : 100;
-  const data = await repoGetLeaderboard(limit, req.authUser?.id);
+  const rawCategory = String(req.query.category || 'no_coin');
+  const category: LeaderboardCategory = rawCategory === 'coins' ? 'coins' : 'no_coin';
+  const rawPage = Number(req.query.page || 1);
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? Math.floor(rawPage) : 1;
+
+  const rawPageSize = Number(req.query.pageSize ?? req.query.limit ?? 20);
+  const pageSize =
+    Number.isFinite(rawPageSize) && rawPageSize >= 1
+      ? Math.min(100, Math.floor(rawPageSize))
+      : 20;
+
+  if (category === 'coins') {
+    const data = await repoGetCoinsLeaderboard({
+      page,
+      pageSize,
+      currentUserId: req.authUser?.id,
+    });
+    res.json(data);
+    return;
+  }
+
+  const data = await repoGetLeaderboard({
+    page,
+    pageSize,
+    currentUserId: req.authUser?.id,
+  });
   res.json(data);
 }
 
@@ -225,10 +288,12 @@ export async function publicProfileHandler(req: Request, res: Response): Promise
     return;
   }
 
-  const [rank, competitiveStats, recentX1] = await Promise.all([
+  const [rank, competitiveStats, recentX1, walletStats, customCfg] = await Promise.all([
     repoComputePlayerRank(user.id),
     repoGetCompetitiveStatsForUser(user.id),
     repoGetRecentX1ResultsForUser(user.id, 8),
+    repoGetWalletStatsForUser(user.id),
+    user.equippedSkin === 'meu_ratao' ? repoGetCustomCharacterConfig(user.id) : Promise.resolve(undefined),
   ]);
   res.json({
     profile: {
@@ -240,18 +305,23 @@ export async function publicProfileHandler(req: Request, res: Response): Promise
       bestDistance: user.bestDistance,
       bestScore: user.bestScore,
       totalMatches: user.totalMatches,
-      totalCoins: user.totalCoins,
+      totalCoins: walletStats.totalCoinsCollected,
       favoriteSkin: user.favoriteSkin,
       rank,
       competitiveStats,
+      walletStats,
+      customCharacterConfig: customCfg,
       recentX1,
     },
   });
 }
 
 export async function socialFeedHandler(req: AuthedRequest, res: Response): Promise<void> {
-  const feed = await repoGetSocialFeed(req.authUser?.id);
-  res.json(feed);
+  const [feed, notifications] = await Promise.all([
+    repoGetSocialFeed(req.authUser?.id),
+    req.authUser ? repoGetUnreadNotificationsForUser(req.authUser.id) : Promise.resolve([]),
+  ]);
+  res.json({ ...feed, notifications });
 }
 
 export async function markGiftsSeenHandler(req: AuthedRequest, res: Response): Promise<void> {
@@ -402,8 +472,10 @@ export async function adminGiftSkinHandler(req: AuthedRequest, res: Response): P
     res.status(400).json({ error: 'Skin selecionada inválida.' });
     return;
   }
-  if (!isCommonSkinId(skinId)) {
-    res.status(403).json({ error: 'Skins exclusivas não podem ser enviadas como presente.' });
+  if (!isGiftableSkinId(skinId)) {
+    res.status(403).json({
+      error: 'Skins exclusivas de Administrador e Top 1/2/3 não podem ser enviadas como presente.',
+    });
     return;
   }
 

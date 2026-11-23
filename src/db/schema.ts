@@ -10,12 +10,19 @@ import {
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
 import type {
+  CustomCharacterConfig,
   ExclusiveSkinId,
   MapId,
   MultiplayerMode,
+  PaintRegion,
   ParticipantAnimState,
+  PromoRewardType,
   RoomStatus,
   SkinId,
+  SoloGameMode,
+  SpecialUnlockableSkinId,
+  SuggestionStatus,
+  SuggestionType,
 } from '../shared/constants.ts';
 
 export const users = pgTable(
@@ -68,6 +75,7 @@ export const activeMatches = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
+    mode: text('mode').$type<SoloGameMode>().notNull().default('no_coin'),
     mapId: text('map_id').$type<MapId>().notNull(),
     skinId: text('skin_id').$type<SkinId>().notNull(),
     startedAt: bigint('started_at', { mode: 'number' }).notNull(),
@@ -85,6 +93,7 @@ export const matches = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     nickname: text('nickname').notNull(),
+    mode: text('mode').$type<SoloGameMode>().notNull().default('no_coin'),
     skinId: text('skin_id').$type<SkinId>().notNull(),
     mapId: text('map_id').$type<MapId>().notNull(),
     noCoinTimeMs: integer('no_coin_time_ms').notNull(),
@@ -95,7 +104,10 @@ export const matches = pgTable(
     durationMs: integer('duration_ms').notNull(),
     createdAt: text('created_at').notNull(),
   },
-  (table) => [index('matches_user_best_idx').on(table.userId, table.noCoinTimeMs)]
+  (table) => [
+    index('matches_user_best_idx').on(table.userId, table.noCoinTimeMs),
+    index('matches_user_mode_best_idx').on(table.userId, table.mode, table.noCoinTimeMs),
+  ]
 );
 
 export const globalMessages = pgTable('global_messages', {
@@ -212,6 +224,14 @@ export const multiplayerParticipants = pgTable(
     posX: doublePrecision('pos_x').notNull().default(0),
     posY: doublePrecision('pos_y').notNull().default(0),
     posZ: doublePrecision('pos_z').notNull().default(0),
+    vx: doublePrecision('vx').notNull().default(0),
+    vy: doublePrecision('vy').notNull().default(0),
+    vz: doublePrecision('vz').notNull().default(0),
+    speed: doublePrecision('speed').notNull().default(0),
+    yaw: doublePrecision('yaw').notNull().default(0),
+    seq: integer('seq').notNull().default(0),
+    clientTs: bigint('client_ts', { mode: 'number' }).notNull().default(0),
+    pingMs: integer('ping_ms').notNull().default(0),
     lane: integer('lane').notNull().default(0),
     animState: text('anim_state').$type<ParticipantAnimState>().notNull().default('idle'),
     distance: integer('distance').notNull().default(0),
@@ -361,8 +381,10 @@ export const exclusiveSkinPermissions = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    skinId: text('skin_id').$type<ExclusiveSkinId>().notNull(),
-    reason: text('reason').$type<'admin' | 'top1' | 'top2' | 'top3'>().notNull(),
+    skinId: text('skin_id').$type<ExclusiveSkinId | SpecialUnlockableSkinId>().notNull(),
+    reason: text('reason')
+      .$type<'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule'>()
+      .notNull(),
     rankPosition: integer('rank_position'),
     active: boolean('active').notNull().default(true),
     grantedAt: text('granted_at').notNull(),
@@ -375,3 +397,144 @@ export const exclusiveSkinPermissions = pgTable(
   ]
 );
 
+export const playerSuggestions = pgTable(
+  'player_suggestions',
+  {
+    id: text('id').primaryKey(),
+    code: text('code').notNull().unique(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    authorNickname: text('author_nickname').notNull(),
+    type: text('type').$type<SuggestionType>().notNull(),
+    title: text('title').notNull(),
+    description: text('description').notNull(),
+    status: text('status').$type<SuggestionStatus>().notNull().default('received'),
+    adminNote: text('admin_note'),
+    reviewedBy: text('reviewed_by'),
+    reviewedAt: text('reviewed_at'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    index('suggestions_user_idx').on(table.userId, table.createdAt),
+    index('suggestions_status_idx').on(table.status, table.type),
+  ]
+);
+
+export const promoCodes = pgTable(
+  'promo_codes',
+  {
+    id: text('id').primaryKey(),
+    code: text('code').notNull().unique(),
+    description: text('description').notNull().default(''),
+    rewardType: text('reward_type').$type<PromoRewardType>().notNull(),
+    rewardSkinId: text('reward_skin_id').$type<SkinId>(),
+    rewardAmount: integer('reward_amount').notNull().default(0),
+    rewardMetadata: jsonb('reward_metadata').$type<Record<string, unknown>>().notNull(),
+    maxUses: integer('max_uses'),
+    isInfinite: boolean('is_infinite').notNull().default(false),
+    usedCount: integer('used_count').notNull().default(0),
+    active: boolean('active').notNull().default(true),
+    expiresAt: text('expires_at'),
+    createdBy: text('created_by').notNull(),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [index('promo_codes_active_idx').on(table.active)]
+);
+
+export const promoCodeRedemptions = pgTable(
+  'promo_code_redemptions',
+  {
+    id: text('id').primaryKey(),
+    promoCodeId: text('promo_code_id')
+      .notNull()
+      .references(() => promoCodes.id, { onDelete: 'cascade' }),
+    code: text('code').notNull(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    nickname: text('nickname').notNull(),
+    rewardType: text('reward_type').$type<PromoRewardType>().notNull(),
+    rewardSummary: text('reward_summary').notNull(),
+    redeemedAt: text('redeemed_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('promo_redemptions_code_user_uidx').on(table.promoCodeId, table.userId),
+    index('promo_redemptions_code_idx').on(table.promoCodeId, table.redeemedAt),
+  ]
+);
+
+export const playerWalletStats = pgTable(
+  'player_wallet_stats',
+  {
+    userId: text('user_id')
+      .primaryKey()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    totalCoinsCollected: integer('total_coins_collected').notNull().default(0),
+    soloCoinsCollected: integer('solo_coins_collected').notNull().default(0),
+    multiplayerCoinsCollected: integer('multiplayer_coins_collected').notNull().default(0),
+    promoCoinsCollected: integer('promo_coins_collected').notNull().default(0),
+    spentCoins: integer('spent_coins').notNull().default(0),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [index('wallet_coins_rank_idx').on(table.totalCoinsCollected)]
+);
+
+export const coinLedgerEvents = pgTable(
+  'coin_ledger_events',
+  {
+    id: text('id').primaryKey(),
+    eventKey: text('event_key').notNull().unique(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    sourceType: text('source_type').$type<'solo' | 'coop' | 'x1' | 'promo'>().notNull(),
+    amount: integer('amount').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('coin_ledger_user_idx').on(table.userId, table.createdAt)]
+);
+
+export const customCharacterConfigs = pgTable('custom_character_configs', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  configJson: jsonb('config_json').$type<CustomCharacterConfig>().notNull(),
+  version: integer('version').notNull().default(1),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const customCharacterTextures = pgTable(
+  'custom_character_textures',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    region: text('region').$type<PaintRegion>().notNull(),
+    storageUrl: text('storage_url').notNull(),
+    dataBase64: text('data_base64').notNull(),
+    contentType: text('content_type').notNull().default('image/png'),
+    byteSize: integer('byte_size').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [uniqueIndex('custom_tex_user_region_uidx').on(table.userId, table.region)]
+);
+
+export const notificationHistory = pgTable(
+  'notification_history',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    kind: text('kind').$type<'suggestion_status' | 'promo' | 'system'>().notNull(),
+    title: text('title').notNull(),
+    message: text('message').notNull(),
+    seen: boolean('seen').notNull().default(false),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('notif_user_seen_idx').on(table.userId, table.seen, table.createdAt)]
+);

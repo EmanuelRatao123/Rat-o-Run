@@ -38,6 +38,25 @@ import {
   votePollHandler,
 } from './src/server/gameApi.ts';
 import {
+  adminCreatePromoCodeHandler,
+  adminDeletePromoCodeHandler,
+  adminDeleteSuggestionHandler,
+  adminListPromoCodesHandler,
+  adminListPromoRedemptionsHandler,
+  adminListSuggestionsHandler,
+  adminUnlockKingSkinHandler,
+  adminUpdatePromoCodeHandler,
+  adminUpdateSuggestionHandler,
+  createSuggestionHandler,
+  getCustomTextureHandler,
+  getMyCustomCharacterHandler,
+  getUserCustomCharacterPublicHandler,
+  listMySuggestionsHandler,
+  markNotificationsSeenHandler,
+  redeemPromoCodeHandler,
+  saveMyCustomCharacterHandler,
+} from './src/server/featureApi.ts';
+import {
   mpCreateInviteHandler,
   mpGetRoomHandler,
   mpLeaveRoomHandler,
@@ -54,7 +73,14 @@ dotenv.config();
 
 const app = express();
 app.set('trust proxy', 1);
-app.use(express.json({ limit: '64kb' }));
+const jsonSmall = express.json({ limit: '64kb' });
+const jsonCustomCharacter = express.json({ limit: '384kb' });
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/custom-character')) {
+    return jsonCustomCharacter(req, res, next);
+  }
+  return jsonSmall(req, res, next);
+});
 app.use(cookieParser());
 app.use(attachAuth);
 
@@ -107,14 +133,33 @@ app.post('/api/multiplayer/rooms/:roomId/start', requireAuth, wrap(mpStartRoomHa
 app.post('/api/multiplayer/rooms/:roomId/sync', requireAuth, wrap(mpSyncRoomHandler));
 app.post('/api/multiplayer/rooms/:roomId/leave', requireAuth, wrap(mpLeaveRoomHandler));
 
+// Suggestions, Promo Codes, Notifications & Custom Character ("Meu Ratão") routes
+app.post('/api/notifications/seen', requireAuth, wrap(markNotificationsSeenHandler));
+app.post('/api/suggestions', requireAuth, wrap(createSuggestionHandler));
+app.get('/api/suggestions/mine', requireAuth, wrap(listMySuggestionsHandler));
+app.post('/api/promo-codes/redeem', requireAuth, wrap(redeemPromoCodeHandler));
+app.get('/api/custom-character', requireAuth, wrap(getMyCustomCharacterHandler));
+app.put('/api/custom-character', requireAuth, wrap(saveMyCustomCharacterHandler));
+app.get('/api/custom-character/textures/:textureId', wrap(getCustomTextureHandler));
+app.get('/api/custom-character/user/:userId', wrap(getUserCustomCharacterPublicHandler));
+
 // Protected Admin Panel routes
 app.get('/api/admin/stats', requireAdmin, wrap(adminStatsHandler));
 app.get('/api/admin/players', requireAdmin, wrap(adminSearchPlayersHandler));
+app.post('/api/admin/unlock-king-skin', requireAdmin, wrap(adminUnlockKingSkinHandler));
 app.post('/api/admin/messages', requireAdmin, wrap(adminCreateMessageHandler));
 app.delete('/api/admin/messages/:id', requireAdmin, wrap(adminDeleteMessageHandler));
 app.post('/api/admin/polls', requireAdmin, wrap(adminCreatePollHandler));
 app.post('/api/admin/polls/:id/close', requireAdmin, wrap(adminClosePollHandler));
 app.post('/api/admin/gift-skin', requireAdmin, wrap(adminGiftSkinHandler));
+app.get('/api/admin/suggestions', requireAdmin, wrap(adminListSuggestionsHandler));
+app.patch('/api/admin/suggestions/:id', requireAdmin, wrap(adminUpdateSuggestionHandler));
+app.delete('/api/admin/suggestions/:id', requireAdmin, wrap(adminDeleteSuggestionHandler));
+app.get('/api/admin/promo-codes', requireAdmin, wrap(adminListPromoCodesHandler));
+app.post('/api/admin/promo-codes', requireAdmin, wrap(adminCreatePromoCodeHandler));
+app.patch('/api/admin/promo-codes/:id', requireAdmin, wrap(adminUpdatePromoCodeHandler));
+app.delete('/api/admin/promo-codes/:id', requireAdmin, wrap(adminDeletePromoCodeHandler));
+app.get('/api/admin/promo-codes/:id/redemptions', requireAdmin, wrap(adminListPromoRedemptionsHandler));
 
 export default app;
 

@@ -1,34 +1,41 @@
 import {
+  Bell,
   BellRing,
   ChevronDown,
   ChevronUp,
+  Coins,
   Gift,
+  Lightbulb,
   LogOut,
   Map as MapIcon,
-  Megaphone,
   Play,
   ShieldAlert,
   Sliders,
   Sparkles,
   Swords,
+  Ticket,
   Timer,
   Trophy,
   User,
   Users,
-  Vote,
+  X,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminPortalModal } from './components/AdminPortalModal.tsx';
 import { AuthScreen } from './components/AuthScreen.tsx';
+import { CharacterCustomizerModal } from './components/CharacterCustomizerModal.tsx';
 import { GameView, MultiplayerSessionConfig } from './components/GameView.tsx';
+import { GlobalBroadcastOverlay } from './components/GlobalBroadcastOverlay.tsx';
 import { LeaderboardModal } from './components/LeaderboardModal.tsx';
+import { LivePollOverlay } from './components/LivePollOverlay.tsx';
 import { MapsModal } from './components/MapsModal.tsx';
 import { MultiplayerModal } from './components/MultiplayerModal.tsx';
-import { PollsAndMessagesModal } from './components/PollsAndMessagesModal.tsx';
 import { ProfileModal } from './components/ProfileModal.tsx';
+import { PromoCodeModal } from './components/PromoCodeModal.tsx';
 import { RataoLogo } from './components/RataoLogo.tsx';
 import { ScenePreview3D } from './components/ScenePreview3D.tsx';
 import { SkinsModal } from './components/SkinsModal.tsx';
+import { SuggestionsModal } from './components/SuggestionsModal.tsx';
 import { gameAudio } from './game/audio.ts';
 import { api, setMemorySessionToken } from './services/api.ts';
 import {
@@ -40,8 +47,10 @@ import {
   MultiplayerMode,
   MultiplayerParticipant,
   MultiplayerRoom,
+  PlayerNotificationItem,
   PollItem,
   SkinGiftItem,
+  SoloGameMode,
   UserProfile,
   formatStopwatch,
   getSkinDefinition,
@@ -53,10 +62,13 @@ import {
 
 type ActiveModal =
   | null
+  | 'play'
   | 'skins'
+  | 'customizer'
   | 'maps'
   | 'ranking'
-  | 'polls'
+  | 'promo'
+  | 'suggestions'
   | 'profile'
   | 'multiplayer';
 
@@ -66,6 +78,7 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
 
   const [selectedMap, setSelectedMap] = useState<MapId>('brasil');
+  const [soloMode, setSoloMode] = useState<SoloGameMode>('no_coin');
   const [quality, setQuality] = useState<GraphicsQuality>('medium');
   const [activeModal, setActiveModal] = useState<ActiveModal>(null);
   const [multiplayerMode, setMultiplayerMode] = useState<MultiplayerMode>('coop');
@@ -85,6 +98,7 @@ export default function App() {
   const [messages, setMessages] = useState<GlobalMessage[]>([]);
   const [polls, setPolls] = useState<PollItem[]>([]);
   const [unseenGifts, setUnseenGifts] = useState<SkinGiftItem[]>([]);
+  const [notifications, setNotifications] = useState<PlayerNotificationItem[]>([]);
 
   // Secret admin portal trigger (double-tap F8 within 1s, Ctrl+Shift+A, or #admin)
   const [showSecretAdmin, setShowSecretAdmin] = useState(false);
@@ -122,6 +136,7 @@ export default function App() {
       setMessages(feed.messages);
       setPolls(feed.polls);
       setUnseenGifts(feed.unseenGifts);
+      setNotifications(feed.notifications || []);
     } catch {
       // Ignore transient polling errors
     }
@@ -240,10 +255,17 @@ export default function App() {
     await refreshUser();
   };
 
-  const handleStartGame = () => {
+  const handleDismissNotifications = async () => {
+    setNotifications([]);
+    await api.markNotificationsSeen().catch(() => {});
+  };
+
+  const handleStartSoloMode = (mode: SoloGameMode) => {
     gameAudio.unlock();
     gameAudio.playUiClick();
+    setSoloMode(mode);
     setActiveMpSession(null);
+    setActiveModal(null);
     setPlaying(true);
   };
 
@@ -288,7 +310,13 @@ export default function App() {
 
   const equippedSkinDef = getSkinDefinition(user ? user.equippedSkin : 'ratao');
   const currentMapDef = MAPS.find((m) => m.id === selectedMap) || MAPS[0];
-  const openPollsCount = polls.filter((p) => p.active && p.userVotedIndex === null).length;
+  const accumulatedCoins = user
+    ? user.walletStats?.totalCoinsCollected ?? user.totalCoins
+    : 0;
+  const meuRataoUnlocked = user
+    ? user.unlockedSkins.includes('meu_ratao') ||
+      Boolean(user.allowedExclusiveSkins?.includes('meu_ratao'))
+    : false;
 
   return (
     <div className="relative w-full h-full overflow-hidden bg-slate-950">
@@ -304,7 +332,7 @@ export default function App() {
           mapId={activeMpSession ? activeMpSession.room.mapId : selectedMap}
           skinId={user.equippedSkin}
           quality={quality}
-          activeMessages={messages}
+          soloMode={soloMode}
           multiplayerSession={activeMpSession}
           onExitToMenu={() => {
             setPlaying(false);
@@ -324,6 +352,7 @@ export default function App() {
               mapId={selectedMap}
               quality={quality}
               mode="showcase"
+              customConfig={user.customCharacterConfig}
             />
           </div>
 
@@ -331,10 +360,10 @@ export default function App() {
           <div className="relative z-10 w-full h-full pointer-events-none flex flex-col justify-between p-4 sm:p-6">
             {/* Top Bar */}
             <div className="flex flex-wrap items-start justify-between gap-3">
-              {/* Top-Left: Logo + Player Personal Record */}
+              {/* Top-Left: Logo + Player Personal Record + Total Coins Collected */}
               <div className="pointer-events-auto flex flex-col gap-2.5">
                 <RataoLogo compact />
-                <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2 flex items-center gap-4 shadow-lg">
+                <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3.5 py-2 flex flex-wrap items-center gap-3.5 sm:gap-4 shadow-lg">
                   <div>
                     <div className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
                       JOGADOR
@@ -352,35 +381,55 @@ export default function App() {
                       {formatStopwatch(user.bestNoCoinTimeMs)}
                     </div>
                   </div>
+                  <div className="h-7 w-px bg-slate-800" />
+                  <div>
+                    <div className="text-[10px] font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-1">
+                      <Coins className="w-3 h-3" /> MOEDAS TOTAIS COLETADAS
+                    </div>
+                    <div className="font-mono-num font-extrabold text-sm sm:text-base text-white">
+                      {accumulatedCoins.toLocaleString('pt-BR')}
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Top-Center: Global Broadcast Message Toast (if active) */}
-              {messages.length > 0 && (
+              <div className="hidden" />
+
+              {/* Top-Right: Map, Profile, Quality & Logout */}
+              <div className="pointer-events-auto flex items-center gap-2">
                 <button
                   type="button"
-                  onClick={() => setActiveModal('polls')}
-                  className="pointer-events-auto max-w-md bg-indigo-950/95 border border-indigo-400/70 rounded-xl px-4 py-2 text-left shadow-xl hover:border-amber-400 transition cursor-pointer"
+                  onClick={() => {
+                    gameAudio.playUiClick();
+                    setActiveModal('maps');
+                  }}
+                  title="Escolher Mapa"
+                  className="bg-slate-950/90 border border-slate-700/80 hover:border-emerald-400/70 rounded-xl px-3 py-2 text-left cursor-pointer transition flex items-center gap-2"
                 >
-                  <div className="flex items-center gap-2 text-xs font-extrabold text-amber-300 uppercase">
-                    <Megaphone className="w-3.5 h-3.5" /> {messages[0].title}
+                  <MapIcon className="w-4 h-4 text-emerald-400 shrink-0" />
+                  <div className="hidden sm:flex flex-col leading-tight">
+                    <span className="text-[10px] font-bold uppercase text-slate-400">
+                      {equippedSkinDef.name} · {currentMapDef.name}
+                    </span>
+                    <span className="text-xs font-bold text-emerald-400">
+                      {user.rank ? `Ranking #${user.rank}` : `${user.totalMatches} partidas`}
+                    </span>
                   </div>
-                  <p className="text-xs text-indigo-100 line-clamp-1 mt-0.5">
-                    {messages[0].content}
-                  </p>
                 </button>
-              )}
 
-              {/* Top-Right: Active Skin/Map summary + Quality + Logout */}
-              <div className="pointer-events-auto flex items-center gap-2">
-                <div className="hidden sm:flex flex-col items-end bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-1.5 text-right">
-                  <span className="text-[10px] font-bold uppercase text-slate-400">
-                    {equippedSkinDef.name} · {currentMapDef.name}
-                  </span>
-                  <span className="text-xs font-bold text-emerald-400">
-                    {user.rank ? `Ranking #${user.rank}` : `${user.totalMatches} partidas`}
-                  </span>
-                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.playUiClick();
+                    setInspectNickname(user.nickname);
+                    setActiveModal('profile');
+                  }}
+                  title="Meu Perfil"
+                  className="p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center gap-1.5 text-xs font-bold"
+                >
+                  <User className="w-4 h-4 text-rose-400" />
+                  <span className="hidden md:inline">PERFIL</span>
+                </button>
 
                 <div className="relative">
                   <button
@@ -453,39 +502,17 @@ export default function App() {
               </button>
 
               {!dockCollapsed && (
-                <div className="pointer-events-auto w-full max-w-5xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
+                <div className="pointer-events-auto w-full max-w-4xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-3">
                   <button
                     type="button"
-                    onClick={handleStartGame}
-                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
+                    onClick={() => {
+                      gameAudio.unlock();
+                      gameAudio.playUiClick();
+                      setActiveModal('play');
+                    }}
+                    className="px-7 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
                   >
                     <Play className="w-5 h-5 fill-current" /> JOGAR
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.unlock();
-                      gameAudio.playUiClick();
-                      setMultiplayerMode('coop');
-                      setActiveModal('multiplayer');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-display font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer shadow-md"
-                  >
-                    <Users className="w-4 h-4" /> JOGAR COM AMIGO
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.unlock();
-                      gameAudio.playUiClick();
-                      setMultiplayerMode('x1');
-                      setActiveModal('multiplayer');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-rose-700 hover:bg-rose-600 text-white font-display font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer shadow-md"
-                  >
-                    <Swords className="w-4 h-4" /> X1 SEM MOEDAS
                   </button>
 
                   <button
@@ -503,17 +530,6 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       gameAudio.playUiClick();
-                      setActiveModal('maps');
-                    }}
-                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
-                  >
-                    <MapIcon className="w-4 h-4 text-emerald-400" /> MAPAS
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => {
-                      gameAudio.playUiClick();
                       setActiveModal('ranking');
                     }}
                     className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
@@ -525,33 +541,44 @@ export default function App() {
                     type="button"
                     onClick={() => {
                       gameAudio.playUiClick();
-                      setActiveModal('polls');
+                      setActiveModal('promo');
                     }}
-                    className="relative px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                   >
-                    <Vote className="w-4 h-4 text-sky-400" /> VOTAÇÕES
-                    {(openPollsCount > 0 || messages.length > 0) && (
-                      <span className="px-1.5 py-0.5 rounded bg-sky-500 text-slate-950 font-mono-num text-[10px] font-extrabold">
-                        {openPollsCount + messages.length}
-                      </span>
-                    )}
+                    <Ticket className="w-4 h-4 text-emerald-400" /> RESGATAR CÓDIGO
                   </button>
 
                   <button
                     type="button"
                     onClick={() => {
                       gameAudio.playUiClick();
-                      setInspectNickname(user.nickname);
-                      setActiveModal('profile');
+                      setActiveModal('suggestions');
                     }}
                     className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                   >
-                    <User className="w-4 h-4 text-rose-400" /> PERFIL
+                    <Lightbulb className="w-4 h-4 text-amber-300" /> ENVIAR SUGESTÃO
                   </button>
                 </div>
               )}
             </div>
           </div>
+
+          {/* Unread Notification Toast (Suggestions Reviewed / System Notices) */}
+          {notifications.length > 0 && pendingInvites.length === 0 && activeModal === null && (
+            <div className="fixed top-20 right-4 z-30 w-80 max-w-[calc(100vw-2rem)] bg-slate-950/95 border-2 border-emerald-400 rounded-2xl p-4 shadow-2xl space-y-2.5">
+              <div className="flex items-center gap-2 text-xs font-extrabold uppercase tracking-wider text-emerald-300">
+                <Bell className="w-4 h-4" /> {notifications[0].title}
+              </div>
+              <p className="text-xs text-slate-200 leading-relaxed">{notifications[0].message}</p>
+              <button
+                type="button"
+                onClick={() => void handleDismissNotifications()}
+                className="w-full py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-display font-bold text-xs cursor-pointer"
+              >
+                OK · CIENTE ({notifications.length})
+              </button>
+            </div>
+          )}
 
           {/* Live On-Screen Multiplayer Invite Notification */}
           {pendingInvites.length > 0 && activeModal !== 'multiplayer' && (
@@ -627,6 +654,137 @@ export default function App() {
             </div>
           )}
 
+          {/* Play Mode Chooser Modal */}
+          {activeModal === 'play' && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 flex items-center justify-center p-4">
+              <div className="w-full max-w-2xl bg-slate-900 border border-slate-700 rounded-2xl overflow-hidden shadow-2xl">
+                <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-xl sm:text-2xl font-bold text-white flex items-center gap-2">
+                      <Play className="w-5 h-5 text-amber-400 fill-current" /> ESCOLHER MODO DE JOGO
+                    </h2>
+                    <p className="text-xs text-slate-400">
+                      Mapa selecionado: <strong className="text-emerald-400">{currentMapDef.name}</strong> · Skin:{' '}
+                      <strong className="text-white">{equippedSkinDef.name}</strong>
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setActiveModal('maps')}
+                      className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <MapIcon className="w-3.5 h-3.5" /> Trocar Mapa
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveModal(null)}
+                      className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                    >
+                      <X className="w-5 h-5" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3.5">
+                  <button
+                    type="button"
+                    onClick={() => handleStartSoloMode('normal')}
+                    className="text-left p-4 rounded-2xl bg-gradient-to-br from-emerald-950/80 to-slate-950 border-2 border-emerald-500/60 hover:border-emerald-400 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 flex items-center justify-center">
+                        <Coins className="w-5 h-5" />
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-extrabold uppercase">
+                        SOLO · MOEDAS
+                      </span>
+                    </div>
+                    <h3 className="font-display text-lg font-bold text-white group-hover:text-emerald-300">
+                      MODO NORMAL
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Colete moedas livremente para somar na sua conta e disputar o Ranking de Moedas. Sem cronômetro No Coin.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => handleStartSoloMode('no_coin')}
+                    className="text-left p-4 rounded-2xl bg-gradient-to-br from-amber-950/80 to-slate-950 border-2 border-amber-500/60 hover:border-amber-400 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 flex items-center justify-center">
+                        <Timer className="w-5 h-5" />
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 text-[10px] font-extrabold uppercase">
+                        SOLO · DESAFIO
+                      </span>
+                    </div>
+                    <h3 className="font-display text-lg font-bold text-white group-hover:text-amber-300">
+                      MODO NO COIN
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Sobreviva o máximo possível sem tocar em nenhuma moeda! Pegar 1 moeda encerra a tentativa na hora.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      gameAudio.unlock();
+                      gameAudio.playUiClick();
+                      setMultiplayerMode('coop');
+                      setActiveModal('multiplayer');
+                    }}
+                    className="text-left p-4 rounded-2xl bg-gradient-to-br from-sky-950/80 to-slate-950 border border-sky-500/50 hover:border-sky-400 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="w-10 h-10 rounded-xl bg-sky-500/20 border border-sky-400/50 text-sky-300 flex items-center justify-center">
+                        <Users className="w-5 h-5" />
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-extrabold uppercase">
+                        MULTIPLAYER
+                      </span>
+                    </div>
+                    <h3 className="font-display text-lg font-bold text-white group-hover:text-sky-300">
+                      JOGAR COM AMIGO
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Corra lado a lado na mesma pista 3D com um amigo em tempo real.
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      gameAudio.unlock();
+                      gameAudio.playUiClick();
+                      setMultiplayerMode('x1');
+                      setActiveModal('multiplayer');
+                    }}
+                    className="text-left p-4 rounded-2xl bg-gradient-to-br from-rose-950/80 to-slate-950 border border-rose-500/50 hover:border-rose-400 transition cursor-pointer group"
+                  >
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-400/50 text-rose-300 flex items-center justify-center">
+                        <Swords className="w-5 h-5" />
+                      </span>
+                      <span className="px-2 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-extrabold uppercase">
+                        DUELO 1v1
+                      </span>
+                    </div>
+                    <h3 className="font-display text-lg font-bold text-white group-hover:text-rose-300">
+                      X1 SEM MOEDAS
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-1 leading-relaxed">
+                      Duelo direto: quem pegar uma moeda primeiro ou bater perde!
+                    </p>
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Feature Modals */}
           {activeModal === 'skins' && (
             <SkinsModal
@@ -634,7 +792,24 @@ export default function App() {
               selectedMap={selectedMap}
               quality={quality}
               onEquipped={(skinId) => setUser({ ...user, equippedSkin: skinId })}
+              onOpenCustomizer={() => setActiveModal('customizer')}
               onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {activeModal === 'customizer' && (
+            <CharacterCustomizerModal
+              mapId={selectedMap}
+              unlocked={meuRataoUnlocked}
+              equippedSkin={user.equippedSkin}
+              initialConfig={user.customCharacterConfig}
+              onClose={() => setActiveModal('skins')}
+              onSaved={(cfg) => {
+                setUser((prev) => (prev ? { ...prev, customCharacterConfig: cfg } : prev));
+              }}
+              onEquipped={() => {
+                void refreshUser();
+              }}
             />
           )}
 
@@ -658,13 +833,18 @@ export default function App() {
             />
           )}
 
-          {activeModal === 'polls' && (
-            <PollsAndMessagesModal
-              messages={messages}
-              polls={polls}
-              onPollsUpdated={(next) => setPolls(next)}
+          {activeModal === 'promo' && (
+            <PromoCodeModal
               onClose={() => setActiveModal(null)}
+              onRedeemed={() => {
+                void refreshUser();
+                void refreshSocialFeed();
+              }}
             />
+          )}
+
+          {activeModal === 'suggestions' && (
+            <SuggestionsModal onClose={() => setActiveModal(null)} />
           )}
 
           {activeModal === 'profile' && (
@@ -695,6 +875,14 @@ export default function App() {
             />
           )}
         </div>
+      )}
+
+      {/* Automatic Centered 3s Global Broadcast & In-Match/Menu Live Poll Overlays */}
+      {user && (
+        <>
+          <GlobalBroadcastOverlay messages={messages} />
+          <LivePollOverlay polls={polls} onPollsUpdated={setPolls} />
+        </>
       )}
 
       {/* Discreet DevTools / Context-Menu Notice Toast (non-blocking) */}

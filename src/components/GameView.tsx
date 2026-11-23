@@ -10,7 +10,6 @@ import {
   Gamepad2,
   Home,
   LogOut,
-  Megaphone,
   Pause,
   Play,
   RotateCcw,
@@ -19,14 +18,15 @@ import {
   Users,
   Volume2,
   VolumeX,
+  Wifi,
 } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { gameAudio } from '../game/audio.ts';
+import { NetworkHealthStatus, TelemetryFilter } from '../game/netSync.ts';
 import { HudSnapshot, RunResultPayload, RunnerEngine } from '../game/RunnerEngine.ts';
 import { api } from '../services/api.ts';
 import { syncMatchToFirestore } from '../services/firestoreSync.ts';
 import {
-  GlobalMessage,
   GraphicsQuality,
   MAPS,
   MapId,
@@ -35,6 +35,7 @@ import {
   MultiplayerRoom,
   POWERUPS,
   SkinId,
+  SoloGameMode,
   UserProfile,
   formatStopwatch,
 } from '../shared/constants.ts';
@@ -51,7 +52,7 @@ interface GameViewProps {
   mapId: MapId;
   skinId: SkinId;
   quality: GraphicsQuality;
-  activeMessages: GlobalMessage[];
+  soloMode?: SoloGameMode;
   multiplayerSession?: MultiplayerSessionConfig | null;
   onExitToMenu: (updatedBest?: Partial<UserProfile>) => void;
 }
@@ -61,11 +62,12 @@ export function GameView({
   mapId,
   skinId,
   quality,
-  activeMessages,
+  soloMode = 'no_coin',
   multiplayerSession,
   onExitToMenu,
 }: GameViewProps) {
   const isMultiplayer = Boolean(multiplayerSession);
+  const isNormalSolo = !isMultiplayer && soloMode === 'normal';
   const effectiveMapId = multiplayerSession?.room.mapId || mapId;
   const mountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<RunnerEngine | null>(null);
@@ -76,6 +78,13 @@ export function GameView({
   const coinEventSentRef = useRef(false);
   const crashEventSentRef = useRef(false);
   const syncInFlightRef = useRef(false);
+  const pendingImmediateRef = useRef(false);
+  const telemetryFilterRef = useRef(new TelemetryFilter());
+  const remoteHealthRef = useRef<{
+    healthStatus: NetworkHealthStatus;
+    pingMs: number;
+    jitterMs: number;
+  }>({ healthStatus: 'ok', pingMs: 0, jitterMs: 0 });
 
   const [runKey, setRunKey] = useState(1);
   const [paused, setPaused] = useState(false);
@@ -106,6 +115,11 @@ export function GameView({
   );
   const [countdownLabel, setCountdownLabel] = useState<string | null>(null);
   const [coopSpectating, setCoopSpectating] = useState(false);
+  const [remoteHealth, setRemoteHealth] = useState<{
+    healthStatus: NetworkHealthStatus;
+    pingMs: number;
+    jitterMs: number;
+  }>({ healthStatus: 'ok', pingMs: 0, jitterMs: 0 });
 
   const mapInfo = MAPS.find((m) => m.id === effectiveMapId) || MAPS[0];
 
@@ -114,16 +128,32 @@ export function GameView({
       roomId: string,
       event?:
         | { type: 'coin_collected'; coinZ: number; coinLane: number }
-        | { type: 'crashed' }
+        | { type: 'crashed' },
+      forceImmediate = false
     ) => {
       const eng = engineRef.current;
       if (!eng) return;
-      if (!event && syncInFlightRef.current) return;
+      if (!event && syncInFlightRef.current) {
+        if (forceImmediate) pendingImmediateRef.current = true;
+        return;
+      }
+
+      const nowMs = Date.now();
+      const telemetry = eng.getMultiplayerTelemetry();
+      if (
+        !event &&
+        !telemetryFilterRef.current.shouldTransmit(telemetry, nowMs, forceImmediate, 450)
+      ) {
+        return;
+      }
+
       syncInFlightRef.current = true;
+      telemetryFilterRef.current.markTransmitted(telemetry, nowMs);
       try {
-        const telemetry = eng.getMultiplayerTelemetry();
         const res = await api.multiplayer.syncRoom(roomId, {
           ...telemetry,
+          clientTs: nowMs,
+          pingMs: remoteHealthRef.current.pingMs,
           event,
         });
         clockOffsetRef.current = res.serverNow - Date.now();
@@ -132,7 +162,7 @@ export function GameView({
 
         const opp = res.participants.find((p) => p.userId !== user.id);
         if (opp) {
-          eng.updateRemotePlayerState(opp);
+          eng.updateRemotePlayerState(opp, res.serverNow, res.echoClientTs || 0);
         }
 
         if (res.room.status === 'finished') {
@@ -143,6 +173,10 @@ export function GameView({
         // Transient sync error handled on next interval tick
       } finally {
         syncInFlightRef.current = false;
+        if (pendingImmediateRef.current && engineRef.current) {
+          pendingImmediateRef.current = false;
+          void sendMultiplayerSync(roomId, undefined, true);
+        }
       }
     },
     [user.id]
@@ -178,22 +212,24 @@ export function GameView({
         setSubmitError(err instanceof Error ? err.message : 'Erro ao registrar partida.');
         setSummary({
           matchId: matchTokenRef.current?.matchId || 'local',
+          mode: soloMode,
           mapId: effectiveMapId,
           skinId,
-          noCoinTimeMs: result.noCoinTimeMs,
+          noCoinTimeMs: soloMode === 'normal' ? 0 : result.noCoinTimeMs,
           collectedCoin: result.collectedCoin,
           coins: result.coins,
           distance: result.distance,
           score: result.score,
           durationMs: result.durationMs,
-          isNewPersonalRecord: result.noCoinTimeMs > user.bestNoCoinTimeMs,
+          endReason: result.endReason,
+          isNewPersonalRecord: soloMode === 'no_coin' && result.noCoinTimeMs > user.bestNoCoinTimeMs,
           globalRank: user.rank ?? null,
         });
       } finally {
         setSubmitting(false);
       }
     },
-    [effectiveMapId, skinId, user.bestNoCoinTimeMs, user.nickname, user.rank]
+    [effectiveMapId, skinId, soloMode, user.bestNoCoinTimeMs, user.nickname, user.rank]
   );
 
   // Main Engine Lifecycle (Solo or Multiplayer)
@@ -230,11 +266,15 @@ export function GameView({
       const stillCountingDown =
         Boolean(room.startedAt && initialServerNow < room.startedAt);
 
+      telemetryFilterRef.current.reset();
+      pendingImmediateRef.current = false;
+
       const engine = new RunnerEngine({
         container,
         mapId: room.mapId,
         skinId,
         quality,
+        customConfig: user.customCharacterConfig,
         onHudUpdate: (snapshot) => {
           if (!cancelled) setHud(snapshot);
         },
@@ -242,7 +282,7 @@ export function GameView({
           // X1 2nd collision crash triggers server loss/adjudication
           if (!cancelled && !crashEventSentRef.current) {
             crashEventSentRef.current = true;
-            void sendMultiplayerSync(room.id, { type: 'crashed' });
+            void sendMultiplayerSync(room.id, { type: 'crashed' }, true);
           }
         },
         multiplayer: {
@@ -251,15 +291,25 @@ export function GameView({
           isHost,
           opponentNickname: opponent?.nickname || 'Adversário',
           opponentSkin: opponent?.skinId || 'ratao',
+          opponentCustomConfig: opponent?.customConfig,
           frozenAtStart: stillCountingDown,
+          onDiscreteAction: () => {
+            if (!cancelled) {
+              void sendMultiplayerSync(room.id, undefined, true);
+            }
+          },
           onCoinCollected: (coinZ, coinLane) => {
             if (!cancelled && room.mode === 'x1' && !coinEventSentRef.current) {
               coinEventSentRef.current = true;
-              void sendMultiplayerSync(room.id, {
-                type: 'coin_collected',
-                coinZ,
-                coinLane,
-              });
+              void sendMultiplayerSync(
+                room.id,
+                {
+                  type: 'coin_collected',
+                  coinZ,
+                  coinLane,
+                },
+                true
+              );
             }
           },
           onLocalCrashed: () => {
@@ -267,7 +317,7 @@ export function GameView({
               setCoopSpectating(true);
               if (!crashEventSentRef.current) {
                 crashEventSentRef.current = true;
-                void sendMultiplayerSync(room.id, { type: 'crashed' });
+                void sendMultiplayerSync(room.id, { type: 'crashed' }, true);
               }
             }
           },
@@ -296,17 +346,25 @@ export function GameView({
         }
       }, 60);
 
-      // 230ms telemetry sync loop
+      // 85ms adaptive delta-filtered telemetry loop
       const syncInterval = window.setInterval(() => {
         if (!cancelled) {
           void sendMultiplayerSync(room.id);
         }
-      }, 230);
+      }, 85);
+
+      const healthInterval = window.setInterval(() => {
+        if (cancelled || !engineRef.current) return;
+        const h = engineRef.current.getRemoteNetworkHealth();
+        remoteHealthRef.current = h;
+        setRemoteHealth(h);
+      }, 400);
 
       return () => {
         cancelled = true;
         window.clearInterval(countdownInterval);
         window.clearInterval(syncInterval);
+        window.clearInterval(healthInterval);
         if (goHideTimer) window.clearTimeout(goHideTimer);
         engine.dispose();
         engineRef.current = null;
@@ -319,6 +377,8 @@ export function GameView({
       mapId,
       skinId,
       quality,
+      soloMode,
+      customConfig: user.customCharacterConfig,
       onHudUpdate: (snapshot) => {
         if (!cancelled) setHud(snapshot);
       },
@@ -329,7 +389,7 @@ export function GameView({
     engineRef.current = engine;
 
     void api
-      .startMatch(mapId, skinId)
+      .startMatch(mapId, skinId, soloMode)
       .then((tok) => {
         if (!cancelled) {
           matchTokenRef.current = { matchId: tok.matchId, signature: tok.signature };
@@ -352,8 +412,10 @@ export function GameView({
     mapId,
     skinId,
     quality,
+    soloMode,
     multiplayerSession,
     user.id,
+    user.customCharacterConfig,
     handleSoloGameOver,
     sendMultiplayerSync,
   ]);
@@ -401,7 +463,6 @@ export function GameView({
     onExitToMenu();
   };
 
-  const latestMessage = activeMessages[0];
   const opponentParticipant = mpParticipants.find((p) => p.userId !== user.id);
   const mpFinished = isMultiplayer && mpRoom?.status === 'finished';
 
@@ -419,7 +480,12 @@ export function GameView({
             <div className="bg-slate-950/90 border border-slate-700/80 rounded-xl px-3 py-2 flex items-center gap-3 shadow-lg">
               <div>
                 <div className="text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                  MAPA · {mapInfo.name}
+                  MAPA · {mapInfo.name}{' '}
+                  {!isMultiplayer && (
+                    <span className={isNormalSolo ? 'text-emerald-400' : 'text-amber-300'}>
+                      · {isNormalSolo ? 'MODO NORMAL' : 'MODO NO COIN'}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-baseline gap-3 mt-0.5">
                   <span className="font-mono-num font-bold text-base sm:text-lg text-white">
@@ -434,13 +500,31 @@ export function GameView({
 
             {isMultiplayer && opponentParticipant && (
               <div className="bg-slate-950/90 border border-sky-500/60 rounded-xl px-3 py-2 shadow-lg">
-                <div className="flex items-center gap-1.5 text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
-                  {mpRoom?.mode === 'x1' ? (
-                    <Swords className="w-3 h-3 text-rose-400" />
-                  ) : (
-                    <Users className="w-3 h-3 text-sky-400" />
-                  )}
-                  {opponentParticipant.nickname}
+                <div className="flex items-center justify-between gap-2 text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
+                  <span className="flex items-center gap-1.5">
+                    {mpRoom?.mode === 'x1' ? (
+                      <Swords className="w-3 h-3 text-rose-400" />
+                    ) : (
+                      <Users className="w-3 h-3 text-sky-400" />
+                    )}
+                    {opponentParticipant.nickname}
+                  </span>
+                  <span
+                    className={`flex items-center gap-1 px-1.5 py-0.5 rounded font-mono-num text-[9px] ${
+                      !opponentParticipant.connected || remoteHealth.healthStatus === 'reconnecting'
+                        ? 'bg-rose-500/20 text-rose-300'
+                        : remoteHealth.healthStatus === 'unstable'
+                          ? 'bg-amber-500/20 text-amber-300'
+                          : 'bg-emerald-500/20 text-emerald-300'
+                    }`}
+                  >
+                    <Wifi className="w-2.5 h-2.5" />
+                    {!opponentParticipant.connected || remoteHealth.healthStatus === 'reconnecting'
+                      ? 'Reconectando'
+                      : remoteHealth.healthStatus === 'unstable'
+                        ? `Instável · ${remoteHealth.pingMs}ms`
+                        : `Conectado · ${remoteHealth.pingMs}ms`}
+                  </span>
                 </div>
                 <div className="flex items-center gap-2.5 mt-0.5 text-xs">
                   <span className="font-mono-num font-bold text-white">
@@ -488,37 +572,44 @@ export function GameView({
             )}
           </div>
 
-          {/* Top-Center: PROMINENT NO-COIN STOPWATCH / X1 RULE */}
+          {/* Top-Center: PROMINENT NO-COIN STOPWATCH / X1 RULE (hidden in Modo Normal) */}
           <div className="flex flex-col items-center">
-            <div
-              className={`px-4 sm:px-6 py-2 rounded-2xl border-2 shadow-xl flex flex-col items-center transition-colors ${
-                mpRoom?.mode === 'x1'
-                  ? 'bg-rose-950/95 border-rose-400 text-white'
-                  : hud.coinFrozen
-                    ? 'bg-sky-950/95 border-sky-400 text-sky-200'
-                    : 'bg-slate-950/95 border-amber-400 text-white'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-[10px] sm:text-xs font-extrabold uppercase tracking-widest">
-                <Timer
-                  className={`w-3.5 h-3.5 ${
-                    mpRoom?.mode === 'x1'
-                      ? 'text-rose-400'
-                      : hud.coinFrozen
-                        ? 'text-sky-400'
-                        : 'text-amber-400'
-                  }`}
-                />
-                {mpRoom?.mode === 'x1'
-                  ? 'X1: NÃO PEGUE MOEDAS!'
-                  : hud.coinFrozen
-                    ? 'CRONÔMETRO CONGELADO'
-                    : 'SEM PEGAR MOEDAS'}
+            {!isNormalSolo && (
+              <div
+                className={`px-4 sm:px-6 py-2 rounded-2xl border-2 shadow-xl flex flex-col items-center transition-colors ${
+                  mpRoom?.mode === 'x1'
+                    ? 'bg-rose-950/95 border-rose-400 text-white'
+                    : hud.coinFrozen
+                      ? 'bg-sky-950/95 border-sky-400 text-sky-200'
+                      : 'bg-slate-950/95 border-amber-400 text-white'
+                }`}
+              >
+                <div className="flex items-center gap-1.5 text-[10px] sm:text-xs font-extrabold uppercase tracking-widest">
+                  <Timer
+                    className={`w-3.5 h-3.5 ${
+                      mpRoom?.mode === 'x1'
+                        ? 'text-rose-400'
+                        : hud.coinFrozen
+                          ? 'text-sky-400'
+                          : 'text-amber-400'
+                    }`}
+                  />
+                  {mpRoom?.mode === 'x1'
+                    ? 'X1: NÃO PEGUE MOEDAS!'
+                    : hud.coinFrozen
+                      ? 'CRONÔMETRO CONGELADO'
+                      : 'SEM PEGAR MOEDAS'}
+                </div>
+                <div className="font-mono-num font-extrabold text-2xl sm:text-4xl tracking-tight leading-tight">
+                  {formatStopwatch(hud.noCoinTimeMs)}
+                </div>
+                {!isMultiplayer && !hud.coinFrozen && (
+                  <div className="text-[10px] font-bold text-rose-300/90 tracking-wider uppercase">
+                    1 MOEDA = FIM DE JOGO
+                  </div>
+                )}
               </div>
-              <div className="font-mono-num font-extrabold text-2xl sm:text-4xl tracking-tight leading-tight">
-                {formatStopwatch(hud.noCoinTimeMs)}
-              </div>
-            </div>
+            )}
 
             {coopSpectating && opponentParticipant && (
               <div className="mt-2 px-3.5 py-1.5 rounded-xl bg-sky-950/95 border border-sky-400 text-sky-200 text-xs font-extrabold flex items-center gap-2 shadow-lg">
@@ -532,15 +623,6 @@ export function GameView({
               <div className="mt-2 px-3.5 py-1.5 rounded-xl bg-red-600 border border-red-300 text-white text-xs sm:text-sm font-extrabold flex items-center gap-2 shadow-lg">
                 <AlertTriangle className="w-4 h-4" />
                 POLÍCIA NA COLA ({hud.policeRemainingSec.toFixed(1)}s) · NÃO BATA DE NOVO!
-              </div>
-            )}
-
-            {/* Global Admin Broadcast Banner inside game */}
-            {latestMessage && !hud.policeActive && !coopSpectating && (
-              <div className="mt-2 max-w-md px-3.5 py-1.5 rounded-xl bg-indigo-950/95 border border-indigo-400/70 text-indigo-100 text-xs flex items-center gap-2 shadow-lg">
-                <Megaphone className="w-3.5 h-3.5 text-amber-400 shrink-0" />
-                <span className="font-bold text-amber-300 shrink-0">{latestMessage.title}:</span>
-                <span className="truncate">{latestMessage.content}</span>
               </div>
             )}
           </div>
@@ -665,7 +747,9 @@ export function GameView({
           <div className="w-full max-w-sm bg-slate-900 border border-slate-700 rounded-2xl p-6 text-center shadow-2xl">
             <h2 className="font-display text-2xl font-bold text-white mb-1">JOGO PAUSADO</h2>
             <p className="text-xs text-slate-400 mb-6">
-              Cronômetro Sem Moedas: {formatStopwatch(hud.noCoinTimeMs)}
+              {isNormalSolo
+                ? `Modo Normal · ${hud.distance}m · ${hud.coins} moedas`
+                : `Cronômetro Sem Moedas: ${formatStopwatch(hud.noCoinTimeMs)}`}
             </p>
             <div className="space-y-3">
               <button
@@ -700,10 +784,14 @@ export function GameView({
           <div className="w-full max-w-md bg-slate-900 border-2 border-slate-700 rounded-2xl p-6 shadow-2xl">
             <div className="text-center mb-5">
               <span className="inline-block px-3 py-1 rounded-lg bg-rose-600/20 border border-rose-500/50 text-rose-300 text-xs font-extrabold uppercase tracking-wider mb-2">
-                CAPTURADO PELO POLICIAL!
+                {summary.mode === 'normal'
+                  ? 'CAPTURADO PELO POLICIAL!'
+                  : summary.endReason === 'coin' || summary.collectedCoin
+                    ? 'VOCÊ PEGOU UMA MOEDA!'
+                    : 'CAPTURADO PELO POLICIAL!'}
               </span>
               <h2 className="font-display text-3xl font-bold text-white">FIM DE PARTIDA</h2>
-              {summary.isNewPersonalRecord && (
+              {summary.mode === 'no_coin' && summary.isNewPersonalRecord && (
                 <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 text-xs font-extrabold">
                   <Crown className="w-4 h-4" /> NOVO RECORDE PESSOAL SEM MOEDAS!
                 </div>
@@ -716,38 +804,68 @@ export function GameView({
               </div>
             )}
 
-            {/* Highlighted No-Coin Result */}
-            <div className="bg-slate-950 border-2 border-amber-400/70 rounded-xl p-4 text-center mb-4">
-              <div className="text-[11px] font-bold uppercase tracking-widest text-amber-400">
-                TEMPO SEM PEGAR MOEDAS {summary.collectedCoin ? '(CONGELADO NA 1ª MOEDA)' : '(ZERO MOEDAS!)'}
-              </div>
-              <div className="font-mono-num text-4xl font-extrabold text-white mt-1">
-                {formatStopwatch(summary.noCoinTimeMs)}
-              </div>
-            </div>
+            {summary.mode === 'normal' ? (
+              <>
+                <div className="bg-slate-950 border-2 border-emerald-400/70 rounded-xl p-4 text-center mb-4">
+                  <div className="text-[11px] font-bold uppercase tracking-widest text-emerald-400">
+                    MOEDAS COLETADAS (CREDITADAS NA CONTA)
+                  </div>
+                  <div className="font-mono-num text-4xl font-extrabold text-amber-300 mt-1 flex items-center justify-center gap-2">
+                    <Coins className="w-8 h-8 text-amber-400" />+{summary.coins}
+                  </div>
+                </div>
 
-            <div className="grid grid-cols-2 gap-2.5 mb-5">
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
-                <div className="text-[11px] text-slate-400 font-bold uppercase">Moedas</div>
-                <div className="font-mono-num text-xl font-bold text-amber-400">{summary.coins}</div>
-              </div>
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
-                <div className="text-[11px] text-slate-400 font-bold uppercase">Distância</div>
-                <div className="font-mono-num text-xl font-bold text-white">{summary.distance}m</div>
-              </div>
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
-                <div className="text-[11px] text-slate-400 font-bold uppercase">Pontuação</div>
-                <div className="font-mono-num text-xl font-bold text-sky-400">
-                  {summary.score.toLocaleString('pt-BR')}
+                <div className="grid grid-cols-2 gap-2.5 mb-5">
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">Distância</div>
+                    <div className="font-mono-num text-xl font-bold text-white">
+                      {summary.distance}m
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">Pontuação</div>
+                    <div className="font-mono-num text-xl font-bold text-sky-400">
+                      {summary.score.toLocaleString('pt-BR')}
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
-                <div className="text-[11px] text-slate-400 font-bold uppercase">Ranking Global</div>
-                <div className="font-mono-num text-xl font-bold text-emerald-400">
-                  {submitting ? '...' : summary.globalRank ? `#${summary.globalRank}` : '—'}
+              </>
+            ) : (
+              <>
+                <div className="bg-slate-950 border-2 border-amber-400/70 rounded-xl p-4 text-center mb-4">
+                  <div className="text-[11px] font-bold uppercase tracking-widest text-amber-400">
+                    TEMPO SOBREVIVIDO SEM MOEDAS
+                  </div>
+                  <div className="font-mono-num text-4xl font-extrabold text-white mt-1">
+                    {formatStopwatch(summary.noCoinTimeMs)}
+                  </div>
+                  <div className="text-[11px] text-slate-400 mt-1">
+                    Tentativas No Coin não acumulam moedas na carteira.
+                  </div>
                 </div>
-              </div>
-            </div>
+
+                <div className="grid grid-cols-3 gap-2.5 mb-5">
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">Distância</div>
+                    <div className="font-mono-num text-lg font-bold text-white">
+                      {summary.distance}m
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">Pontuação</div>
+                    <div className="font-mono-num text-lg font-bold text-sky-400">
+                      {summary.score.toLocaleString('pt-BR')}
+                    </div>
+                  </div>
+                  <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
+                    <div className="text-[11px] text-slate-400 font-bold uppercase">Ranking</div>
+                    <div className="font-mono-num text-lg font-bold text-emerald-400">
+                      {submitting ? '...' : summary.globalRank ? `#${summary.globalRank}` : '—'}
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
 
             <div className="grid grid-cols-2 gap-3">
               <button

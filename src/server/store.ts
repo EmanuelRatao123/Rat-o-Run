@@ -4,6 +4,7 @@ import path from 'path';
 import {
   AdminLogItem,
   COMMON_SKIN_IDS,
+  CustomCharacterConfig,
   ExclusiveSkinPermissionRecord,
   GlobalMessage,
   MapId,
@@ -11,9 +12,16 @@ import {
   MultiplayerMatchRecord,
   MultiplayerParticipant,
   MultiplayerRoom,
+  PaintRegion,
   PlayerCompetitiveStats,
+  PlayerNotificationItem,
+  PlayerSuggestion,
+  PlayerWalletStats,
+  PromoCodeRecord,
+  PromoCodeRedemptionRecord,
   SkinGiftItem,
   SkinId,
+  SoloGameMode,
   X1ResultRecord,
 } from '../shared/constants.ts';
 import { generateToken, hashPassword } from './crypto.ts';
@@ -52,6 +60,7 @@ export interface StoredSession {
 export interface ActiveMatchToken {
   matchId: string;
   userId: string;
+  mode: SoloGameMode;
   mapId: MapId;
   skinId: SkinId;
   startedAt: number;
@@ -63,6 +72,7 @@ export interface StoredMatch {
   id: string;
   userId: string;
   nickname: string;
+  mode: SoloGameMode;
   skinId: SkinId;
   mapId: MapId;
   noCoinTimeMs: number;
@@ -102,6 +112,26 @@ export interface StoredMultiplayerEvent {
   createdAt: string;
 }
 
+export interface StoredCoinLedgerEvent {
+  id: string;
+  eventKey: string;
+  userId: string;
+  sourceType: 'solo' | 'coop' | 'x1' | 'promo';
+  amount: number;
+  createdAt: string;
+}
+
+export interface StoredCustomTexture {
+  id: string;
+  userId: string;
+  region: PaintRegion;
+  storageUrl: string;
+  dataBase64: string;
+  contentType: string;
+  byteSize: number;
+  updatedAt: string;
+}
+
 export interface DatabaseState {
   users: Record<string, StoredUser>;
   sessions: Record<string, StoredSession>;
@@ -124,6 +154,14 @@ export interface DatabaseState {
   x1Results: X1ResultRecord[];
   playerCompetitiveStats: Record<string, PlayerCompetitiveStats>;
   exclusiveSkinPermissions: ExclusiveSkinPermissionRecord[];
+  playerSuggestions: PlayerSuggestion[];
+  promoCodes: PromoCodeRecord[];
+  promoCodeRedemptions: PromoCodeRedemptionRecord[];
+  playerWalletStats: Record<string, PlayerWalletStats>;
+  coinLedgerEvents: StoredCoinLedgerEvent[];
+  customCharacterConfigs: Record<string, CustomCharacterConfig>;
+  customCharacterTextures: StoredCustomTexture[];
+  notificationHistory: PlayerNotificationItem[];
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -154,6 +192,14 @@ function createInitialState(): DatabaseState {
     x1Results: [],
     playerCompetitiveStats: {},
     exclusiveSkinPermissions: [],
+    playerSuggestions: [],
+    promoCodes: [],
+    promoCodeRedemptions: [],
+    playerWalletStats: {},
+    coinLedgerEvents: [],
+    customCharacterConfigs: {},
+    customCharacterTextures: [],
+    notificationHistory: [],
   };
 }
 

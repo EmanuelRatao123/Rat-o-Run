@@ -14,7 +14,9 @@ import {
 import React, { useEffect, useState } from 'react';
 import { api } from '../services/api.ts';
 import {
+  CustomCharacterConfig,
   PlayerCompetitiveStats,
+  PlayerWalletStats,
   SkinId,
   UserProfile,
   X1ResultRecord,
@@ -42,6 +44,8 @@ interface PublicProfileData {
   favoriteSkin: SkinId;
   rank: number | null;
   competitiveStats: PlayerCompetitiveStats;
+  walletStats?: PlayerWalletStats;
+  customCharacterConfig?: CustomCharacterConfig;
   recentX1: X1ResultRecord[];
 }
 
@@ -135,6 +139,8 @@ export function ProfileModal({
                       mapId="brasil"
                       mode="turntable"
                       quality="low"
+                      interactiveRotate
+                      customConfig={profile.customCharacterConfig}
                     />
                   </div>
                   <div className="p-3.5 bg-slate-900 border-t border-slate-800 text-center">
@@ -191,13 +197,22 @@ export function ProfileModal({
                     </div>
                   </div>
 
-                  <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">
-                    <div className="text-[11px] text-slate-400 font-bold uppercase flex items-center gap-1">
-                      <Coins className="w-3.5 h-3.5 text-amber-400" /> Moedas Coletadas
+                  <div className="p-3.5 rounded-xl bg-slate-950 border border-amber-500/40">
+                    <div className="text-[11px] text-amber-300 font-bold uppercase flex items-center gap-1">
+                      <Coins className="w-3.5 h-3.5 text-amber-400" /> Moedas Totais Coletadas
                     </div>
                     <div className="font-mono-num text-xl font-bold text-amber-300 mt-1">
-                      {profile.totalCoins.toLocaleString('pt-BR')}
+                      {(
+                        profile.walletStats?.totalCoinsCollected ?? profile.totalCoins
+                      ).toLocaleString('pt-BR')}
                     </div>
+                    {profile.walletStats && (
+                      <div className="text-[10px] text-slate-400 mt-0.5">
+                        Solo: {profile.walletStats.soloCoinsCollected.toLocaleString('pt-BR')} ·
+                        Multi: {profile.walletStats.multiplayerCoinsCollected.toLocaleString('pt-BR')} ·
+                        Códigos: {profile.walletStats.promoCoinsCollected.toLocaleString('pt-BR')}
+                      </div>
+                    )}
                   </div>
 
                   <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800">

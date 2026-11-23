@@ -16,15 +16,21 @@ export type ExclusiveSkinId =
   | 'campeao_prata'
   | 'guerreiro_bronze';
 
-export type SkinId = CommonSkinId | ExclusiveSkinId;
+export type SpecialUnlockableSkinId = 'meu_ratao';
+
+export type SkinId = CommonSkinId | ExclusiveSkinId | SpecialUnlockableSkinId;
 
 export type MapId = 'brasil' | 'tokyo' | 'futebol' | 'capivara';
 
 export type GraphicsQuality = 'low' | 'medium' | 'high';
 
+export type SoloGameMode = 'normal' | 'no_coin';
+
+export type LeaderboardCategory = 'no_coin' | 'coins';
+
 export type PowerUpType = 'magnet' | 'jetpack' | 'super_jump' | 'multiplier' | 'hoverboard';
 
-export type ExclusiveRule = 'admin' | 'top1' | 'top2' | 'top3';
+export type ExclusiveRule = 'admin' | 'top1' | 'top2' | 'top3' | 'unlockable';
 
 export interface SkinDefinition {
   id: SkinId;
@@ -174,9 +180,32 @@ export const EXCLUSIVE_SKINS: SkinDefinition[] = [
   },
 ];
 
-export const ALL_SKINS: SkinDefinition[] = [...SKINS, ...EXCLUSIVE_SKINS];
+export const SPECIAL_UNLOCKABLE_SKINS: SkinDefinition[] = [
+  {
+    id: 'meu_ratao',
+    name: 'Meu Ratão',
+    subtitle: 'Skin totalmente personalizável: cores, cabelo voxel, roupas, acessórios e pintura 3D',
+    primaryColor: '#38bdf8',
+    accentColor: '#f43f5e',
+    badgeText: 'PERSONALIZÁVEL',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Desbloqueie por Código Promocional ou presente do Administrador',
+  },
+];
+
+export const ALL_SKINS: SkinDefinition[] = [
+  ...SKINS,
+  ...EXCLUSIVE_SKINS,
+  ...SPECIAL_UNLOCKABLE_SKINS,
+];
 export const COMMON_SKIN_IDS: CommonSkinId[] = SKINS.map((s) => s.id as CommonSkinId);
-export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map((s) => s.id as ExclusiveSkinId);
+export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map(
+  (s) => s.id as ExclusiveSkinId
+);
+export const SPECIAL_UNLOCKABLE_SKIN_IDS: SpecialUnlockableSkinId[] = SPECIAL_UNLOCKABLE_SKINS.map(
+  (s) => s.id as SpecialUnlockableSkinId
+);
 export const ALL_SKIN_IDS: SkinId[] = ALL_SKINS.map((s) => s.id);
 
 export function isCommonSkinId(val: unknown): val is CommonSkinId {
@@ -185,6 +214,14 @@ export function isCommonSkinId(val: unknown): val is CommonSkinId {
 
 export function isExclusiveSkinId(val: unknown): val is ExclusiveSkinId {
   return typeof val === 'string' && (EXCLUSIVE_SKIN_IDS as string[]).includes(val);
+}
+
+export function isSpecialUnlockableSkinId(val: unknown): val is SpecialUnlockableSkinId {
+  return typeof val === 'string' && (SPECIAL_UNLOCKABLE_SKIN_IDS as string[]).includes(val);
+}
+
+export function isGiftableSkinId(val: unknown): val is CommonSkinId | SpecialUnlockableSkinId {
+  return isCommonSkinId(val) || isSpecialUnlockableSkinId(val);
 }
 
 export function isValidAnySkinId(val: unknown): val is SkinId {
@@ -274,6 +311,170 @@ export interface PlayerCompetitiveStats {
   lastMatchAt: string | null;
 }
 
+// --- Custom Character ("Meu Ratão") Types ---
+
+export type CustomBodyPartKey =
+  | 'head'
+  | 'torso'
+  | 'leftArm'
+  | 'rightArm'
+  | 'leftLeg'
+  | 'rightLeg'
+  | 'ears'
+  | 'snout'
+  | 'tail'
+  | 'hands'
+  | 'feet';
+
+export type HairStyleId =
+  | 'short'
+  | 'spiky'
+  | 'long'
+  | 'mohawk'
+  | 'curly'
+  | 'pompadour'
+  | 'bald';
+
+export type TopClothingId = 'none' | 'tshirt' | 'jacket';
+export type BottomClothingId = 'none' | 'pants' | 'shorts';
+export type ShoesTypeId = 'none' | 'sneakers' | 'boots';
+export type HatTypeId = 'none' | 'cap' | 'hat';
+export type GlassesTypeId = 'none' | 'sunglasses' | 'visor' | 'round';
+export type AccessoryTypeId = 'none' | 'backpack' | 'scarf' | 'chain';
+export type PaintRegion = 'head' | 'torsoFront' | 'torsoBack' | 'arms' | 'legs';
+
+export interface CustomCharacterConfig {
+  version: number;
+  bodyColors: Record<CustomBodyPartKey, string>;
+  hairStyle: HairStyleId;
+  hairColor: string;
+  clothing: {
+    topType: TopClothingId;
+    topColor: string;
+    bottomType: BottomClothingId;
+    bottomColor: string;
+    shoesType: ShoesTypeId;
+    shoesColor: string;
+    hatType: HatTypeId;
+    hatColor: string;
+    glassesType: GlassesTypeId;
+    glassesColor: string;
+    accessoryType: AccessoryTypeId;
+    accessoryColor: string;
+  };
+  favoriteColors: string[];
+  paintTextures: Partial<Record<PaintRegion, string>>;
+  updatedAt: string;
+}
+
+export const DEFAULT_CUSTOM_CHARACTER_CONFIG: CustomCharacterConfig = {
+  version: 1,
+  bodyColors: {
+    head: '#ffffff',
+    torso: '#ffffff',
+    leftArm: '#ffffff',
+    rightArm: '#ffffff',
+    leftLeg: '#ffffff',
+    rightLeg: '#ffffff',
+    ears: '#ffffff',
+    snout: '#ffffff',
+    tail: '#ffffff',
+    hands: '#ffffff',
+    feet: '#ffffff',
+  },
+  hairStyle: 'bald',
+  hairColor: '#0f172a',
+  clothing: {
+    topType: 'none',
+    topColor: '#e11d48',
+    bottomType: 'none',
+    bottomColor: '#1e293b',
+    shoesType: 'none',
+    shoesColor: '#38bdf8',
+    hatType: 'none',
+    hatColor: '#f59e0b',
+    glassesType: 'none',
+    glassesColor: '#020617',
+    accessoryType: 'none',
+    accessoryColor: '#facc15',
+  },
+  favoriteColors: ['#ffffff', '#e11d48', '#38bdf8', '#facc15', '#22c55e', '#0f172a'],
+  paintTextures: {},
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
+// --- Suggestions, Promo Codes, Wallet & Notifications ---
+
+export type SuggestionType = 'map' | 'skin';
+export type SuggestionStatus = 'received' | 'in_review' | 'approved' | 'rejected';
+
+export interface PlayerSuggestion {
+  id: string;
+  code: string;
+  userId: string;
+  authorNickname: string;
+  type: SuggestionType;
+  title: string;
+  description: string;
+  status: SuggestionStatus;
+  adminNote: string | null;
+  reviewedBy: string | null;
+  reviewedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type PromoRewardType = 'skin' | 'coins' | 'special' | 'future_item';
+
+export interface PromoCodeRecord {
+  id: string;
+  code: string;
+  description: string;
+  rewardType: PromoRewardType;
+  rewardSkinId: SkinId | null;
+  rewardAmount: number;
+  rewardMetadata: Record<string, unknown>;
+  maxUses: number | null;
+  isInfinite: boolean;
+  usedCount: number;
+  active: boolean;
+  expiresAt: string | null;
+  createdBy: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface PromoCodeRedemptionRecord {
+  id: string;
+  promoCodeId: string;
+  code: string;
+  userId: string;
+  nickname: string;
+  rewardType: PromoRewardType;
+  rewardSummary: string;
+  redeemedAt: string;
+}
+
+export interface PlayerWalletStats {
+  userId: string;
+  totalCoinsCollected: number;
+  soloCoinsCollected: number;
+  multiplayerCoinsCollected: number;
+  promoCoinsCollected: number;
+  spentCoins: number;
+  updatedAt: string;
+}
+
+export interface PlayerNotificationItem {
+  id: string;
+  userId: string;
+  kind: 'suggestion_status' | 'promo' | 'system';
+  title: string;
+  message: string;
+  seen: boolean;
+  createdAt: string;
+}
+
 export interface UserProfile {
   id: string;
   nickname: string;
@@ -294,6 +495,8 @@ export interface UserProfile {
   lastSeenAt: string;
   rank?: number | null;
   competitiveStats?: PlayerCompetitiveStats;
+  walletStats?: PlayerWalletStats;
+  customCharacterConfig?: CustomCharacterConfig;
 }
 
 export interface LeaderboardEntry {
@@ -305,6 +508,15 @@ export interface LeaderboardEntry {
   noCoinTimeMs: number;
   distance: number;
   achievedAt: string;
+}
+
+export interface CoinsLeaderboardEntry {
+  rank: number;
+  userId: string;
+  nickname: string;
+  skinId: SkinId;
+  totalCoinsCollected: number;
+  totalMatches: number;
 }
 
 export interface GlobalMessage {
@@ -386,6 +598,7 @@ export interface AdminPlayerRecord {
 
 export interface MatchSummary {
   matchId: string;
+  mode: SoloGameMode;
   mapId: MapId;
   skinId: SkinId;
   noCoinTimeMs: number;
@@ -396,6 +609,7 @@ export interface MatchSummary {
   durationMs: number;
   isNewPersonalRecord: boolean;
   globalRank: number | null;
+  endReason?: 'police' | 'coin';
 }
 
 // --- Multiplayer & X1 Shared Types ---
@@ -443,6 +657,14 @@ export interface MultiplayerParticipant {
   posX: number;
   posY: number;
   posZ: number;
+  vx?: number;
+  vy?: number;
+  vz?: number;
+  speed?: number;
+  yaw?: number;
+  seq?: number;
+  clientTs?: number;
+  pingMs?: number;
   lane: number;
   animState: ParticipantAnimState;
   distance: number;
@@ -456,6 +678,7 @@ export interface MultiplayerParticipant {
   finishedAt: number | null;
   hoverboard: boolean;
   jetpack: boolean;
+  customConfig?: CustomCharacterConfig;
   updatedAt: string;
 }
 
@@ -524,8 +747,8 @@ export interface MultiplayerMatchRecord {
 export interface ExclusiveSkinPermissionRecord {
   id: string;
   userId: string;
-  skinId: ExclusiveSkinId;
-  reason: 'admin' | 'top1' | 'top2' | 'top3';
+  skinId: ExclusiveSkinId | SpecialUnlockableSkinId;
+  reason: 'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule';
   rankPosition: number | null;
   active: boolean;
   grantedAt: string;

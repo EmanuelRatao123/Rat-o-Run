@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { GraphicsQuality, MapId, SkinId } from '../shared/constants.ts';
+import { CustomCharacterConfig, GraphicsQuality, MapId, SkinId } from '../shared/constants.ts';
 import { animateCharacterRig, createCharacterRig } from '../game/characters.ts';
 import { MAP_THEMES, MapSceneryBuilder } from '../game/maps.ts';
 import { createStudioRenderer, scheduleSoftwareFrame } from '../game/rendererSetup.ts';
@@ -8,6 +8,8 @@ import { createStudioRenderer, scheduleSoftwareFrame } from '../game/rendererSet
 interface ScenePreview3DProps {
   skinId: SkinId;
   mapId: MapId;
+  customConfig?: CustomCharacterConfig;
+  animState?: 'idle' | 'run';
   quality?: GraphicsQuality;
   mode?: 'showcase' | 'turntable' | 'scenic';
   interactiveRotate?: boolean;
@@ -17,6 +19,8 @@ interface ScenePreview3DProps {
 export function ScenePreview3D({
   skinId,
   mapId,
+  customConfig,
+  animState,
   quality = 'medium',
   mode = 'showcase',
   interactiveRotate = false,
@@ -25,6 +29,8 @@ export function ScenePreview3D({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const skinRef = useRef<SkinId>(skinId);
   const mapRef = useRef<MapId>(mapId);
+  const customRef = useRef<CustomCharacterConfig | undefined>(customConfig);
+  const animRef = useRef<'idle' | 'run' | undefined>(animState);
 
   useEffect(() => {
     const container = mountRef.current;
@@ -61,7 +67,11 @@ export function ScenePreview3D({
 
     let sceneryBuilder: MapSceneryBuilder | null = null;
     let chunkGroup: THREE.Group | null = null;
-    let charRig = createCharacterRig(skinRef.current, ctx.renderer.shadowMap.enabled);
+    let charRig = createCharacterRig(
+      skinRef.current,
+      ctx.renderer.shadowMap.enabled,
+      customRef.current
+    );
 
     const applyMap = (mId: MapId) => {
       if (chunkGroup) {
@@ -150,18 +160,20 @@ export function ScenePreview3D({
         camera.position.set(Math.sin(elapsed * 0.35) * 1.4, 3.6, 8.5);
         camera.lookAt(0, 1.8, -14);
       } else if (mode === 'turntable') {
-        if (!dragging) userYaw += dt * 0.55;
+        if (!dragging && !interactiveRotate) userYaw += dt * 0.55;
+        else if (!dragging && interactiveRotate && animRef.current === 'run') userYaw += dt * 0.28;
         charRig.root.rotation.y = userYaw;
         camera.position.set(0, 1.65, 3.85);
         camera.lookAt(0, 1.05, 0);
-        animateCharacterRig(charRig, 'idle', elapsed, dt);
+        const targetAnim = animRef.current || 'idle';
+        animateCharacterRig(charRig, targetAnim, elapsed, dt, targetAnim === 'run' ? 0.85 : 1);
       } else {
         // Showcase behind-shoulder hero framing with calm negative space
         charRig.root.position.set(1.1, 0, 0.8);
         charRig.root.rotation.y = -0.38 + Math.sin(elapsed * 0.45) * 0.14;
         camera.position.set(0.35, 2.05, 4.75);
         camera.lookAt(0.25, 1.15, -3.5);
-        animateCharacterRig(charRig, 'run', elapsed, dt, 0.72);
+        animateCharacterRig(charRig, animRef.current || 'run', elapsed, dt, 0.72);
       }
 
       ctx.renderer.render(scene, camera);
@@ -178,16 +190,25 @@ export function ScenePreview3D({
 
     tick();
 
-    // Watch prop updates via interval check? Better: store rebuild callbacks on container ref
-    (container as unknown as { _updateSkin?: (s: SkinId) => void; _updateMap?: (m: MapId) => void })._updateSkin = (
-      nextSkin: SkinId
-    ) => {
-      if (skinRef.current === nextSkin) return;
+    const rebuildRig = (nextSkin: SkinId, nextCfg?: CustomCharacterConfig) => {
       skinRef.current = nextSkin;
+      customRef.current = nextCfg;
       scene.remove(charRig.root);
       charRig.dispose();
-      charRig = createCharacterRig(nextSkin, ctx.renderer.shadowMap.enabled);
+      charRig = createCharacterRig(nextSkin, ctx.renderer.shadowMap.enabled, nextCfg);
       if (mode !== 'scenic') scene.add(charRig.root);
+    };
+
+    (
+      container as unknown as {
+        _updateCharacter?: (s: SkinId, c?: CustomCharacterConfig) => void;
+        _updateMap?: (m: MapId) => void;
+      }
+    )._updateCharacter = (nextSkin: SkinId, nextCfg?: CustomCharacterConfig) => {
+      const sameSkin = skinRef.current === nextSkin;
+      const sameCfg = nextSkin !== 'meu_ratao' || customRef.current === nextCfg;
+      if (sameSkin && sameCfg) return;
+      rebuildRig(nextSkin, nextCfg);
     };
 
     (container as unknown as { _updateMap?: (m: MapId) => void })._updateMap = (nextMap: MapId) => {
@@ -213,9 +234,15 @@ export function ScenePreview3D({
   }, [quality, mode, interactiveRotate]);
 
   useEffect(() => {
-    const el = mountRef.current as unknown as { _updateSkin?: (s: SkinId) => void } | null;
-    if (el?._updateSkin) el._updateSkin(skinId);
-  }, [skinId]);
+    animRef.current = animState;
+  }, [animState]);
+
+  useEffect(() => {
+    const el = mountRef.current as unknown as {
+      _updateCharacter?: (s: SkinId, c?: CustomCharacterConfig) => void;
+    } | null;
+    if (el?._updateCharacter) el._updateCharacter(skinId, customConfig);
+  }, [skinId, customConfig]);
 
   useEffect(() => {
     const el = mountRef.current as unknown as { _updateMap?: (m: MapId) => void } | null;

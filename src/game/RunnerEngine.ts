@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import {
+  CustomCharacterConfig,
   GraphicsQuality,
   MapId,
   MultiplayerMode,
@@ -8,6 +9,7 @@ import {
   ParticipantAnimState,
   PowerUpType,
   SkinId,
+  SoloGameMode,
 } from '../shared/constants.ts';
 import { createSeededRng, generateTrackWave } from '../shared/trackGenerator.ts';
 import { gameAudio } from './audio.ts';
@@ -20,6 +22,7 @@ import {
   createPoliceRig,
 } from './characters.ts';
 import { MAP_THEMES, MapSceneryBuilder, SceneryChunk } from './maps.ts';
+import { NetworkHealthStatus, RemoteSnapshotInterpolator } from './netSync.ts';
 import {
   CoinInstance,
   LANE_X,
@@ -54,6 +57,7 @@ export interface RunResultPayload {
   distance: number;
   score: number;
   durationMs: number;
+  endReason?: 'police' | 'coin';
 }
 
 export interface MultiplayerRunnerOptions {
@@ -62,15 +66,23 @@ export interface MultiplayerRunnerOptions {
   isHost: boolean;
   opponentNickname: string;
   opponentSkin: SkinId;
+  opponentCustomConfig?: CustomCharacterConfig;
   frozenAtStart?: boolean;
   onCoinCollected?: (coinZ: number, coinLane: number) => void;
   onLocalCrashed?: (payload: RunResultPayload) => void;
+  onDiscreteAction?: () => void;
 }
 
 export interface MultiplayerTelemetrySnapshot {
   posX: number;
   posY: number;
   posZ: number;
+  vx: number;
+  vy: number;
+  vz: number;
+  speed: number;
+  yaw: number;
+  seq: number;
   lane: number;
   animState: ParticipantAnimState;
   distance: number;
@@ -82,16 +94,6 @@ export interface MultiplayerTelemetrySnapshot {
   alive: boolean;
   hoverboard: boolean;
   jetpack: boolean;
-}
-
-interface RemotePlayerVisualState {
-  targetX: number;
-  targetY: number;
-  targetZ: number;
-  animState: ParticipantAnimState;
-  hoverboard: boolean;
-  jetpack: boolean;
-  alive: boolean;
 }
 
 interface Particle {
@@ -128,19 +130,13 @@ export class RunnerEngine {
   private policeRig: CharacterRig;
   private remoteRig?: CharacterRig;
   private remoteNameTag?: { sprite: THREE.Sprite; dispose: () => void };
-  private remoteState: RemotePlayerVisualState = {
-    targetX: 0,
-    targetY: 0,
-    targetZ: 0,
-    animState: 'idle',
-    hoverboard: false,
-    jetpack: false,
-    alive: true,
-  };
+  private remoteInterpolator = new RemoteSnapshotInterpolator();
+  private remoteLastAlive = true;
 
   private mapId: MapId;
   private skinId: SkinId;
   private quality: GraphicsQuality;
+  private soloMode: SoloGameMode;
   private multiplayer?: MultiplayerRunnerOptions;
   private rng: () => number;
   private waveIndex = 0;
@@ -166,7 +162,10 @@ export class RunnerEngine {
   private playerX = 0;
   private playerY = 0;
   private playerZ = 0;
+  private vx = 0;
   private vy = 0;
+  private currentSpeed = BASE_SPEED;
+  private telemetrySeq = 0;
   private grounded = true;
   private slideTimer = 0;
   private jumpBufferTimer = 0;
@@ -218,6 +217,8 @@ export class RunnerEngine {
     mapId: MapId;
     skinId: SkinId;
     quality: GraphicsQuality;
+    soloMode?: SoloGameMode;
+    customConfig?: CustomCharacterConfig;
     onHudUpdate: (hud: HudSnapshot) => void;
     onGameOver: (result: RunResultPayload) => void;
     multiplayer?: MultiplayerRunnerOptions;
@@ -226,6 +227,7 @@ export class RunnerEngine {
     this.mapId = opts.mapId;
     this.skinId = opts.skinId;
     this.quality = opts.quality;
+    this.soloMode = opts.soloMode ?? 'no_coin';
     this.onHudUpdate = opts.onHudUpdate;
     this.onGameOver = opts.onGameOver;
     this.multiplayer = opts.multiplayer;
@@ -236,7 +238,28 @@ export class RunnerEngine {
 
     if (opts.multiplayer) {
       this.playerX = opts.multiplayer.isHost ? -0.65 : 0.65;
-      this.remoteState.targetX = opts.multiplayer.isHost ? 0.65 : -0.65;
+      const remoteInitX = opts.multiplayer.isHost ? 0.65 : -0.65;
+      this.remoteInterpolator.pushSnapshot({
+        seq: 0,
+        serverTimeMs: Date.now(),
+        receivedAtMs: Date.now(),
+        clientTs: 0,
+        x: remoteInitX,
+        y: 0,
+        z: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        speed: 0,
+        yaw: 0,
+        lane: 0,
+        animState: 'idle',
+        hoverboard: false,
+        jetpack: false,
+        alive: true,
+        connected: true,
+        pingMs: 80,
+      });
     }
 
     this.ctx = createStudioRenderer(this.container, this.quality);
@@ -290,7 +313,11 @@ export class RunnerEngine {
     }
 
     // Characters (models face +Z locally; rotate PI radians to run forward along -Z)
-    this.playerRig = createCharacterRig(this.skinId, this.ctx.renderer.shadowMap.enabled);
+    this.playerRig = createCharacterRig(
+      this.skinId,
+      this.ctx.renderer.shadowMap.enabled,
+      opts.customConfig
+    );
     this.playerRig.root.rotation.y = Math.PI;
     this.playerRig.root.position.set(this.playerX, 0, 0);
     this.scene.add(this.playerRig.root);
@@ -298,14 +325,12 @@ export class RunnerEngine {
     if (opts.multiplayer) {
       this.remoteRig = createCharacterRig(
         opts.multiplayer.opponentSkin,
-        this.ctx.renderer.shadowMap.enabled
+        this.ctx.renderer.shadowMap.enabled,
+        opts.multiplayer.opponentCustomConfig
       );
       this.remoteRig.root.rotation.y = Math.PI;
-      this.remoteRig.root.position.set(
-        this.remoteState.targetX,
-        this.remoteState.targetY,
-        this.remoteState.targetZ
-      );
+      const initRemoteX = opts.multiplayer.isHost ? 0.65 : -0.65;
+      this.remoteRig.root.position.set(initRemoteX, 0, 0);
       this.remoteNameTag = createFloatingNameTag(
         opts.multiplayer.opponentNickname,
         opts.multiplayer.mode === 'x1' ? '#ef4444' : '#38bdf8'
@@ -425,23 +450,65 @@ export class RunnerEngine {
     }
   }
 
-  public updateRemotePlayerState(remote: MultiplayerParticipant): void {
-    this.remoteState = {
-      targetX: remote.posX,
-      targetY: remote.posY,
-      targetZ: remote.posZ,
+  public updateRemotePlayerState(
+    remote: MultiplayerParticipant,
+    serverNowMs = Date.now(),
+    echoClientTs = 0
+  ): void {
+    const localNow = Date.now();
+    if (echoClientTs > 0) {
+      this.remoteInterpolator.recordRttSample(echoClientTs, serverNowMs, localNow);
+    }
+    this.remoteLastAlive = remote.alive;
+    this.remoteInterpolator.pushSnapshot({
+      seq: remote.seq || 0,
+      serverTimeMs: serverNowMs,
+      receivedAtMs: localNow,
+      clientTs: remote.clientTs || 0,
+      x: remote.posX,
+      y: remote.posY,
+      z: remote.posZ,
+      vx: remote.vx || 0,
+      vy: remote.vy || 0,
+      vz: remote.vz || 0,
+      speed: remote.speed || 0,
+      yaw: remote.yaw || 0,
+      lane: remote.lane,
       animState: remote.animState,
       hoverboard: Boolean(remote.hoverboard),
       jetpack: Boolean(remote.jetpack),
       alive: remote.alive,
+      connected: remote.connected,
+      pingMs: remote.pingMs || 0,
+    });
+  }
+
+  public getRemoteNetworkHealth(): {
+    healthStatus: NetworkHealthStatus;
+    pingMs: number;
+    jitterMs: number;
+  } {
+    const s = this.remoteInterpolator.sample(Date.now(), 0.016);
+    return {
+      healthStatus: s.healthStatus,
+      pingMs: this.remoteInterpolator.getEstimatedPingMs(),
+      jitterMs: this.remoteInterpolator.getEstimatedJitterMs(),
     };
   }
 
   public getMultiplayerTelemetry(): MultiplayerTelemetrySnapshot {
+    this.telemetrySeq += 1;
+    const isMoving = this.running && !this.frozen && !this.paused && !this.ended && !this.coopLocalDead;
     return {
       posX: Number(this.playerX.toFixed(3)),
       posY: Number(this.playerY.toFixed(3)),
       posZ: Number(this.playerZ.toFixed(3)),
+      vx: Number(this.vx.toFixed(2)),
+      vy: Number(this.vy.toFixed(2)),
+      vz: Number((isMoving ? -this.currentSpeed : 0).toFixed(2)),
+      speed: Number((isMoving ? this.currentSpeed : 0).toFixed(2)),
+      yaw: Number((this.playerRig.root.rotation.z || 0).toFixed(3)),
+      seq: this.telemetrySeq,
       lane: this.targetLane,
       animState: this.coopLocalDead ? 'crash' : this.currentAnimState,
       distance: Math.floor(this.distance),
@@ -468,6 +535,7 @@ export class RunnerEngine {
     if (this.targetLane > -1) {
       this.targetLane -= 1;
       gameAudio.playLaneSwitch();
+      this.multiplayer?.onDiscreteAction?.();
     }
   }
 
@@ -476,12 +544,14 @@ export class RunnerEngine {
     if (this.targetLane < 1) {
       this.targetLane += 1;
       gameAudio.playLaneSwitch();
+      this.multiplayer?.onDiscreteAction?.();
     }
   }
 
   public jump(): void {
     if (!this.running || this.paused || this.frozen || this.coopLocalDead || this.ended) return;
     this.jumpBufferTimer = 0.14;
+    this.multiplayer?.onDiscreteAction?.();
   }
 
   public slide(): void {
@@ -493,6 +563,7 @@ export class RunnerEngine {
     }
     this.slideTimer = 0.72;
     gameAudio.playSlide();
+    this.multiplayer?.onDiscreteAction?.();
   }
 
   private handleResize(): void {
@@ -521,21 +592,19 @@ export class RunnerEngine {
 
   private updateRemoteVisuals(dt: number): void {
     if (!this.remoteRig) return;
-    const r = this.remoteRig.root.position;
-    const nx = THREE.MathUtils.damp(r.x, this.remoteState.targetX, 16, dt);
-    const ny = THREE.MathUtils.damp(r.y, this.remoteState.targetY, 16, dt);
-    // Keep Z interpolating fast so remote runner matches live progress
-    const nz = THREE.MathUtils.damp(r.z, this.remoteState.targetZ, 16, dt);
-    r.set(nx, ny, nz);
-    this.remoteRig.hoverboardGroup.visible = this.remoteState.hoverboard;
-    this.remoteRig.jetpackGroup.visible = this.remoteState.jetpack;
-    this.remoteRig.contactShadow.position.y = Math.max(0.025, -ny + 0.025);
+    const sampled = this.remoteInterpolator.sample(Date.now(), dt);
+    this.remoteRig.root.position.set(sampled.x, sampled.y, sampled.z);
+    this.remoteRig.root.rotation.z = THREE.MathUtils.clamp(sampled.yaw, -0.3, 0.3);
+    this.remoteRig.hoverboardGroup.visible = sampled.hoverboard;
+    this.remoteRig.jetpackGroup.visible = sampled.jetpack;
+    this.remoteRig.contactShadow.position.y = Math.max(0.025, -sampled.y + 0.025);
+    const speedFactor = Math.max(0.85, Math.min(2.1, Math.abs(sampled.vz) / BASE_SPEED));
     animateCharacterRig(
       this.remoteRig,
-      this.remoteState.animState,
+      sampled.animState,
       this.totalElapsed,
       dt,
-      1.05
+      speedFactor
     );
   }
 
@@ -582,7 +651,12 @@ export class RunnerEngine {
       animateCharacterRig(this.playerRig, this.endAnimState, this.totalElapsed, dt);
       animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
       if (this.remoteRig) {
-        animateCharacterRig(this.remoteRig, this.remoteState.alive ? 'idle' : 'crash', this.totalElapsed, dt);
+        animateCharacterRig(
+          this.remoteRig,
+          this.remoteLastAlive ? 'idle' : 'crash',
+          this.totalElapsed,
+          dt
+        );
       }
     }
 
@@ -601,7 +675,7 @@ export class RunnerEngine {
     this.totalElapsed += dt;
     const dtMs = dt * 1000;
     this.durationMs += dtMs;
-    if (!this.collectedCoin) {
+    if (!this.collectedCoin && (Boolean(this.multiplayer) || this.soloMode === 'no_coin')) {
       this.noCoinTimeMs += dtMs;
     }
 
@@ -625,6 +699,7 @@ export class RunnerEngine {
     } else if (this.policeChaseTimer > 0) {
       currentSpeed *= 0.62;
     }
+    this.currentSpeed = currentSpeed;
 
     // Police Chase Timer (2 seconds)
     if (this.policeChaseTimer > 0) {
@@ -642,9 +717,11 @@ export class RunnerEngine {
     const scoreMult = this.powerTimers.multiplier > 0 ? 2 : 1;
     this.score += moveZ * 1.6 * scoreMult;
 
-    // Lane lateral damping
+    // Lane lateral damping & velocity tracking
+    const prevX = this.playerX;
     const targetX = LANE_X[this.targetLane + 1];
     this.playerX = THREE.MathUtils.damp(this.playerX, targetX, 18, dt);
+    this.vx = (this.playerX - prevX) / Math.max(0.001, dt);
 
     // Ground height under player (ramps & walkable train/tunnel roofs)
     let floorY = 0;
@@ -949,12 +1026,13 @@ export class RunnerEngine {
       gameAudio.playCaptured();
       this.emitHud(0);
       const resultPayload: RunResultPayload = {
-        noCoinTimeMs: Math.round(this.noCoinTimeMs),
+        noCoinTimeMs: this.soloMode === 'normal' && !this.multiplayer ? 0 : Math.round(this.noCoinTimeMs),
         collectedCoin: this.collectedCoin,
         coins: this.coinCount,
         distance: Math.floor(this.distance),
         score: Math.floor(this.score),
         durationMs: Math.round(this.durationMs),
+        endReason: 'police',
       };
 
       if (this.multiplayer?.mode === 'coop') {
@@ -1002,14 +1080,40 @@ export class RunnerEngine {
         this.coinCount += 1;
         this.score += 10 * (this.powerTimers.multiplier > 0 ? 2 : 1);
 
-        if (!this.collectedCoin) {
+        const isStrictNoCoinSolo = !this.multiplayer && this.soloMode === 'no_coin';
+        if (isStrictNoCoinSolo) {
           this.collectedCoin = true;
           gameAudio.playTimerFrozen();
-        } else {
-          gameAudio.playCoin(this.coinCount);
+          this.spawnBurst(coin.x, coin.y, coin.z, 0xfacc15, 10);
+          this.scene.remove(coin.mesh);
+          this.coins.splice(i, 1);
+          this.ended = true;
+          this.endAnimState = 'crash';
+          this.emitHud(0);
+          this.onGameOver({
+            noCoinTimeMs: Math.round(this.noCoinTimeMs),
+            collectedCoin: true,
+            coins: this.coinCount,
+            distance: Math.floor(this.distance),
+            score: Math.floor(this.score),
+            durationMs: Math.round(this.durationMs),
+            endReason: 'coin',
+          });
+          return;
         }
 
-        this.multiplayer?.onCoinCollected?.(coin.z, coin.lane);
+        if (this.multiplayer) {
+          if (!this.collectedCoin) {
+            this.collectedCoin = true;
+            gameAudio.playTimerFrozen();
+          } else {
+            gameAudio.playCoin(this.coinCount);
+          }
+          this.multiplayer.onCoinCollected?.(coin.z, coin.lane);
+        } else {
+          // Solo Modo Normal: collect coins without freezing or ending
+          gameAudio.playCoin(this.coinCount);
+        }
 
         this.spawnBurst(coin.x, coin.y, coin.z, 0xfacc15, 7);
         this.scene.remove(coin.mesh);

@@ -1,9 +1,11 @@
 import {
   BarChart3,
   CheckCircle2,
+  Crown,
   Gift,
   History,
   KeyRound,
+  Lightbulb,
   Lock,
   LogOut,
   Megaphone,
@@ -12,6 +14,7 @@ import {
   Search,
   Shield,
   Sparkles,
+  Ticket,
   Trash2,
   Users,
   Vote,
@@ -24,10 +27,16 @@ import {
   AdminPlayerRecord,
   AdminStats,
   GlobalMessage,
+  PlayerSuggestion,
   PollItem,
+  PromoCodeRecord,
+  PromoCodeRedemptionRecord,
+  PromoRewardType,
   SKINS,
+  SPECIAL_UNLOCKABLE_SKINS,
   SkinGiftItem,
   SkinId,
+  SuggestionStatus,
   UserProfile,
   formatStopwatch,
   getSkinDefinition,
@@ -41,7 +50,28 @@ interface AdminPortalModalProps {
   onClose: () => void;
 }
 
-type AdminTab = 'stats' | 'messages' | 'polls' | 'gifts' | 'players' | 'logs';
+type AdminTab =
+  | 'stats'
+  | 'admin_skins'
+  | 'messages'
+  | 'polls'
+  | 'gifts'
+  | 'suggestions'
+  | 'promo_codes'
+  | 'players'
+  | 'logs';
+
+const GIFTABLE_SKINS = [...SKINS, ...SPECIAL_UNLOCKABLE_SKINS];
+
+const SUGGESTION_STATUS_META: Record<
+  SuggestionStatus,
+  { label: string; badgeClass: string }
+> = {
+  received: { label: 'Recebida', badgeClass: 'bg-sky-500/20 text-sky-300 border-sky-500/40' },
+  in_review: { label: 'Em Análise', badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40' },
+  approved: { label: 'Aprovada', badgeClass: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40' },
+  rejected: { label: 'Recusada', badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40' },
+};
 
 export function AdminPortalModal({
   entryMode,
@@ -75,6 +105,9 @@ export function AdminPortalModal({
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
+  // Admin King Skin state
+  const [unlockKingBusy, setUnlockKingBusy] = useState(false);
+
   // Message form
   const [msgTitle, setMsgTitle] = useState('');
   const [msgContent, setMsgContent] = useState('');
@@ -93,6 +126,34 @@ export function AdminPortalModal({
     skinId: SkinId;
   } | null>(null);
   const [giftLoading, setGiftLoading] = useState(false);
+
+  // Suggestions moderation state
+  const [suggestions, setSuggestions] = useState<PlayerSuggestion[]>([]);
+  const [sugSearch, setSugSearch] = useState('');
+  const [sugTypeFilter, setSugTypeFilter] = useState<'all' | 'map' | 'skin'>('all');
+  const [sugStatusFilter, setSugStatusFilter] = useState<'all' | SuggestionStatus>('all');
+  const [sugDraftNotes, setSugDraftNotes] = useState<Record<string, string>>({});
+  const [sugDraftStatus, setSugDraftStatus] = useState<Record<string, SuggestionStatus>>({});
+  const [sugLoading, setSugLoading] = useState(false);
+
+  // Promo codes management state
+  const [promoCodes, setPromoCodes] = useState<PromoCodeRecord[]>([]);
+  const [promoLoading, setPromoLoading] = useState(false);
+  const [editingPromoId, setEditingPromoId] = useState<string | null>(null);
+  const [promoCodeInput, setPromoCodeInput] = useState('');
+  const [promoDescInput, setPromoDescInput] = useState('');
+  const [promoRewardType, setPromoRewardType] = useState<PromoRewardType>('skin');
+  const [promoSkinId, setPromoSkinId] = useState<SkinId>('meu_ratao');
+  const [promoCoinAmount, setPromoCoinAmount] = useState(100);
+  const [promoSpecialLabel, setPromoSpecialLabel] = useState('Passe Especial Beta');
+  const [promoInfinite, setPromoInfinite] = useState(false);
+  const [promoMaxUses, setPromoMaxUses] = useState(25);
+  const [promoExpiresAt, setPromoExpiresAt] = useState('');
+  const [promoActive, setPromoActive] = useState(true);
+  const [selectedPromoRedemptions, setSelectedPromoRedemptions] = useState<{
+    code: string;
+    records: PromoCodeRedemptionRecord[];
+  } | null>(null);
 
   // Player management / search
   const [playerQuery, setPlayerQuery] = useState('');
@@ -133,6 +194,48 @@ export function AdminPortalModal({
     }
   }, []);
 
+  const loadSuggestions = useCallback(async () => {
+    setSugLoading(true);
+    try {
+      const res = await api.adminListSuggestions({
+        search: sugSearch.trim() || undefined,
+        type: sugTypeFilter,
+        status: sugStatusFilter,
+      });
+      setSuggestions(res.suggestions);
+      setSugDraftNotes((prev) => {
+        const next = { ...prev };
+        for (const s of res.suggestions) {
+          if (next[s.id] === undefined) next[s.id] = s.adminNote || '';
+        }
+        return next;
+      });
+      setSugDraftStatus((prev) => {
+        const next = { ...prev };
+        for (const s of res.suggestions) {
+          if (next[s.id] === undefined) next[s.id] = s.status;
+        }
+        return next;
+      });
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao carregar sugestões.');
+    } finally {
+      setSugLoading(false);
+    }
+  }, [sugSearch, sugStatusFilter, sugTypeFilter]);
+
+  const loadPromoCodes = useCallback(async () => {
+    setPromoLoading(true);
+    try {
+      const res = await api.adminListPromoCodes();
+      setPromoCodes(res.promoCodes);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao carregar códigos promocionais.');
+    } finally {
+      setPromoLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -167,6 +270,18 @@ export function AdminPortalModal({
       void loadPlayers(playerQuery);
     }
   }, [isVerifiedAdmin, tab, loadPlayers, playerQuery]);
+
+  useEffect(() => {
+    if (isVerifiedAdmin && tab === 'suggestions') {
+      void loadSuggestions();
+    }
+  }, [isVerifiedAdmin, tab, loadSuggestions]);
+
+  useEffect(() => {
+    if (isVerifiedAdmin && tab === 'promo_codes') {
+      void loadPromoCodes();
+    }
+  }, [isVerifiedAdmin, tab, loadPromoCodes]);
 
   const handleSecretF8Login = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -337,8 +452,7 @@ export function AdminPortalModal({
     setActionMsg(null);
     try {
       const res = await api.giftSkin(pendingGiftConfirm);
-      const skinName =
-        SKINS.find((s) => s.id === pendingGiftConfirm.skinId)?.name || pendingGiftConfirm.skinId;
+      const skinName = getSkinDefinition(pendingGiftConfirm.skinId).name;
       setGiftNickname('');
       setPendingGiftConfirm(null);
       setActionMsg(
@@ -351,6 +465,169 @@ export function AdminPortalModal({
       setActionErr(err instanceof Error ? err.message : 'Erro ao presentear skin.');
     } finally {
       setGiftLoading(false);
+    }
+  };
+
+  const handleUnlockKingSkin = async () => {
+    setUnlockKingBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminUnlockKingSkin();
+      setAdminProfile((prev) =>
+        prev
+          ? {
+              ...prev,
+              allowedExclusiveSkins: res.allowedExclusiveSkins,
+            }
+          : prev
+      );
+      if (currentUser && adminProfile && currentUser.id === adminProfile.id) {
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: res.allowedExclusiveSkins,
+        });
+      }
+      setActionMsg(
+        res.alreadyUnlocked
+          ? 'A skin Ratão Rei já estava desbloqueada na sua conta administrativa!'
+          : 'Skin Ratão Rei desbloqueada para sua conta administrativa! Você já pode equipá-la no menu Skins.'
+      );
+      await loadDashboard();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao desbloquear Ratão Rei.');
+    } finally {
+      setUnlockKingBusy(false);
+    }
+  };
+
+  const handleSaveSuggestionModeration = async (id: string) => {
+    setActionErr(null);
+    setActionMsg(null);
+    const status = sugDraftStatus[id] || 'received';
+    const note = sugDraftNotes[id] ?? '';
+    try {
+      await api.adminUpdateSuggestion(id, {
+        status,
+        adminNote: note.trim() || null,
+      });
+      setActionMsg('Sugestão atualizada! O jogador será notificado automaticamente se aprovada/recusada.');
+      await loadSuggestions();
+      await loadDashboard();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao atualizar sugestão.');
+    }
+  };
+
+  const handleDeleteSuggestion = async (id: string) => {
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      await api.adminDeleteSuggestion(id);
+      setActionMsg('Sugestão removida.');
+      await loadSuggestions();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao excluir sugestão.');
+    }
+  };
+
+  const resetPromoForm = () => {
+    setEditingPromoId(null);
+    setPromoCodeInput('');
+    setPromoDescInput('');
+    setPromoRewardType('skin');
+    setPromoSkinId('meu_ratao');
+    setPromoCoinAmount(100);
+    setPromoSpecialLabel('Passe Especial Beta');
+    setPromoInfinite(false);
+    setPromoMaxUses(25);
+    setPromoExpiresAt('');
+    setPromoActive(true);
+  };
+
+  const handleSavePromoCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const isoExpires = promoExpiresAt.trim()
+        ? new Date(promoExpiresAt).toISOString()
+        : null;
+      const payload = {
+        code: promoCodeInput.trim().toUpperCase(),
+        description: promoDescInput.trim(),
+        rewardType: promoRewardType,
+        rewardSkinId: promoRewardType === 'skin' ? promoSkinId : null,
+        rewardAmount: promoRewardType === 'coins' ? Math.max(1, Number(promoCoinAmount) || 0) : 0,
+        rewardMetadata:
+          promoRewardType === 'special' || promoRewardType === 'future_item'
+            ? { label: promoSpecialLabel.trim() || 'Item Especial' }
+            : {},
+        maxUses: promoInfinite ? null : Math.max(1, Number(promoMaxUses) || 1),
+        isInfinite: promoInfinite,
+        active: promoActive,
+        expiresAt: isoExpires,
+      };
+      if (editingPromoId) {
+        await api.adminUpdatePromoCode(editingPromoId, payload);
+        setActionMsg(`Código ${payload.code} atualizado com sucesso!`);
+      } else {
+        await api.adminCreatePromoCode(payload);
+        setActionMsg(`Código promocional ${payload.code} criado com sucesso!`);
+      }
+      resetPromoForm();
+      await loadPromoCodes();
+      await loadDashboard();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao salvar código promocional.');
+    }
+  };
+
+  const handleEditPromo = (p: PromoCodeRecord) => {
+    setEditingPromoId(p.id);
+    setPromoCodeInput(p.code);
+    setPromoDescInput(p.description);
+    setPromoRewardType(p.rewardType);
+    setPromoSkinId(p.rewardSkinId || 'meu_ratao');
+    setPromoCoinAmount(p.rewardAmount || 100);
+    setPromoSpecialLabel(String(p.rewardMetadata?.label || 'Item Especial'));
+    setPromoInfinite(p.isInfinite);
+    setPromoMaxUses(p.maxUses || 25);
+    setPromoExpiresAt(p.expiresAt ? p.expiresAt.slice(0, 16) : '');
+    setPromoActive(p.active);
+  };
+
+  const handleTogglePromoActive = async (p: PromoCodeRecord) => {
+    setActionErr(null);
+    try {
+      await api.adminUpdatePromoCode(p.id, { active: !p.active });
+      await loadPromoCodes();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao alterar status do código.');
+    }
+  };
+
+  const handleDeletePromo = async (id: string) => {
+    setActionErr(null);
+    try {
+      await api.adminDeletePromoCode(id);
+      if (selectedPromoRedemptions?.records.some((r) => r.promoCodeId === id)) {
+        setSelectedPromoRedemptions(null);
+      }
+      setActionMsg('Código promocional excluído.');
+      await loadPromoCodes();
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao excluir código.');
+    }
+  };
+
+  const handleInspectPromoRedemptions = async (p: PromoCodeRecord) => {
+    setActionErr(null);
+    try {
+      const res = await api.adminListPromoRedemptions(p.id);
+      setSelectedPromoRedemptions({ code: p.code, records: res.redemptions });
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao carregar resgates.');
     }
   };
 
@@ -626,9 +903,12 @@ export function AdminPortalModal({
               {(
                 [
                   { id: 'stats', label: 'Estatísticas', icon: BarChart3 },
+                  { id: 'admin_skins', label: 'Skins Admin', icon: Crown },
                   { id: 'messages', label: 'Mensagens Globais', icon: Megaphone },
                   { id: 'polls', label: 'Votações Globais', icon: Vote },
                   { id: 'gifts', label: 'Presentear Skins', icon: Gift },
+                  { id: 'suggestions', label: 'Sugestões', icon: Lightbulb },
+                  { id: 'promo_codes', label: 'Códigos', icon: Ticket },
                   { id: 'players', label: 'Jogadores', icon: Users },
                   { id: 'logs', label: 'Histórico Admin', icon: History },
                 ] as const
@@ -727,6 +1007,57 @@ export function AdminPortalModal({
                       <div className="font-mono-num text-xl font-bold text-fuchsia-400 mt-1">
                         {stats.giftsSentCount}
                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: Skins Admin (Desbloquear Skin Ratão Rei) */}
+              {tab === 'admin_skins' && (
+                <div className="space-y-4">
+                  <div className="p-5 rounded-2xl bg-slate-950 border-2 border-amber-500/50 space-y-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <span className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
+                          EXCLUSIVA DO ADMINISTRADOR
+                        </span>
+                        <h3 className="font-display text-xl font-bold text-white mt-2 flex items-center gap-2">
+                          <Crown className="w-5 h-5 text-amber-400" />
+                          DESBLOQUEAR SKIN RATÃO REI
+                        </h3>
+                        <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                          Coroa dourada, manto real e escolta de 5 ratinhos. Esta skin permanece
+                          estritamente exclusiva para contas administrativas: jogadores comuns nunca
+                          podem desbloqueá-la e ela nunca pode ser enviada como presente.
+                        </p>
+                      </div>
+
+                      <div
+                        className={`px-3 py-1.5 rounded-xl border text-xs font-extrabold ${
+                          adminProfile?.allowedExclusiveSkins?.includes('ratao_rei')
+                            ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
+                            : 'bg-rose-500/20 border-rose-400 text-rose-300'
+                        }`}
+                      >
+                        {adminProfile?.allowedExclusiveSkins?.includes('ratao_rei')
+                          ? 'DESBLOQUEADA PARA SUA CONTA'
+                          : 'BLOQUEADA (CLIQUE ABAIXO)'}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-3 pt-1">
+                      <button
+                        type="button"
+                        disabled={unlockKingBusy}
+                        onClick={() => void handleUnlockKingSkin()}
+                        className="px-5 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white font-display font-bold text-sm flex items-center gap-2 shadow-lg cursor-pointer disabled:opacity-60"
+                      >
+                        <Crown className="w-4 h-4" />
+                        {unlockKingBusy ? 'DESBLOQUEANDO...' : 'DESBLOQUEAR PARA MIM'}
+                      </button>
+                      <span className="text-[11px] text-slate-400">
+                        Após desbloquear, abra o menu <strong>SKINS → Exclusivas</strong> para equipar o Ratão Rei.
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -972,10 +1303,10 @@ export function AdminPortalModal({
 
                     <div>
                       <label className="block text-[11px] font-bold uppercase text-slate-400 mb-2">
-                        Selecione uma das 10 Skins
+                        Selecione uma Skin Presenteável (Ratão Rei e Top 1/2/3 são intransferíveis)
                       </label>
-                      <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                        {SKINS.map((s) => {
+                      <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                        {GIFTABLE_SKINS.map((s) => {
                           const selected = giftSkinId === s.id;
                           return (
                             <button
@@ -1019,10 +1350,8 @@ export function AdminPortalModal({
                       <div className="p-3.5 rounded-xl bg-fuchsia-950/40 border border-fuchsia-400/60 space-y-2.5">
                         <div className="text-xs text-fuchsia-100">
                           Confirmar envio da skin{' '}
-                          <strong>
-                            {SKINS.find((s) => s.id === pendingGiftConfirm.skinId)?.name}
-                          </strong>{' '}
-                          para <strong>{pendingGiftConfirm.nickname}</strong>?
+                          <strong>{getSkinDefinition(pendingGiftConfirm.skinId).name}</strong> para{' '}
+                          <strong>{pendingGiftConfirm.nickname}</strong>?
                         </div>
                         <div className="flex gap-2">
                           <button
@@ -1057,7 +1386,7 @@ export function AdminPortalModal({
                         <span>
                           <strong className="text-fuchsia-300">{g.targetNickname}</strong> recebeu{' '}
                           <strong className="text-white">
-                            {SKINS.find((s) => s.id === g.skinId)?.name || g.skinId}
+                            {getSkinDefinition(g.skinId).name}
                           </strong>
                         </span>
                         <span className="text-[10px] text-slate-500">
@@ -1066,6 +1395,439 @@ export function AdminPortalModal({
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {/* Tab: Sugestões dos Jogadores */}
+              {tab === 'suggestions' && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="font-display font-bold text-sm text-amber-300 flex items-center gap-2">
+                        <Lightbulb className="w-4 h-4" /> SUGESTÕES DOS JOGADORES
+                      </h4>
+                      <span className="text-[11px] text-slate-400">
+                        Sugestões aprovadas enviam notificação ao jogador e nunca são publicadas automaticamente.
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-4 gap-2">
+                      <div className="sm:col-span-2 relative">
+                        <Search className="w-4 h-4 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={sugSearch}
+                          onChange={(e) => setSugSearch(e.target.value)}
+                          placeholder="Buscar por jogador, título ou código SUG-..."
+                          className="w-full pl-9 pr-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                        />
+                      </div>
+                      <select
+                        value={sugTypeFilter}
+                        onChange={(e) => setSugTypeFilter(e.target.value as 'all' | 'map' | 'skin')}
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                      >
+                        <option value="all">Todos os Tipos</option>
+                        <option value="map">Apenas Mapas</option>
+                        <option value="skin">Apenas Skins</option>
+                      </select>
+                      <select
+                        value={sugStatusFilter}
+                        onChange={(e) =>
+                          setSugStatusFilter(e.target.value as 'all' | SuggestionStatus)
+                        }
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                      >
+                        <option value="all">Todos os Status</option>
+                        <option value="received">Recebida</option>
+                        <option value="in_review">Em Análise</option>
+                        <option value="approved">Aprovada</option>
+                        <option value="rejected">Recusada</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {sugLoading ? (
+                    <div className="text-xs text-slate-400">Carregando sugestões...</div>
+                  ) : suggestions.length === 0 ? (
+                    <div className="p-6 rounded-xl bg-slate-950 border border-slate-800 text-center text-xs text-slate-400">
+                      Nenhuma sugestão encontrada para os filtros selecionados.
+                    </div>
+                  ) : (
+                    <div className="space-y-3">
+                      {suggestions.map((s) => {
+                        const meta = SUGGESTION_STATUS_META[s.status];
+                        const draftStatus = sugDraftStatus[s.id] || s.status;
+                        const draftNote = sugDraftNotes[s.id] ?? (s.adminNote || '');
+                        return (
+                          <div
+                            key={s.id}
+                            className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3"
+                          >
+                            <div className="flex flex-wrap items-start justify-between gap-2">
+                              <div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="font-mono-num text-[11px] font-bold px-2 py-0.5 rounded bg-slate-800 text-slate-200">
+                                    {s.code}
+                                  </span>
+                                  <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                                    {s.type === 'map' ? 'Sugestão de Mapa' : 'Sugestão de Skin'}
+                                  </span>
+                                  <span
+                                    className={`text-[11px] font-bold px-2 py-0.5 rounded border ${meta.badgeClass}`}
+                                  >
+                                    {meta.label}
+                                  </span>
+                                </div>
+                                <h5 className="font-display text-base font-bold text-white mt-1.5">
+                                  {s.title}
+                                </h5>
+                                <div className="text-[11px] text-slate-400">
+                                  Enviada por <strong className="text-slate-200">{s.authorNickname}</strong> em{' '}
+                                  {new Date(s.createdAt).toLocaleString('pt-BR')}
+                                </div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => void handleDeleteSuggestion(s.id)}
+                                title="Excluir sugestão"
+                                className="p-2 rounded-lg bg-red-950 hover:bg-red-900 text-red-300 cursor-pointer"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            </div>
+
+                            <p className="text-xs text-slate-200 whitespace-pre-wrap bg-slate-900/70 border border-slate-800 rounded-lg p-3">
+                              {s.description}
+                            </p>
+
+                            <div className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center">
+                              <select
+                                value={draftStatus}
+                                onChange={(e) =>
+                                  setSugDraftStatus((prev) => ({
+                                    ...prev,
+                                    [s.id]: e.target.value as SuggestionStatus,
+                                  }))
+                                }
+                                className="sm:col-span-3 px-2.5 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                              >
+                                <option value="received">Recebida</option>
+                                <option value="in_review">Em Análise</option>
+                                <option value="approved">Aprovada</option>
+                                <option value="rejected">Recusada</option>
+                              </select>
+                              <input
+                                type="text"
+                                value={draftNote}
+                                onChange={(e) =>
+                                  setSugDraftNotes((prev) => ({
+                                    ...prev,
+                                    [s.id]: e.target.value,
+                                  }))
+                                }
+                                placeholder="Observação do administrador (opcional)"
+                                maxLength={300}
+                                className="sm:col-span-6 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => void handleSaveSuggestionModeration(s.id)}
+                                className="sm:col-span-3 py-2 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs cursor-pointer"
+                              >
+                                Salvar Revisão
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Tab: Gerenciar Códigos Promocionais */}
+              {tab === 'promo_codes' && (
+                <div className="space-y-5">
+                  <form
+                    onSubmit={handleSavePromoCode}
+                    className="p-4 rounded-xl bg-slate-950 border border-slate-800 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <h4 className="font-display font-bold text-sm text-emerald-300 flex items-center gap-2">
+                        <Ticket className="w-4 h-4" />
+                        {editingPromoId
+                          ? `EDITAR CÓDIGO PROMOCIONAL (${promoCodeInput})`
+                          : 'GERENCIAR CÓDIGOS — CRIAR NOVO'}
+                      </h4>
+                      {editingPromoId && (
+                        <button
+                          type="button"
+                          onClick={resetPromoForm}
+                          className="text-xs text-slate-400 hover:text-white underline cursor-pointer"
+                        >
+                          Cancelar edição
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <input
+                        type="text"
+                        required
+                        disabled={Boolean(editingPromoId)}
+                        value={promoCodeInput}
+                        onChange={(e) => setPromoCodeInput(e.target.value.toUpperCase())}
+                        placeholder="CÓDIGO (EX: MEURATAO2026)"
+                        maxLength={32}
+                        className="px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white font-mono-num uppercase text-sm disabled:opacity-60"
+                      />
+                      <input
+                        type="text"
+                        required
+                        value={promoDescInput}
+                        onChange={(e) => setPromoDescInput(e.target.value)}
+                        placeholder="Descrição da recompensa"
+                        maxLength={140}
+                        className="sm:col-span-2 px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-sm"
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                          Tipo de Recompensa
+                        </label>
+                        <select
+                          value={promoRewardType}
+                          onChange={(e) => setPromoRewardType(e.target.value as PromoRewardType)}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                        >
+                          <option value="skin">Skin (Inclui Meu Ratão)</option>
+                          <option value="coins">Moedas Coletadas</option>
+                          <option value="special">Recompensa Especial</option>
+                          <option value="future_item">Item Futuro</option>
+                        </select>
+                      </div>
+
+                      {promoRewardType === 'skin' ? (
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Skin Entregue
+                          </label>
+                          <select
+                            value={promoSkinId}
+                            onChange={(e) => setPromoSkinId(e.target.value as SkinId)}
+                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          >
+                            {GIFTABLE_SKINS.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                      ) : promoRewardType === 'coins' ? (
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Quantidade de Moedas
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000000}
+                            value={promoCoinAmount}
+                            onChange={(e) => setPromoCoinAmount(Number(e.target.value))}
+                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Nome do Item / Benefício
+                          </label>
+                          <input
+                            type="text"
+                            value={promoSpecialLabel}
+                            onChange={(e) => setPromoSpecialLabel(e.target.value)}
+                            maxLength={80}
+                            className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                      )}
+
+                      <div>
+                        <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                          Expiração (opcional)
+                        </label>
+                        <input
+                          type="datetime-local"
+                          value={promoExpiresAt}
+                          onChange={(e) => setPromoExpiresAt(e.target.value)}
+                          className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4 pt-1 text-xs text-slate-200">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={promoInfinite}
+                          onChange={(e) => setPromoInfinite(e.target.checked)}
+                        />
+                        Usos Ilimitados (1 resgate por jogador)
+                      </label>
+
+                      {!promoInfinite && (
+                        <label className="flex items-center gap-2">
+                          <span>Limite total de usos:</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={1000000}
+                            value={promoMaxUses}
+                            onChange={(e) => setPromoMaxUses(Number(e.target.value))}
+                            className="w-24 px-2.5 py-1 rounded bg-slate-900 border border-slate-700 text-white"
+                          />
+                        </label>
+                      )}
+
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={promoActive}
+                          onChange={(e) => setPromoActive(e.target.checked)}
+                        />
+                        Código Ativo
+                      </label>
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs cursor-pointer"
+                    >
+                      {editingPromoId ? 'SALVAR ALTERAÇÕES' : 'CRIAR CÓDIGO PROMOCIONAL'}
+                    </button>
+                  </form>
+
+                  <div className="space-y-2.5">
+                    <h4 className="text-xs font-extrabold uppercase text-slate-400">
+                      Códigos Cadastrados ({promoCodes.length})
+                    </h4>
+                    {promoLoading ? (
+                      <div className="text-xs text-slate-400">Carregando códigos...</div>
+                    ) : promoCodes.length === 0 ? (
+                      <div className="text-xs text-slate-500">Nenhum código criado ainda.</div>
+                    ) : (
+                      promoCodes.map((p) => (
+                        <div
+                          key={p.id}
+                          className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 flex flex-wrap items-center justify-between gap-3"
+                        >
+                          <div className="space-y-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-mono-num text-sm font-extrabold text-amber-300">
+                                {p.code}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-extrabold ${
+                                  p.active
+                                    ? 'bg-emerald-500/20 text-emerald-300'
+                                    : 'bg-slate-800 text-slate-400'
+                                }`}
+                              >
+                                {p.active ? 'ATIVO' : 'INATIVO'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-sky-500/15 text-sky-300 text-[10px] font-bold">
+                                {p.rewardType === 'skin' && p.rewardSkinId
+                                  ? `Skin: ${getSkinDefinition(p.rewardSkinId).name}`
+                                  : p.rewardType === 'coins'
+                                    ? `+${p.rewardAmount} moedas`
+                                    : String(p.rewardMetadata?.label || p.rewardType)}
+                              </span>
+                            </div>
+                            <div className="text-xs text-slate-300">{p.description}</div>
+                            <div className="text-[11px] text-slate-500">
+                              Resgates: <strong className="text-slate-200">{p.usedCount}</strong> /{' '}
+                              {p.isInfinite ? 'Ilimitado' : p.maxUses} ·{' '}
+                              {p.expiresAt
+                                ? `Expira ${new Date(p.expiresAt).toLocaleString('pt-BR')}`
+                                : 'Sem expiração'}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => void handleInspectPromoRedemptions(p)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-sky-300 text-[11px] font-bold cursor-pointer"
+                            >
+                              Ver Resgates
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditPromo(p)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-amber-300 text-[11px] font-bold cursor-pointer"
+                            >
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleTogglePromoActive(p)}
+                              className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-[11px] font-bold cursor-pointer"
+                            >
+                              {p.active ? 'Desativar' : 'Ativar'}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => void handleDeletePromo(p.id)}
+                              className="p-1.5 rounded-lg bg-red-950 hover:bg-red-900 text-red-300 cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {selectedPromoRedemptions && (
+                    <div className="p-4 rounded-xl bg-slate-950 border border-sky-500/40 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <h5 className="text-xs font-extrabold uppercase text-sky-300">
+                          Histórico de Resgates · {selectedPromoRedemptions.code} (
+                          {selectedPromoRedemptions.records.length})
+                        </h5>
+                        <button
+                          type="button"
+                          onClick={() => setSelectedPromoRedemptions(null)}
+                          className="text-xs text-slate-400 hover:text-white cursor-pointer"
+                        >
+                          Fechar
+                        </button>
+                      </div>
+                      {selectedPromoRedemptions.records.length === 0 ? (
+                        <div className="text-xs text-slate-500">Nenhum resgate registrado ainda.</div>
+                      ) : (
+                        <div className="space-y-1 max-h-48 overflow-y-auto">
+                          {selectedPromoRedemptions.records.map((r) => (
+                            <div
+                              key={r.id}
+                              className="px-3 py-1.5 rounded bg-slate-900 border border-slate-800 text-xs flex items-center justify-between"
+                            >
+                              <span>
+                                <strong className="text-white">{r.nickname}</strong> — {r.rewardSummary}
+                              </span>
+                              <span className="text-[10px] text-slate-400">
+                                {new Date(r.redeemedAt).toLocaleString('pt-BR')}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1220,7 +1982,7 @@ export function AdminPortalModal({
                                   className="px-2.5 py-1.5 rounded bg-slate-900 border border-slate-800 text-[11px] flex justify-between"
                                 >
                                   <span className="text-fuchsia-300 font-semibold">
-                                    {SKINS.find((s) => s.id === g.skinId)?.name || g.skinId}
+                                    {getSkinDefinition(g.skinId).name}
                                   </span>
                                   <span className="text-slate-500">
                                     {new Date(g.createdAt).toLocaleDateString('pt-BR')}

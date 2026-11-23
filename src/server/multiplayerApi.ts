@@ -194,7 +194,11 @@ export async function mpSyncRoomHandler(req: AuthedRequest, res: Response): Prom
     return;
   }
 
-  res.json({ ...result.bundle, serverNow: Date.now() });
+  res.json({
+    ...result.bundle,
+    serverNow: Date.now(),
+    echoClientTs: Number(body.clientTs) || 0,
+  });
 }
 
 export async function mpLeaveRoomHandler(req: AuthedRequest, res: Response): Promise<void> {

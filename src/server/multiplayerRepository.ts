@@ -25,9 +25,11 @@ import {
 } from '../shared/constants.ts';
 import { verifySeededCoinSpawn } from '../shared/trackGenerator.ts';
 import { generateToken } from './crypto.ts';
+import { repoGetCustomCharacterConfig } from './featureRepository.ts';
 import {
   repoCanUserEquipSkin,
   repoComputePlayerRank,
+  repoCreditWalletCoins,
   repoFindUserByNickname,
   repoGetCompetitiveStatsForUser,
   repoGetRecentX1ResultsForUser,
@@ -50,6 +52,14 @@ export interface TelemetrySyncInput {
   posX: number;
   posY: number;
   posZ: number;
+  vx?: number;
+  vy?: number;
+  vz?: number;
+  speed?: number;
+  yaw?: number;
+  seq?: number;
+  clientTs?: number;
+  pingMs?: number;
   lane: number;
   animState: ParticipantAnimState;
   distance: number;
@@ -224,6 +234,14 @@ export async function mpCreateInviteAndRoom(params: {
       posX: 0,
       posY: 0,
       posZ: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      speed: 0,
+      yaw: 0,
+      seq: 0,
+      clientTs: 0,
+      pingMs: 0,
       lane: 0,
       animState: 'idle',
       distance: 0,
@@ -333,6 +351,14 @@ export async function mpCreateInviteAndRoom(params: {
     posX: 0,
     posY: 0,
     posZ: 0,
+    vx: 0,
+    vy: 0,
+    vz: 0,
+    speed: 0,
+    yaw: 0,
+    seq: 0,
+    clientTs: 0,
+    pingMs: 0,
     lane: 0,
     animState: 'idle',
     distance: 0,
@@ -472,6 +498,14 @@ export async function mpRespondToInvite(params: {
         posX: 0,
         posY: 0,
         posZ: 0,
+        vx: 0,
+        vy: 0,
+        vz: 0,
+        speed: 0,
+        yaw: 0,
+        seq: 0,
+        clientTs: 0,
+        pingMs: 0,
         lane: 0,
         animState: 'idle',
         distance: 0,
@@ -607,6 +641,14 @@ export async function mpRespondToInvite(params: {
       posX: 0,
       posY: 0,
       posZ: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      speed: 0,
+      yaw: 0,
+      seq: 0,
+      clientTs: 0,
+      pingMs: 0,
       lane: 0,
       animState: 'idle',
       distance: 0,
@@ -815,6 +857,11 @@ async function finalizeRoomInternal(params: {
 
   if (!isNeonConfigured()) {
     const db = getLocalDb();
+    if (room.status === 'finished') {
+      const existingMatch = db.multiplayerMatches.find((m) => m.roomId === room.id) || null;
+      const existingX1 = db.x1Results.find((r) => r.roomId === room.id) || null;
+      return { x1Result: existingX1, matchRecord: existingMatch };
+    }
     room.status = 'finished';
     room.finishedAt = nowMs;
     room.winnerUserId = winnerUserId;
@@ -862,6 +909,24 @@ async function finalizeRoomInternal(params: {
     });
 
     saveLocalDb();
+
+    if (hostPt.coins > 0) {
+      await repoCreditWalletCoins({
+        userId: hostPt.userId,
+        amount: hostPt.coins,
+        sourceType: room.mode,
+        eventKey: `mp:${room.id}:${hostPt.userId}`,
+      });
+    }
+    if (guestPt.coins > 0) {
+      await repoCreditWalletCoins({
+        userId: guestPt.userId,
+        amount: guestPt.coins,
+        sourceType: room.mode,
+        eventKey: `mp:${room.id}:${guestPt.userId}`,
+      });
+    }
+
     return { x1Result: x1Res, matchRecord };
   }
 
@@ -974,10 +1039,41 @@ async function finalizeRoomInternal(params: {
   room.resultReason = resultReason;
   room.updatedAt = nowIso;
 
+  await Promise.all([
+    hostPt.coins > 0
+      ? repoCreditWalletCoins({
+          userId: hostPt.userId,
+          amount: hostPt.coins,
+          sourceType: room.mode,
+          eventKey: `mp:${room.id}:${hostPt.userId}`,
+        })
+      : Promise.resolve(),
+    guestPt.coins > 0
+      ? repoCreditWalletCoins({
+          userId: guestPt.userId,
+          amount: guestPt.coins,
+          sourceType: room.mode,
+          eventKey: `mp:${room.id}:${guestPt.userId}`,
+        })
+      : Promise.resolve(),
+  ]);
+
   return { x1Result: x1Res, matchRecord };
 }
 
 // --- Room Retrieval + Automatic State Transitions ---
+
+async function hydrateParticipantCustomConfigs(
+  list: MultiplayerParticipant[]
+): Promise<MultiplayerParticipant[]> {
+  return Promise.all(
+    list.map(async (p) => {
+      if (p.skinId !== 'meu_ratao') return p;
+      const customConfig = await repoGetCustomCharacterConfig(p.userId);
+      return { ...p, customConfig };
+    })
+  );
+}
 
 export async function mpGetRoomBundle(
   roomId: string,
@@ -999,7 +1095,8 @@ export async function mpGetRoomBundle(
       saveLocalDb();
     }
 
-    const participants = db.multiplayerParticipants.filter((p) => p.roomId === roomId);
+    const rawParticipants = db.multiplayerParticipants.filter((p) => p.roomId === roomId);
+    const participants = await hydrateParticipantCustomConfigs(rawParticipants);
     const x1Result = db.x1Results.find((r) => r.roomId === roomId) || null;
     const matchRecord = db.multiplayerMatches.find((m) => m.roomId === roomId) || null;
     return { room, participants, x1Result, matchRecord };
@@ -1029,11 +1126,13 @@ export async function mpGetRoomBundle(
     room.updatedAt = nowIso;
   }
 
-  const [participants, x1Rows, matchRows] = await Promise.all([
+  const [rawParticipants, x1Rows, matchRows] = await Promise.all([
     db.select().from(multiplayerParticipants).where(eq(multiplayerParticipants.roomId, roomId)),
     db.select().from(x1Results).where(eq(x1Results.roomId, roomId)).limit(1),
     db.select().from(multiplayerMatches).where(eq(multiplayerMatches.roomId, roomId)).limit(1),
   ]);
+
+  const participants = await hydrateParticipantCustomConfigs(rawParticipants);
 
   return {
     room,
@@ -1151,6 +1250,14 @@ export async function mpStartRoomMatch(params: {
         pt.posX = 0;
         pt.posY = 0;
         pt.posZ = 0;
+        pt.vx = 0;
+        pt.vy = 0;
+        pt.vz = 0;
+        pt.speed = 0;
+        pt.yaw = 0;
+        pt.seq = 0;
+        pt.clientTs = 0;
+        pt.pingMs = 0;
         pt.lane = 0;
         pt.distance = 0;
         pt.coins = 0;
@@ -1197,6 +1304,14 @@ export async function mpStartRoomMatch(params: {
       posX: 0,
       posY: 0,
       posZ: 0,
+      vx: 0,
+      vy: 0,
+      vz: 0,
+      speed: 0,
+      yaw: 0,
+      seq: 0,
+      clientTs: 0,
+      pingMs: 0,
       lane: 0,
       distance: 0,
       coins: 0,
@@ -1249,6 +1364,16 @@ export async function mpSyncParticipantState(params: {
   const safeX = Number.isFinite(input.posX) ? Math.max(-4, Math.min(4, input.posX)) : 0;
   const safeY = Number.isFinite(input.posY) ? Math.max(0, Math.min(20, input.posY)) : 0;
   const safeZ = Number.isFinite(input.posZ) ? Math.max(-100000, Math.min(50, input.posZ)) : 0;
+  const safeVx = Number.isFinite(input.vx) ? Math.max(-30, Math.min(30, Number(input.vx))) : 0;
+  const safeVy = Number.isFinite(input.vy) ? Math.max(-50, Math.min(50, Number(input.vy))) : 0;
+  const safeVz = Number.isFinite(input.vz) ? Math.max(-100, Math.min(20, Number(input.vz))) : 0;
+  const safeSpeed = Number.isFinite(input.speed)
+    ? Math.max(0, Math.min(120, Number(input.speed)))
+    : 0;
+  const safeYaw = Number.isFinite(input.yaw) ? Math.max(-4, Math.min(4, Number(input.yaw))) : 0;
+  const safeSeq = Math.max(0, Math.round(Number(input.seq) || 0));
+  const safeClientTs = Math.max(0, Math.round(Number(input.clientTs) || 0));
+  const safePingMs = Math.max(0, Math.min(5000, Math.round(Number(input.pingMs) || 0)));
   const safeDist = Math.max(0, Math.min(500000, Math.round(Number(input.distance) || 0)));
   const safeCoins = Math.max(0, Math.min(50000, Math.round(Number(input.coins) || 0)));
   const safeScore = Math.max(0, Math.min(10000000, Math.round(Number(input.score) || 0)));
@@ -1257,21 +1382,34 @@ export async function mpSyncParticipantState(params: {
   const safeCollisions = Math.max(0, Math.min(99, Math.round(Number(input.collisionCount) || 0)));
   const animState = sanitizeAnimState(input.animState);
 
+  // Reject stale lower-sequence packets (still update stats monotonically & honor events below)
+  const isStaleSequence = safeSeq > 0 && (me.seq || 0) > 0 && safeSeq < (me.seq || 0);
+
   // Update telemetry if room is countdown or in_progress
   if (room.status === 'countdown' || room.status === 'in_progress') {
-    me.posX = safeX;
-    me.posY = safeY;
-    me.posZ = safeZ;
-    me.lane = clampedLane;
-    me.animState = animState;
+    if (!isStaleSequence) {
+      me.posX = safeX;
+      me.posY = safeY;
+      me.posZ = safeZ;
+      me.vx = safeVx;
+      me.vy = safeVy;
+      me.vz = safeVz;
+      me.speed = safeSpeed;
+      me.yaw = safeYaw;
+      me.seq = safeSeq > 0 ? safeSeq : me.seq || 0;
+      me.clientTs = safeClientTs > 0 ? safeClientTs : me.clientTs || 0;
+      me.pingMs = safePingMs;
+      me.lane = clampedLane;
+      me.animState = animState;
+      me.hoverboard = Boolean(input.hoverboard);
+      me.jetpack = Boolean(input.jetpack);
+    }
     me.distance = Math.max(me.distance, safeDist);
     me.coins = Math.max(me.coins, safeCoins);
     me.score = Math.max(me.score, safeScore);
     me.noCoinTimeMs = Math.max(me.noCoinTimeMs, safeNoCoin);
     me.durationMs = Math.max(me.durationMs, safeDur);
     me.collisionCount = Math.max(me.collisionCount, safeCollisions);
-    me.hoverboard = Boolean(input.hoverboard);
-    me.jetpack = Boolean(input.jetpack);
     me.connected = true;
     me.lastHeartbeatAt = nowMs;
     me.updatedAt = nowIso;
@@ -1282,6 +1420,38 @@ export async function mpSyncParticipantState(params: {
     }
 
     if (!isNeonConfigured()) {
+      const db = getLocalDb();
+      const rawPt = db.multiplayerParticipants.find((p) => p.id === me.id);
+      if (rawPt) {
+        Object.assign(rawPt, {
+          posX: me.posX,
+          posY: me.posY,
+          posZ: me.posZ,
+          vx: me.vx,
+          vy: me.vy,
+          vz: me.vz,
+          speed: me.speed,
+          yaw: me.yaw,
+          seq: me.seq,
+          clientTs: me.clientTs,
+          pingMs: me.pingMs,
+          lane: me.lane,
+          animState: me.animState,
+          distance: me.distance,
+          coins: me.coins,
+          score: me.score,
+          noCoinTimeMs: me.noCoinTimeMs,
+          durationMs: me.durationMs,
+          collisionCount: me.collisionCount,
+          alive: me.alive,
+          finishedAt: me.finishedAt,
+          hoverboard: me.hoverboard,
+          jetpack: me.jetpack,
+          connected: true,
+          lastHeartbeatAt: nowMs,
+          updatedAt: nowIso,
+        });
+      }
       saveLocalDb();
     } else {
       const db = getNeonDb();
@@ -1291,6 +1461,14 @@ export async function mpSyncParticipantState(params: {
           posX: me.posX,
           posY: me.posY,
           posZ: me.posZ,
+          vx: me.vx ?? 0,
+          vy: me.vy ?? 0,
+          vz: me.vz ?? 0,
+          speed: me.speed ?? 0,
+          yaw: me.yaw ?? 0,
+          seq: me.seq ?? 0,
+          clientTs: me.clientTs ?? 0,
+          pingMs: me.pingMs ?? 0,
           lane: me.lane,
           animState: me.animState,
           distance: me.distance,

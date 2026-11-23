@@ -156,6 +156,7 @@ export function DualResultModal({
                     mapId={room.mapId}
                     mode="turntable"
                     quality="low"
+                    customConfig={player.customConfig}
                   />
                   <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none">
                     <span className="px-2 py-0.5 rounded bg-slate-950/90 border border-slate-700 text-[10px] font-bold text-slate-200">

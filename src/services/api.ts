@@ -2,7 +2,10 @@ import {
   AdminLogItem,
   AdminPlayerRecord,
   AdminStats,
+  CoinsLeaderboardEntry,
+  CustomCharacterConfig,
   GlobalMessage,
+  LeaderboardCategory,
   LeaderboardEntry,
   MapId,
   MatchSummary,
@@ -13,10 +16,19 @@ import {
   MultiplayerRoom,
   ParticipantAnimState,
   PlayerCompetitiveStats,
+  PlayerNotificationItem,
+  PlayerSuggestion,
+  PlayerWalletStats,
   PollItem,
+  PromoCodeRecord,
+  PromoCodeRedemptionRecord,
+  PromoRewardType,
   PublicPlayerLookup,
   SkinGiftItem,
   SkinId,
+  SoloGameMode,
+  SuggestionStatus,
+  SuggestionType,
   UserProfile,
   X1ResultRecord,
 } from '../shared/constants.ts';
@@ -163,11 +175,14 @@ export const api = {
       body: JSON.stringify({ skinId }),
     }),
 
-  startMatch: (mapId: MapId, skinId: SkinId) =>
-    apiFetch<{ matchId: string; startedAt: number; signature: string }>('/api/match/start', {
-      method: 'POST',
-      body: JSON.stringify({ mapId, skinId }),
-    }),
+  startMatch: (mapId: MapId, skinId: SkinId, mode: SoloGameMode = 'no_coin') =>
+    apiFetch<{ matchId: string; startedAt: number; signature: string; mode: SoloGameMode }>(
+      '/api/match/start',
+      {
+        method: 'POST',
+        body: JSON.stringify({ mapId, skinId, mode }),
+      }
+    ),
 
   finishMatch: (payload: {
     matchId: string;
@@ -178,18 +193,36 @@ export const api = {
     distance: number;
     score: number;
     durationMs: number;
+    endReason?: 'police' | 'coin';
   }) =>
     apiFetch<{ summary: MatchSummary }>('/api/match/finish', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
 
-  getLeaderboard: (limit: 10 | 50 | 100 = 100) =>
-    apiFetch<{
-      entries: LeaderboardEntry[];
+  getLeaderboard: (params?: {
+    category?: LeaderboardCategory;
+    page?: number;
+    pageSize?: number;
+  }) => {
+    const category = params?.category || 'no_coin';
+    const page = params?.page || 1;
+    const pageSize = params?.pageSize || 20;
+    const qs = new URLSearchParams({
+      category,
+      page: String(page),
+      pageSize: String(pageSize),
+    });
+    return apiFetch<{
+      category: LeaderboardCategory;
+      entries: (LeaderboardEntry | CoinsLeaderboardEntry)[];
       totalRanked: number;
-      currentUserEntry: LeaderboardEntry | null;
-    }>(`/api/leaderboard?limit=${limit}`),
+      page: number;
+      pageSize: number;
+      totalPages: number;
+      currentUserEntry: LeaderboardEntry | CoinsLeaderboardEntry | null;
+    }>(`/api/leaderboard?${qs.toString()}`);
+  },
 
   getPublicProfile: (nickname: string) =>
     apiFetch<{
@@ -206,6 +239,8 @@ export const api = {
         favoriteSkin: SkinId;
         rank: number | null;
         competitiveStats: PlayerCompetitiveStats;
+        walletStats?: PlayerWalletStats;
+        customCharacterConfig?: CustomCharacterConfig;
         recentX1: X1ResultRecord[];
       };
     }>(`/api/profile/${encodeURIComponent(nickname)}`),
@@ -216,7 +251,45 @@ export const api = {
       polls: PollItem[];
       unseenGifts: SkinGiftItem[];
       featuredMap: MapId;
+      notifications?: PlayerNotificationItem[];
     }>('/api/social/feed'),
+
+  markNotificationsSeen: () =>
+    apiFetch<{ ok: boolean }>('/api/notifications/seen', { method: 'POST' }),
+
+  createSuggestion: (payload: { type: SuggestionType; title: string; description: string }) =>
+    apiFetch<{ suggestion: PlayerSuggestion }>('/api/suggestions', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  getMySuggestions: () =>
+    apiFetch<{ suggestions: PlayerSuggestion[] }>('/api/suggestions/mine'),
+
+  redeemPromoCode: (code: string) =>
+    apiFetch<{
+      code: string;
+      rewardType: PromoRewardType;
+      rewardSkinId: SkinId | null;
+      rewardAmount: number;
+      rewardSummary: string;
+      walletStats: PlayerWalletStats;
+      totalCoins: number;
+      unlockedSkins: SkinId[];
+      allowedExclusiveSkins: SkinId[];
+    }>('/api/promo-codes/redeem', {
+      method: 'POST',
+      body: JSON.stringify({ code }),
+    }),
+
+  getMyCustomCharacter: () =>
+    apiFetch<{ config: CustomCharacterConfig; unlocked: boolean }>('/api/custom-character'),
+
+  saveMyCustomCharacter: (config: CustomCharacterConfig) =>
+    apiFetch<{ config: CustomCharacterConfig }>('/api/custom-character', {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    }),
 
   markGiftsSeen: () => apiFetch<{ ok: boolean }>('/api/gifts/seen', { method: 'POST' }),
 
@@ -268,6 +341,84 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
+
+  adminUnlockKingSkin: () =>
+    apiFetch<{ alreadyUnlocked: boolean; allowedExclusiveSkins: SkinId[] }>(
+      '/api/admin/unlock-king-skin',
+      { method: 'POST' }
+    ),
+
+  adminListSuggestions: (params?: { search?: string; type?: string; status?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.search) qs.set('search', params.search);
+    if (params?.type && params.type !== 'all') qs.set('type', params.type);
+    if (params?.status && params.status !== 'all') qs.set('status', params.status);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return apiFetch<{ suggestions: PlayerSuggestion[] }>(`/api/admin/suggestions${suffix}`);
+  },
+
+  adminUpdateSuggestion: (
+    id: string,
+    payload: { status: SuggestionStatus; adminNote?: string | null }
+  ) =>
+    apiFetch<{ suggestion: PlayerSuggestion }>(`/api/admin/suggestions/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  adminDeleteSuggestion: (id: string) =>
+    apiFetch<{ ok: boolean }>(`/api/admin/suggestions/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  adminListPromoCodes: () =>
+    apiFetch<{ promoCodes: PromoCodeRecord[] }>('/api/admin/promo-codes'),
+
+  adminCreatePromoCode: (payload: {
+    code: string;
+    description: string;
+    rewardType: PromoRewardType;
+    rewardSkinId?: SkinId | null;
+    rewardAmount?: number;
+    rewardMetadata?: Record<string, unknown>;
+    maxUses?: number | null;
+    isInfinite: boolean;
+    active: boolean;
+    expiresAt?: string | null;
+  }) =>
+    apiFetch<{ promo: PromoCodeRecord }>('/api/admin/promo-codes', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  adminUpdatePromoCode: (
+    id: string,
+    payload: {
+      description?: string;
+      rewardType?: PromoRewardType;
+      rewardSkinId?: SkinId | null;
+      rewardAmount?: number;
+      rewardMetadata?: Record<string, unknown>;
+      maxUses?: number | null;
+      isInfinite?: boolean;
+      active?: boolean;
+      expiresAt?: string | null;
+    }
+  ) =>
+    apiFetch<{ promo: PromoCodeRecord }>(`/api/admin/promo-codes/${encodeURIComponent(id)}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+
+  adminDeletePromoCode: (id: string) =>
+    apiFetch<{ ok: boolean }>(`/api/admin/promo-codes/${encodeURIComponent(id)}`, {
+      method: 'DELETE',
+    }),
+
+  adminListPromoRedemptions: (id: string) =>
+    apiFetch<{ redemptions: PromoCodeRedemptionRecord[] }>(
+      `/api/admin/promo-codes/${encodeURIComponent(id)}/redemptions`
+    ),
 
   multiplayer: {
     overview: () =>
@@ -346,6 +497,14 @@ export const api = {
         posX: number;
         posY: number;
         posZ: number;
+        vx?: number;
+        vy?: number;
+        vz?: number;
+        speed?: number;
+        yaw?: number;
+        seq?: number;
+        clientTs?: number;
+        pingMs?: number;
         lane: number;
         animState: ParticipantAnimState;
         distance: number;
@@ -366,6 +525,7 @@ export const api = {
         room: MultiplayerRoom;
         participants: MultiplayerParticipant[];
         serverNow: number;
+        echoClientTs?: number;
       }>(`/api/multiplayer/rooms/${encodeURIComponent(roomId)}/sync`, {
         method: 'POST',
         body: JSON.stringify(payload),

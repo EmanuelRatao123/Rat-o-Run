@@ -3,13 +3,23 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { NextFunction, Request, Response } from 'express';
-import { COMMON_SKIN_IDS, PlayerCompetitiveStats, SkinId, UserProfile } from '../shared/constants.ts';
+import {
+  COMMON_SKIN_IDS,
+  CustomCharacterConfig,
+  DEFAULT_CUSTOM_CHARACTER_CONFIG,
+  PlayerCompetitiveStats,
+  PlayerWalletStats,
+  SkinId,
+  UserProfile,
+  isSpecialUnlockableSkinId,
+} from '../shared/constants.ts';
 import {
   SlidingRateLimiter,
   generateToken,
   hashPassword,
   verifyPassword,
 } from './crypto.ts';
+import { repoGetCustomCharacterConfig } from './featureRepository.ts';
 import {
   ensureDbAndAdminReady,
   repoComputePlayerRank,
@@ -22,6 +32,7 @@ import {
   repoGetAllowedExclusiveSkinsForUser,
   repoGetCompetitiveStatsForUser,
   repoGetValidSessionUser,
+  repoGetWalletStatsForUser,
   repoHasAdminAccount,
   repoRecordAdminLog,
   repoUpdateUserLastSeen,
@@ -100,7 +111,9 @@ export function sanitizeUserProfile(
   user: StoredUser,
   rank: number | null = null,
   allowedExclusiveSkins: SkinId[] = [],
-  competitiveStats?: PlayerCompetitiveStats
+  competitiveStats?: PlayerCompetitiveStats,
+  walletStats?: PlayerWalletStats,
+  customCharacterConfig?: CustomCharacterConfig
 ): UserProfile {
   return {
     id: user.id,
@@ -108,20 +121,29 @@ export function sanitizeUserProfile(
     role: user.role,
     mustChangePassword: user.mustChangePassword,
     equippedSkin: user.equippedSkin,
-    unlockedSkins: user.unlockedSkins.filter((s) => (COMMON_SKIN_IDS as string[]).includes(s)),
-    giftedSkins: user.giftedSkins.filter((s) => (COMMON_SKIN_IDS as string[]).includes(s)),
+    unlockedSkins: user.unlockedSkins.filter(
+      (s) =>
+        (COMMON_SKIN_IDS as string[]).includes(s) ||
+        isSpecialUnlockableSkinId(s) ||
+        allowedExclusiveSkins.includes(s)
+    ),
+    giftedSkins: user.giftedSkins.filter(
+      (s) => (COMMON_SKIN_IDS as string[]).includes(s) || isSpecialUnlockableSkinId(s)
+    ),
     allowedExclusiveSkins,
     bestNoCoinTimeMs: user.bestNoCoinTimeMs,
     bestDistance: user.bestDistance,
     bestScore: user.bestScore,
     totalMatches: user.totalMatches,
-    totalCoins: user.totalCoins,
+    totalCoins: walletStats ? walletStats.totalCoinsCollected : user.totalCoins,
     favoriteSkin: user.favoriteSkin,
     skinUsage: user.skinUsage,
     createdAt: user.createdAt,
     lastSeenAt: user.lastSeenAt,
     rank,
     competitiveStats,
+    walletStats,
+    customCharacterConfig,
   };
 }
 
@@ -335,15 +357,30 @@ export async function registerHandler(req: Request, res: Response): Promise<void
   setSessionCookie(res, sessionToken);
 
   res.status(201).json({
-    user: sanitizeUserProfile(newUser, null, [], {
-      userId: id,
-      x1Wins: 0,
-      x1Losses: 0,
-      x1Draws: 0,
-      coopMatches: 0,
-      coopWins: 0,
-      lastMatchAt: null,
-    }),
+    user: sanitizeUserProfile(
+      newUser,
+      null,
+      [],
+      {
+        userId: id,
+        x1Wins: 0,
+        x1Losses: 0,
+        x1Draws: 0,
+        coopMatches: 0,
+        coopWins: 0,
+        lastMatchAt: null,
+      },
+      {
+        userId: id,
+        totalCoinsCollected: 0,
+        soloCoinsCollected: 0,
+        multiplayerCoinsCollected: 0,
+        promoCoinsCollected: 0,
+        spentCoins: 0,
+        updatedAt: now,
+      },
+      { ...DEFAULT_CUSTOM_CHARACTER_CONFIG }
+    ),
     sessionToken,
   });
 }
@@ -399,13 +436,15 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   const sessionToken = await createSessionForUser(user.id, user.role === 'admin' ? 'admin' : 'player');
   setSessionCookie(res, sessionToken);
 
-  const [rank, allowedExcl, compStats] = await Promise.all([
+  const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
     repoComputePlayerRank(user.id),
     repoGetAllowedExclusiveSkinsForUser(user),
     repoGetCompetitiveStatsForUser(user.id),
+    repoGetWalletStatsForUser(user.id),
+    repoGetCustomCharacterConfig(user.id),
   ]);
   res.json({
-    user: sanitizeUserProfile(user, rank, allowedExcl, compStats),
+    user: sanitizeUserProfile(user, rank, allowedExcl, compStats, walletStats, customCfg),
     sessionToken,
   });
 }
@@ -469,22 +508,24 @@ export async function secretAdminLoginHandler(req: Request, res: Response): Prom
     `Sessão administrativa iniciada com sucesso (IP ${ip})`
   );
 
+  const allowedExcl = await repoGetAllowedExclusiveSkinsForUser(admin);
   res.json({
-    admin: sanitizeUserProfile(admin, null),
+    admin: sanitizeUserProfile(admin, null, allowedExcl),
     adminSessionToken,
     requiresPasswordChange: admin.mustChangePassword,
     expiresAt: Date.now() + ADMIN_SESSION_TTL_MS,
   });
 }
 
-export function adminSessionStatusHandler(req: AuthedRequest, res: Response): void {
+export async function adminSessionStatusHandler(req: AuthedRequest, res: Response): Promise<void> {
   const adm = req.adminUser;
   if (!adm || adm.role !== 'admin') {
     res.status(401).json({ error: 'Sessão administrativa inativa ou expirada.' });
     return;
   }
+  const allowedExcl = await repoGetAllowedExclusiveSkinsForUser(adm);
   res.json({
-    admin: sanitizeUserProfile(adm, null),
+    admin: sanitizeUserProfile(adm, null, allowedExcl),
     requiresPasswordChange: adm.mustChangePassword,
   });
 }
@@ -624,13 +665,15 @@ export async function meHandler(req: AuthedRequest, res: Response): Promise<void
     res.status(401).json({ error: 'Não autenticado.' });
     return;
   }
-  const [rank, allowedExcl, compStats] = await Promise.all([
+  const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
     repoComputePlayerRank(req.authUser.id),
     repoGetAllowedExclusiveSkinsForUser(req.authUser),
     repoGetCompetitiveStatsForUser(req.authUser.id),
+    repoGetWalletStatsForUser(req.authUser.id),
+    repoGetCustomCharacterConfig(req.authUser.id),
   ]);
   res.json({
-    user: sanitizeUserProfile(req.authUser, rank, allowedExcl, compStats),
+    user: sanitizeUserProfile(req.authUser, rank, allowedExcl, compStats, walletStats, customCfg),
   });
 }
 
@@ -706,7 +749,7 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
   );
 
   res.status(201).json({
-    user: sanitizeUserProfile(adminUser, null, ['ratao_rei']),
+    user: sanitizeUserProfile(adminUser, null, []),
     sessionToken: adminSessionToken,
     adminSessionToken,
   });
@@ -873,13 +916,15 @@ export async function googleAuthHandler(req: Request, res: Response): Promise<vo
     const sessionToken = await createSessionForUser(user.id, 'player');
     setSessionCookie(res, sessionToken);
 
-    const [rank, allowedExcl, compStats] = await Promise.all([
+    const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
       repoComputePlayerRank(user.id),
       repoGetAllowedExclusiveSkinsForUser(user),
       repoGetCompetitiveStatsForUser(user.id),
+      repoGetWalletStatsForUser(user.id),
+      repoGetCustomCharacterConfig(user.id),
     ]);
     res.json({
-      user: sanitizeUserProfile(user, rank, allowedExcl, compStats),
+      user: sanitizeUserProfile(user, rank, allowedExcl, compStats, walletStats, customCfg),
       sessionToken,
     });
   } catch (err) {

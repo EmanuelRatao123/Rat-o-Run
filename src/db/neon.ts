@@ -1,10 +1,11 @@
-import { neon } from '@neondatabase/serverless';
+import { Pool, neon } from '@neondatabase/serverless';
 import { drizzle, NeonHttpDatabase } from 'drizzle-orm/neon-http';
 import * as schema from './schema.ts';
 
 declare global {
   var _rataoNeonDb: NeonHttpDatabase<typeof schema> | undefined;
   var _rataoNeonSql: ReturnType<typeof neon> | undefined;
+  var _rataoNeonPool: Pool | undefined;
   var _rataoNeonInitPromise: Promise<void> | undefined;
 }
 
@@ -25,6 +26,17 @@ export function getNeonDb(): NeonHttpDatabase<typeof schema> {
     global._rataoNeonDb = drizzle(global._rataoNeonSql, { schema });
   }
   return global._rataoNeonDb;
+}
+
+export function getNeonPool(): Pool {
+  const url = process.env.DATABASE_URL?.trim();
+  if (!url) {
+    throw new Error('DATABASE_URL is not configured.');
+  }
+  if (!global._rataoNeonPool) {
+    global._rataoNeonPool = new Pool({ connectionString: url });
+  }
+  return global._rataoNeonPool;
 }
 
 export async function ensureNeonSchema(): Promise<void> {
@@ -77,6 +89,7 @@ export async function ensureNeonSchema(): Promise<void> {
         CREATE TABLE IF NOT EXISTS active_matches (
           match_id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          mode TEXT NOT NULL DEFAULT 'no_coin',
           map_id TEXT NOT NULL,
           skin_id TEXT NOT NULL,
           started_at BIGINT NOT NULL,
@@ -84,6 +97,7 @@ export async function ensureNeonSchema(): Promise<void> {
           completed BOOLEAN NOT NULL DEFAULT FALSE
         )
       `;
+      await sql`ALTER TABLE active_matches ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'no_coin'`;
       await sql`CREATE INDEX IF NOT EXISTS active_matches_started_idx ON active_matches (started_at)`;
 
       await sql`
@@ -91,6 +105,7 @@ export async function ensureNeonSchema(): Promise<void> {
           id TEXT PRIMARY KEY,
           user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
           nickname TEXT NOT NULL,
+          mode TEXT NOT NULL DEFAULT 'no_coin',
           skin_id TEXT NOT NULL,
           map_id TEXT NOT NULL,
           no_coin_time_ms INTEGER NOT NULL,
@@ -102,7 +117,9 @@ export async function ensureNeonSchema(): Promise<void> {
           created_at TEXT NOT NULL
         )
       `;
+      await sql`ALTER TABLE matches ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'no_coin'`;
       await sql`CREATE INDEX IF NOT EXISTS matches_user_best_idx ON matches (user_id, no_coin_time_ms DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS matches_user_mode_best_idx ON matches (user_id, mode, no_coin_time_ms DESC)`;
 
       await sql`
         CREATE TABLE IF NOT EXISTS global_messages (
@@ -208,6 +225,14 @@ export async function ensureNeonSchema(): Promise<void> {
           pos_x DOUBLE PRECISION NOT NULL DEFAULT 0,
           pos_y DOUBLE PRECISION NOT NULL DEFAULT 0,
           pos_z DOUBLE PRECISION NOT NULL DEFAULT 0,
+          vx DOUBLE PRECISION NOT NULL DEFAULT 0,
+          vy DOUBLE PRECISION NOT NULL DEFAULT 0,
+          vz DOUBLE PRECISION NOT NULL DEFAULT 0,
+          speed DOUBLE PRECISION NOT NULL DEFAULT 0,
+          yaw DOUBLE PRECISION NOT NULL DEFAULT 0,
+          seq INTEGER NOT NULL DEFAULT 0,
+          client_ts BIGINT NOT NULL DEFAULT 0,
+          ping_ms INTEGER NOT NULL DEFAULT 0,
           lane INTEGER NOT NULL DEFAULT 0,
           anim_state TEXT NOT NULL DEFAULT 'idle',
           distance INTEGER NOT NULL DEFAULT 0,
@@ -224,6 +249,14 @@ export async function ensureNeonSchema(): Promise<void> {
           updated_at TEXT NOT NULL
         )
       `;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS vx DOUBLE PRECISION NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS vy DOUBLE PRECISION NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS vz DOUBLE PRECISION NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS speed DOUBLE PRECISION NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS yaw DOUBLE PRECISION NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS seq INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS client_ts BIGINT NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE multiplayer_participants ADD COLUMN IF NOT EXISTS ping_ms INTEGER NOT NULL DEFAULT 0`;
       await sql`CREATE UNIQUE INDEX IF NOT EXISTS mp_participants_room_user_uidx ON multiplayer_participants (room_id, user_id)`;
       await sql`CREATE INDEX IF NOT EXISTS mp_participants_room_idx ON multiplayer_participants (room_id)`;
 
@@ -338,6 +371,123 @@ export async function ensureNeonSchema(): Promise<void> {
       `;
       await sql`CREATE INDEX IF NOT EXISTS excl_perm_user_active_idx ON exclusive_skin_permissions (user_id, active)`;
       await sql`CREATE INDEX IF NOT EXISTS excl_perm_skin_active_idx ON exclusive_skin_permissions (skin_id, active)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS player_suggestions (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          author_nickname TEXT NOT NULL,
+          type TEXT NOT NULL,
+          title TEXT NOT NULL,
+          description TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'received',
+          admin_note TEXT,
+          reviewed_by TEXT,
+          reviewed_at TEXT,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS suggestions_user_idx ON player_suggestions (user_id, created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS suggestions_status_idx ON player_suggestions (status, type)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS promo_codes (
+          id TEXT PRIMARY KEY,
+          code TEXT NOT NULL UNIQUE,
+          description TEXT NOT NULL DEFAULT '',
+          reward_type TEXT NOT NULL,
+          reward_skin_id TEXT,
+          reward_amount INTEGER NOT NULL DEFAULT 0,
+          reward_metadata JSONB NOT NULL DEFAULT '{}'::jsonb,
+          max_uses INTEGER,
+          is_infinite BOOLEAN NOT NULL DEFAULT FALSE,
+          used_count INTEGER NOT NULL DEFAULT 0,
+          active BOOLEAN NOT NULL DEFAULT TRUE,
+          expires_at TEXT,
+          created_by TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS promo_codes_active_idx ON promo_codes (active)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS promo_code_redemptions (
+          id TEXT PRIMARY KEY,
+          promo_code_id TEXT NOT NULL REFERENCES promo_codes(id) ON DELETE CASCADE,
+          code TEXT NOT NULL,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          nickname TEXT NOT NULL,
+          reward_type TEXT NOT NULL,
+          reward_summary TEXT NOT NULL,
+          redeemed_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS promo_redemptions_code_user_uidx ON promo_code_redemptions (promo_code_id, user_id)`;
+      await sql`CREATE INDEX IF NOT EXISTS promo_redemptions_code_idx ON promo_code_redemptions (promo_code_id, redeemed_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS player_wallet_stats (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          total_coins_collected INTEGER NOT NULL DEFAULT 0,
+          solo_coins_collected INTEGER NOT NULL DEFAULT 0,
+          multiplayer_coins_collected INTEGER NOT NULL DEFAULT 0,
+          promo_coins_collected INTEGER NOT NULL DEFAULT 0,
+          spent_coins INTEGER NOT NULL DEFAULT 0,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS wallet_coins_rank_idx ON player_wallet_stats (total_coins_collected DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS coin_ledger_events (
+          id TEXT PRIMARY KEY,
+          event_key TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          source_type TEXT NOT NULL,
+          amount INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS coin_ledger_user_idx ON coin_ledger_events (user_id, created_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS custom_character_configs (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          config_json JSONB NOT NULL,
+          version INTEGER NOT NULL DEFAULT 1,
+          updated_at TEXT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS custom_character_textures (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          region TEXT NOT NULL,
+          storage_url TEXT NOT NULL,
+          data_base64 TEXT NOT NULL,
+          content_type TEXT NOT NULL DEFAULT 'image/png',
+          byte_size INTEGER NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS custom_tex_user_region_uidx ON custom_character_textures (user_id, region)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS notification_history (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL,
+          title TEXT NOT NULL,
+          message TEXT NOT NULL,
+          seen BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS notif_user_seen_idx ON notification_history (user_id, seen, created_at DESC)`;
     })().catch((err) => {
       global._rataoNeonInitPromise = undefined;
       throw err;
