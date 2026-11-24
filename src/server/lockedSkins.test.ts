@@ -62,8 +62,21 @@ async function runTests() {
       'sonic',
       'tung_tung_sahur',
       'cristiano_ronaldo',
+      'enderman',
+      'deadpool',
+      'mario',
+      'luigi',
+      'gigachad',
+      'quandale_dingle',
+      'doge',
+      'ronaldinho_gaucho',
+      'vini_jr',
+      'rato_cosmico',
+      'bob_esponja',
+      'patrick',
+      'lula_molusco',
     ];
-    assert.equal(LOCKED_EXCLUSIVE_SKINS.length, 16, 'Deve haver exatamente 16 skins exclusivas bloqueadas');
+    assert.equal(LOCKED_EXCLUSIVE_SKINS.length, 29, 'Deve haver exatamente 29 skins exclusivas bloqueadas');
     for (const id of expectedIds) {
       assert.ok(LOCKED_EXCLUSIVE_SKIN_IDS.includes(id as SkinId & (typeof LOCKED_EXCLUSIVE_SKIN_IDS)[number]));
       assert.ok(!(COMMON_SKIN_IDS as string[]).includes(id), `${id} não pode ser comum`);

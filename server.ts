@@ -29,10 +29,13 @@ import {
   adminGiftSkinHandler,
   adminGrantAllSkinsHandler,
   adminGrantExclusiveSkinHandler,
+  adminGrantSecretSkinHandler,
   adminListExclusiveSkinOwnersHandler,
+  adminListSecretSkinOwnersHandler,
   adminListSkinGrantHistoryHandler,
   adminRevokeBulkSkinsHandler,
   adminRevokeExclusiveSkinHandler,
+  adminRevokeSecretSkinHandler,
   adminSearchPlayersHandler,
   adminStatsHandler,
   equipSkinHandler,
@@ -44,6 +47,23 @@ import {
   startMatchHandler,
   votePollHandler,
 } from './src/server/gameApi.ts';
+import {
+  buySkateHandler,
+  consumeMatchSkateHandler,
+  equipSkateHandler,
+  getCapeConfigHandler,
+  getFriendMessagesHandler,
+  getFriendsOverviewHandler,
+  getLiveModeConfigHandler,
+  getShopStateHandler,
+  removeFriendHandler,
+  respondFriendRequestHandler,
+  searchFriendsPlayersHandler,
+  sendFriendMessageHandler,
+  sendFriendRequestHandler,
+  updateCapeConfigHandler,
+  updateLiveModeConfigHandler,
+} from './src/server/socialShopApi.ts';
 import {
   adminCreatePromoCodeHandler,
   adminDeletePromoCodeHandler,
@@ -150,6 +170,27 @@ app.put('/api/custom-character', requireAuth, wrap(saveMyCustomCharacterHandler)
 app.get('/api/custom-character/textures/:textureId', wrap(getCustomTextureHandler));
 app.get('/api/custom-character/user/:userId', wrap(getUserCustomCharacterPublicHandler));
 
+// Friends & Private Chat routes
+app.get('/api/friends/search', requireAuth, wrap(searchFriendsPlayersHandler));
+app.get('/api/friends', requireAuth, wrap(getFriendsOverviewHandler));
+app.post('/api/friends/request', requireAuth, wrap(sendFriendRequestHandler));
+app.post('/api/friends/request/:friendshipId/respond', requireAuth, wrap(respondFriendRequestHandler));
+app.delete('/api/friends/:friendshipId', requireAuth, wrap(removeFriendHandler));
+app.get('/api/friends/messages/:friendUserId', requireAuth, wrap(getFriendMessagesHandler));
+app.post('/api/friends/messages/:friendUserId', requireAuth, wrap(sendFriendMessageHandler));
+
+// Capes & Live Mode routes
+app.get('/api/capes', requireAuth, wrap(getCapeConfigHandler));
+app.put('/api/capes', requireAuth, wrap(updateCapeConfigHandler));
+app.get('/api/live-mode', requireAuth, wrap(getLiveModeConfigHandler));
+app.put('/api/live-mode', requireAuth, wrap(updateLiveModeConfigHandler));
+
+// Shop, Skates & In-Match Skate Consumption routes
+app.get('/api/shop', requireAuth, wrap(getShopStateHandler));
+app.post('/api/shop/buy', requireAuth, wrap(buySkateHandler));
+app.post('/api/shop/equip', requireAuth, wrap(equipSkateHandler));
+app.post('/api/match/skate/use', requireAuth, wrap(consumeMatchSkateHandler));
+
 // Protected Admin Panel routes
 app.get('/api/admin/stats', requireAdmin, wrap(adminStatsHandler));
 app.get('/api/admin/players', requireAdmin, wrap(adminSearchPlayersHandler));
@@ -169,6 +210,9 @@ app.post(
   requireAdmin,
   wrap(adminRevokeExclusiveSkinHandler)
 );
+app.get('/api/admin/skins/secret', requireAdmin, wrap(adminListSecretSkinOwnersHandler));
+app.post('/api/admin/skins/secret/grant', requireAdmin, wrap(adminGrantSecretSkinHandler));
+app.post('/api/admin/skins/secret/revoke', requireAdmin, wrap(adminRevokeSecretSkinHandler));
 app.get('/api/admin/skins/player-summary', requireAdmin, wrap(adminGetPlayerSkinsSummaryHandler));
 app.post('/api/admin/skins/grant-all', requireAdmin, wrap(adminGrantAllSkinsHandler));
 app.post('/api/admin/skins/revoke-bulk', requireAdmin, wrap(adminRevokeBulkSkinsHandler));

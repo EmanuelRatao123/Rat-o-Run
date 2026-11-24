@@ -6,19 +6,25 @@ import {
   COMMON_SKIN_IDS,
   CustomCharacterConfig,
   ExclusiveSkinPermissionRecord,
+  FriendPrivateMessage,
   GlobalMessage,
   MapId,
+  MatchSummary,
   MultiplayerInvite,
   MultiplayerMatchRecord,
   MultiplayerParticipant,
   MultiplayerRoom,
   PaintRegion,
+  PlayerCapeConfig,
   PlayerCompetitiveStats,
+  PlayerLiveModeConfig,
   PlayerNotificationItem,
+  PlayerSkateInventoryItem,
   PlayerSuggestion,
   PlayerWalletStats,
   PromoCodeRecord,
   PromoCodeRedemptionRecord,
+  SkateId,
   SkinGiftItem,
   SkinGrantHistoryRecord,
   SkinId,
@@ -37,11 +43,16 @@ export interface StoredUser {
   role: 'player' | 'admin';
   mustChangePassword: boolean;
   equippedSkin: SkinId;
+  equippedSkateId?: SkateId | null;
   unlockedSkins: SkinId[];
   giftedSkins: SkinId[];
   bestNoCoinTimeMs: number;
   bestDistance: number;
   bestScore: number;
+  bestSingleMatchCoins?: number;
+  bestSingleMatchCoinsAt?: string | null;
+  bestSingleMatchCoinsSkin?: SkinId | null;
+  bestSingleMatchCoinsMap?: MapId | null;
   totalMatches: number;
   totalCoins: number;
   favoriteSkin: SkinId;
@@ -67,6 +78,7 @@ export interface ActiveMatchToken {
   startedAt: number;
   signature: string;
   completed: boolean;
+  summaryJson?: MatchSummary | null;
 }
 
 export interface StoredMatch {
@@ -133,6 +145,51 @@ export interface StoredCustomTexture {
   updatedAt: string;
 }
 
+export interface StoredFriendship {
+  id: string;
+  userLowId: string;
+  userHighId: string;
+  requestedByUserId: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+  createdAt: string;
+  updatedAt: string;
+  acceptedAt: string | null;
+}
+
+export interface StoredShopTransaction {
+  id: string;
+  userId: string;
+  itemType: string;
+  itemId: string;
+  quantity: number;
+  unitPrice: number;
+  totalCost: number;
+  balanceBefore: number;
+  balanceAfter: number;
+  createdAt: string;
+}
+
+export interface StoredMatchSkateUse {
+  id: string;
+  eventKey: string;
+  userId: string;
+  matchId: string;
+  skateId: SkateId;
+  mode: string;
+  createdAt: string;
+}
+
+export interface StoredMatchDiagnosticLog {
+  id: string;
+  userId: string;
+  matchId: string;
+  mode: SoloGameMode;
+  stage: string;
+  status: string;
+  detail: string;
+  createdAt: string;
+}
+
 export interface DatabaseState {
   users: Record<string, StoredUser>;
   sessions: Record<string, StoredSession>;
@@ -164,6 +221,14 @@ export interface DatabaseState {
   customCharacterTextures: StoredCustomTexture[];
   notificationHistory: PlayerNotificationItem[];
   skinGrantHistory: SkinGrantHistoryRecord[];
+  matchDiagnosticLogs: StoredMatchDiagnosticLog[];
+  friendships: StoredFriendship[];
+  friendMessages: FriendPrivateMessage[];
+  playerCapes: Record<string, PlayerCapeConfig>;
+  playerLiveModeConfigs: Record<string, PlayerLiveModeConfig>;
+  playerSkateInventory: Record<string, PlayerSkateInventoryItem[]>;
+  shopTransactions: StoredShopTransaction[];
+  matchSkateUses: StoredMatchSkateUse[];
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -203,6 +268,14 @@ function createInitialState(): DatabaseState {
     customCharacterTextures: [],
     notificationHistory: [],
     skinGrantHistory: [],
+    matchDiagnosticLogs: [],
+    friendships: [],
+    friendMessages: [],
+    playerCapes: {},
+    playerLiveModeConfigs: {},
+    playerSkateInventory: {},
+    shopTransactions: [],
+    matchSkateUses: [],
   };
 }
 

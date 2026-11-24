@@ -6,6 +6,9 @@ import {
   AdminStats,
   CoinsLeaderboardEntry,
   CustomCharacterConfig,
+  FriendPrivateMessage,
+  FriendSearchResult,
+  FriendsOverviewPayload,
   GlobalMessage,
   LeaderboardCategory,
   LeaderboardEntry,
@@ -17,8 +20,11 @@ import {
   MultiplayerParticipant,
   MultiplayerRoom,
   ParticipantAnimState,
+  PlayerCapeConfig,
   PlayerCompetitiveStats,
+  PlayerLiveModeConfig,
   PlayerNotificationItem,
+  PlayerSkateInventoryItem,
   PlayerSuggestion,
   PlayerWalletStats,
   PollItem,
@@ -26,6 +32,8 @@ import {
   PromoCodeRedemptionRecord,
   PromoRewardType,
   PublicPlayerLookup,
+  SkateDefinition,
+  SkateId,
   SkinGiftItem,
   SkinGrantHistoryRecord,
   SkinId,
@@ -198,7 +206,7 @@ export const api = {
     durationMs: number;
     endReason?: 'police' | 'coin';
   }) =>
-    apiFetch<{ summary: MatchSummary }>('/api/match/finish', {
+    apiFetch<{ summary: MatchSummary; idempotent?: boolean }>('/api/match/finish', {
       method: 'POST',
       body: JSON.stringify(payload),
     }),
@@ -294,6 +302,117 @@ export const api = {
       body: JSON.stringify({ config }),
     }),
 
+  // Capes, Live Mode, Shop & Skates
+  getCapeConfig: () => apiFetch<{ config: PlayerCapeConfig }>('/api/capes'),
+
+  saveCapeConfig: (config: Partial<PlayerCapeConfig>) =>
+    apiFetch<{ config: PlayerCapeConfig }>('/api/capes', {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    }),
+
+  getLiveModeConfig: () => apiFetch<{ config: PlayerLiveModeConfig }>('/api/live-mode'),
+
+  saveLiveModeConfig: (config: Partial<PlayerLiveModeConfig>) =>
+    apiFetch<{ config: PlayerLiveModeConfig }>('/api/live-mode', {
+      method: 'PUT',
+      body: JSON.stringify({ config }),
+    }),
+
+  getShopState: () =>
+    apiFetch<{
+      catalog: SkateDefinition[];
+      availableCoins: number;
+      totalCoinsCollected: number;
+      spentCoins: number;
+      equippedSkateId: SkateId | null;
+      inventory: PlayerSkateInventoryItem[];
+    }>('/api/shop'),
+
+  buySkate: (skateId: SkateId, quantity = 1) =>
+    apiFetch<{
+      status: 'ok';
+      availableCoins: number;
+      spentCoins: number;
+      equippedSkateId: SkateId | null;
+      inventory: PlayerSkateInventoryItem[];
+      purchased: PlayerSkateInventoryItem;
+    }>('/api/shop/buy', {
+      method: 'POST',
+      body: JSON.stringify({ skateId, quantity }),
+    }),
+
+  equipSkate: (skateId: SkateId | null) =>
+    apiFetch<{ equippedSkateId: SkateId | null }>('/api/shop/equip', {
+      method: 'POST',
+      body: JSON.stringify({ skateId }),
+    }),
+
+  consumeMatchSkate: (payload: {
+    matchId: string;
+    skateId: SkateId;
+    mode: string;
+    eventKey: string;
+  }) =>
+    apiFetch<{
+      consumed: true;
+      alreadyRecorded: boolean;
+      remainingCharges: number;
+      skateId: SkateId;
+    }>('/api/match/skate/use', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  // Friends & Private Chat
+  friends: {
+    search: (q: string) =>
+      apiFetch<{ players: FriendSearchResult[] }>(
+        `/api/friends/search?q=${encodeURIComponent(q)}`
+      ),
+
+    overview: () => apiFetch<FriendsOverviewPayload>('/api/friends'),
+
+    sendRequest: (payload: { targetUserId?: string; targetNickname?: string }) =>
+      apiFetch<{
+        ok: boolean;
+        status: string;
+        friendshipId: string;
+        targetNickname: string;
+      }>('/api/friends/request', {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }),
+
+    respondRequest: (friendshipId: string, action: 'accept' | 'decline' | 'cancel') =>
+      apiFetch<{ ok: boolean }>(
+        `/api/friends/request/${encodeURIComponent(friendshipId)}/respond`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ action }),
+        }
+      ),
+
+    removeFriend: (friendshipId: string) =>
+      apiFetch<{ ok: boolean }>(`/api/friends/${encodeURIComponent(friendshipId)}`, {
+        method: 'DELETE',
+      }),
+
+    getMessages: (friendUserId: string, limit = 60) =>
+      apiFetch<{ friendshipId: string; messages: FriendPrivateMessage[] }>(
+        `/api/friends/messages/${encodeURIComponent(friendUserId)}?limit=${limit}`
+      ),
+
+    sendMessage: (friendUserId: string, content: string) =>
+      apiFetch<{ message: FriendPrivateMessage }>(
+        `/api/friends/messages/${encodeURIComponent(friendUserId)}`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ content }),
+        }
+      ),
+  },
+
   markGiftsSeen: () => apiFetch<{ ok: boolean }>('/api/gifts/seen', { method: 'POST' }),
 
   votePoll: (pollId: string, optionIndex: number) =>
@@ -367,6 +486,26 @@ export const api = {
   adminRevokeExclusiveSkin: (payload: { userId: string; skinId: SkinId }) =>
     apiFetch<{ ok: boolean; targetNickname: string; resetEquipped: boolean }>(
       '/api/admin/exclusive-skins/revoke',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
+    ),
+
+  adminListSecretSkinOwners: (skinId: SkinId = 'plankton') =>
+    apiFetch<{ owners: AdminExclusiveSkinOwner[] }>(
+      `/api/admin/skins/secret?skinId=${encodeURIComponent(skinId)}`
+    ),
+
+  adminGrantSecretSkin: (payload: { nickname?: string; skinId?: SkinId }) =>
+    apiFetch<{ owner: AdminExclusiveSkinOwner }>('/api/admin/skins/secret/grant', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  adminRevokeSecretSkin: (payload: { userId: string; skinId?: SkinId }) =>
+    apiFetch<{ ok: boolean; targetNickname: string; resetEquipped: boolean }>(
+      '/api/admin/skins/secret/revoke',
       {
         method: 'POST',
         body: JSON.stringify(payload),

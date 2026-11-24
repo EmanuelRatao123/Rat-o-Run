@@ -1,7 +1,20 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
-import { CustomCharacterConfig, GraphicsQuality, MapId, SkinId } from '../shared/constants.ts';
-import { CharacterAnimState, animateCharacterRig, createCharacterRig } from '../game/characters.ts';
+import {
+  CustomCharacterConfig,
+  GraphicsQuality,
+  MapId,
+  PlayerCapeConfig,
+  SkateId,
+  SkinId,
+} from '../shared/constants.ts';
+import {
+  CharacterAnimState,
+  animateCharacterRig,
+  applyCustomCapeToRig,
+  applyEquippedSkateToRig,
+  createCharacterRig,
+} from '../game/characters.ts';
 import { MAP_THEMES, MapSceneryBuilder } from '../game/maps.ts';
 import { createStudioRenderer, scheduleSoftwareFrame } from '../game/rendererSetup.ts';
 
@@ -9,6 +22,9 @@ interface ScenePreview3DProps {
   skinId: SkinId;
   mapId: MapId;
   customConfig?: CustomCharacterConfig;
+  capeConfig?: PlayerCapeConfig | null;
+  skateId?: SkateId | null;
+  skateActive?: boolean;
   animState?: CharacterAnimState;
   quality?: GraphicsQuality;
   mode?: 'showcase' | 'turntable' | 'scenic';
@@ -20,6 +36,9 @@ export function ScenePreview3D({
   skinId,
   mapId,
   customConfig,
+  capeConfig,
+  skateId,
+  skateActive = false,
   animState,
   quality = 'medium',
   mode = 'showcase',
@@ -30,6 +49,11 @@ export function ScenePreview3D({
   const skinRef = useRef<SkinId>(skinId);
   const mapRef = useRef<MapId>(mapId);
   const customRef = useRef<CustomCharacterConfig | undefined>(customConfig);
+  const capeRef = useRef<PlayerCapeConfig | null | undefined>(capeConfig);
+  const skateRef = useRef<{ id?: SkateId | null; active: boolean }>({
+    id: skateId,
+    active: skateActive,
+  });
   const animRef = useRef<CharacterAnimState | undefined>(animState);
 
   useEffect(() => {
@@ -72,6 +96,8 @@ export function ScenePreview3D({
       ctx.renderer.shadowMap.enabled,
       customRef.current
     );
+    applyCustomCapeToRig(charRig, capeRef.current);
+    applyEquippedSkateToRig(charRig, skateRef.current.id, skateRef.current.active);
 
     const applyMap = (mId: MapId) => {
       if (chunkGroup) {
@@ -209,12 +235,16 @@ export function ScenePreview3D({
       scene.remove(charRig.root);
       charRig.dispose();
       charRig = createCharacterRig(nextSkin, ctx.renderer.shadowMap.enabled, nextCfg);
+      applyCustomCapeToRig(charRig, capeRef.current);
+      applyEquippedSkateToRig(charRig, skateRef.current.id, skateRef.current.active);
       if (mode !== 'scenic') scene.add(charRig.root);
     };
 
     (
       container as unknown as {
         _updateCharacter?: (s: SkinId, c?: CustomCharacterConfig) => void;
+        _updateCape?: (cape?: PlayerCapeConfig | null) => void;
+        _updateSkate?: (id?: SkateId | null, active?: boolean) => void;
         _updateMap?: (m: MapId) => void;
       }
     )._updateCharacter = (nextSkin: SkinId, nextCfg?: CustomCharacterConfig) => {
@@ -222,6 +252,24 @@ export function ScenePreview3D({
       const sameCfg = nextSkin !== 'meu_ratao' || customRef.current === nextCfg;
       if (sameSkin && sameCfg) return;
       rebuildRig(nextSkin, nextCfg);
+    };
+
+    (
+      container as unknown as {
+        _updateCape?: (cape?: PlayerCapeConfig | null) => void;
+      }
+    )._updateCape = (nextCape?: PlayerCapeConfig | null) => {
+      capeRef.current = nextCape;
+      applyCustomCapeToRig(charRig, nextCape);
+    };
+
+    (
+      container as unknown as {
+        _updateSkate?: (id?: SkateId | null, active?: boolean) => void;
+      }
+    )._updateSkate = (id?: SkateId | null, active = false) => {
+      skateRef.current = { id, active };
+      applyEquippedSkateToRig(charRig, id, active);
     };
 
     (container as unknown as { _updateMap?: (m: MapId) => void })._updateMap = (nextMap: MapId) => {
@@ -263,6 +311,20 @@ export function ScenePreview3D({
     const el = mountRef.current as unknown as { _updateMap?: (m: MapId) => void } | null;
     if (el?._updateMap) el._updateMap(mapId);
   }, [mapId]);
+
+  useEffect(() => {
+    const el = mountRef.current as unknown as {
+      _updateCape?: (c?: PlayerCapeConfig | null) => void;
+    } | null;
+    if (el?._updateCape) el._updateCape(capeConfig);
+  }, [capeConfig]);
+
+  useEffect(() => {
+    const el = mountRef.current as unknown as {
+      _updateSkate?: (id?: SkateId | null, active?: boolean) => void;
+    } | null;
+    if (el?._updateSkate) el._updateSkate(skateId, skateActive);
+  }, [skateId, skateActive]);
 
   return <div ref={mountRef} className={`w-full h-full ${className}`} />;
 }

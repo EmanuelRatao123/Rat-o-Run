@@ -30,10 +30,12 @@ import {
   repoCanUserEquipSkin,
   repoComputePlayerRank,
   repoCreditWalletCoins,
+  repoFindUserById,
   repoFindUserByNickname,
   repoGetCompetitiveStatsForUser,
   repoGetRecentX1ResultsForUser,
 } from './repository.ts';
+import { repoGetPlayerCapeConfig } from './socialShopRepository.ts';
 import { StoredUser, getDb as getLocalDb, saveDb as saveLocalDb } from './store.ts';
 
 export const COUNTDOWN_DURATION_MS = 3400;
@@ -1068,9 +1070,17 @@ async function hydrateParticipantCustomConfigs(
 ): Promise<MultiplayerParticipant[]> {
   return Promise.all(
     list.map(async (p) => {
-      if (p.skinId !== 'meu_ratao') return p;
-      const customConfig = await repoGetCustomCharacterConfig(p.userId);
-      return { ...p, customConfig };
+      const [customConfig, capeConfig, participantUser] = await Promise.all([
+        p.skinId === 'meu_ratao' ? repoGetCustomCharacterConfig(p.userId) : Promise.resolve(undefined),
+        repoGetPlayerCapeConfig(p.userId),
+        repoFindUserById(p.userId),
+      ]);
+      return {
+        ...p,
+        ...(customConfig ? { customConfig } : {}),
+        capeConfig: capeConfig.equippedCapeId !== 'none' ? capeConfig : undefined,
+        equippedSkateId: participantUser?.equippedSkateId ?? null,
+      };
     })
   );
 }

@@ -34,13 +34,29 @@ export type LockedExclusiveSkinId =
   | 'freddy_fazbear'
   | 'sonic'
   | 'tung_tung_sahur'
-  | 'cristiano_ronaldo';
+  | 'cristiano_ronaldo'
+  | 'enderman'
+  | 'deadpool'
+  | 'mario'
+  | 'luigi'
+  | 'gigachad'
+  | 'quandale_dingle'
+  | 'doge'
+  | 'ronaldinho_gaucho'
+  | 'vini_jr'
+  | 'rato_cosmico'
+  | 'bob_esponja'
+  | 'patrick'
+  | 'lula_molusco';
+
+export type SecretExclusiveSkinId = 'plankton';
 
 export type SkinId =
   | CommonSkinId
   | ExclusiveSkinId
   | SpecialUnlockableSkinId
-  | LockedExclusiveSkinId;
+  | LockedExclusiveSkinId
+  | SecretExclusiveSkinId;
 
 export type MapId = 'brasil' | 'tokyo' | 'futebol' | 'capivara';
 
@@ -393,13 +409,175 @@ export const LOCKED_EXCLUSIVE_SKINS: SkinDefinition[] = [
     exclusiveRule: 'unlockable',
     unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
   },
+  {
+    id: 'enderman',
+    name: 'Enderman',
+    subtitle: 'Criatura alta e sombria de blocos com olhos roxos brilhantes e partículas',
+    primaryColor: '#09090b',
+    accentColor: '#c026d3',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'deadpool',
+    name: 'Deadpool',
+    subtitle: 'Mercenário vermelho e preto com olhos expressivos e katanas nas costas',
+    primaryColor: '#dc2626',
+    accentColor: '#09090b',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'mario',
+    name: 'Mario',
+    subtitle: 'Encanador clássico de boné vermelho M, macacão azul e bigode marcante',
+    primaryColor: '#dc2626',
+    accentColor: '#2563eb',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'luigi',
+    name: 'Luigi',
+    subtitle: 'Herói esguio de boné verde L, macacão azul e luvas brancas',
+    primaryColor: '#16a34a',
+    accentColor: '#1d4ed8',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'gigachad',
+    name: 'Gigachad',
+    subtitle: 'Visual monocromático definido com maxilar quadrado e presença lendária',
+    primaryColor: '#64748b',
+    accentColor: '#0f172a',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'quandale_dingle',
+    name: 'Quandale Dingle',
+    subtitle: 'Personagem voxel estilizado e bem-humorado com expressão carismática',
+    primaryColor: '#7c2d12',
+    accentColor: '#38bdf8',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'doge',
+    name: 'Doge',
+    subtitle: 'Shiba Inu dourado com orelhas pontudas, focinho fofo e expressão meme',
+    primaryColor: '#d97706',
+    accentColor: '#fef3c7',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'ronaldinho_gaucho',
+    name: 'Ronaldinho Gaúcho',
+    subtitle: 'Bruxo dos dribles com cabelos longos, faixa, sorriso e camisa #10',
+    primaryColor: '#facc15',
+    accentColor: '#16a34a',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'vini_jr',
+    name: 'Vini Jr.',
+    subtitle: 'Atacante veloz #7 de camisa branca e detalhes dourados com chuteiras modernas',
+    primaryColor: '#f8fafc',
+    accentColor: '#eab308',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'rato_cosmico',
+    name: 'Rato Cósmico',
+    subtitle: 'Rato espacial com armadura roxa neon, visor brilhante e aura de estrelas',
+    primaryColor: '#7e22ce',
+    accentColor: '#22d3ee',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'bob_esponja',
+    name: 'Bob Esponja',
+    subtitle: 'Esponja amarela quadrada com camisa branca, gravata vermelha e calça marrom',
+    primaryColor: '#facc15',
+    accentColor: '#dc2626',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'patrick',
+    name: 'Patrick Estrela',
+    subtitle: 'Estrela-do-mar rosa da Fenda do Biquíni com bermuda verde e flores roxas',
+    primaryColor: '#fb7185',
+    accentColor: '#4ade80',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'lula_molusco',
+    name: 'Lula Molusco',
+    subtitle: 'Lula azul-turquesa de expressão séria com camisa marrom clássica e clarinete',
+    primaryColor: '#5eead4',
+    accentColor: '#92400e',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
 ];
 
-export const ALL_SKINS: SkinDefinition[] = [
+export const SECRET_EXCLUSIVE_SKINS: SkinDefinition[] = [
+  {
+    id: 'plankton',
+    name: 'Plankton',
+    subtitle: 'Skin secreta do pequeno gênio verde com antena dupla e olho único brilhante',
+    primaryColor: '#15803d',
+    accentColor: '#ef4444',
+    badgeText: 'SECRETA ADMIN',
+    isExclusive: true,
+    exclusiveRule: 'admin',
+    unlockConditionText: 'Skin secreta exclusiva liberada apenas pelo Administrador',
+  },
+];
+
+export const PUBLIC_CATALOG_SKINS: SkinDefinition[] = [
   ...SKINS,
   ...EXCLUSIVE_SKINS,
   ...SPECIAL_UNLOCKABLE_SKINS,
   ...LOCKED_EXCLUSIVE_SKINS,
+];
+
+export const ALL_SKINS: SkinDefinition[] = [
+  ...PUBLIC_CATALOG_SKINS,
+  ...SECRET_EXCLUSIVE_SKINS,
 ];
 export const COMMON_SKIN_IDS: CommonSkinId[] = SKINS.map((s) => s.id as CommonSkinId);
 export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map(
@@ -411,7 +589,13 @@ export const SPECIAL_UNLOCKABLE_SKIN_IDS: SpecialUnlockableSkinId[] = SPECIAL_UN
 export const LOCKED_EXCLUSIVE_SKIN_IDS: LockedExclusiveSkinId[] = LOCKED_EXCLUSIVE_SKINS.map(
   (s) => s.id as LockedExclusiveSkinId
 );
-export const RESTRICTED_NON_BULK_SKIN_IDS: ExclusiveSkinId[] = [...EXCLUSIVE_SKIN_IDS];
+export const SECRET_EXCLUSIVE_SKIN_IDS: SecretExclusiveSkinId[] = SECRET_EXCLUSIVE_SKINS.map(
+  (s) => s.id as SecretExclusiveSkinId
+);
+export const RESTRICTED_NON_BULK_SKIN_IDS: (ExclusiveSkinId | SecretExclusiveSkinId)[] = [
+  ...EXCLUSIVE_SKIN_IDS,
+  ...SECRET_EXCLUSIVE_SKIN_IDS,
+];
 export const BULK_GRANTABLE_RESTRICTED_SKIN_IDS: (
   | SpecialUnlockableSkinId
   | LockedExclusiveSkinId
@@ -436,6 +620,10 @@ export function isSpecialUnlockableSkinId(val: unknown): val is SpecialUnlockabl
 
 export function isLockedExclusiveSkinId(val: unknown): val is LockedExclusiveSkinId {
   return typeof val === 'string' && (LOCKED_EXCLUSIVE_SKIN_IDS as string[]).includes(val);
+}
+
+export function isSecretExclusiveSkinId(val: unknown): val is SecretExclusiveSkinId {
+  return typeof val === 'string' && (SECRET_EXCLUSIVE_SKIN_IDS as string[]).includes(val);
 }
 
 export function isGiftableSkinId(
@@ -709,8 +897,10 @@ export interface UserProfile {
   bestNoCoinTimeMs: number;
   bestDistance: number;
   bestScore: number;
+  bestSingleMatchCoins?: number;
   totalMatches: number;
   totalCoins: number;
+  availableCoins?: number;
   favoriteSkin: SkinId;
   skinUsage: Record<string, number>;
   createdAt: string;
@@ -719,6 +909,12 @@ export interface UserProfile {
   competitiveStats?: PlayerCompetitiveStats;
   walletStats?: PlayerWalletStats;
   customCharacterConfig?: CustomCharacterConfig;
+  capeConfig?: PlayerCapeConfig;
+  liveModeConfig?: PlayerLiveModeConfig;
+  skateInventory?: PlayerSkateInventoryItem[];
+  equippedSkateId?: SkateId | null;
+  unreadFriendsMessagesCount?: number;
+  pendingFriendRequestsCount?: number;
 }
 
 export interface LeaderboardEntry {
@@ -737,6 +933,9 @@ export interface CoinsLeaderboardEntry {
   userId: string;
   nickname: string;
   skinId: SkinId;
+  mapId: MapId;
+  bestMatchCoins: number;
+  achievedAt: string;
   totalCoinsCollected: number;
   totalMatches: number;
 }
@@ -946,6 +1145,8 @@ export interface MultiplayerParticipant {
   hoverboard: boolean;
   jetpack: boolean;
   customConfig?: CustomCharacterConfig;
+  capeConfig?: PlayerCapeConfig;
+  equippedSkateId?: SkateId | null;
   updatedAt: string;
 }
 
@@ -1014,9 +1215,14 @@ export interface MultiplayerMatchRecord {
 export interface ExclusiveSkinPermissionRecord {
   id: string;
   userId: string;
-  skinId: ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId;
+  skinId:
+    | ExclusiveSkinId
+    | SpecialUnlockableSkinId
+    | LockedExclusiveSkinId
+    | SecretExclusiveSkinId;
   reason:
     | 'admin'
+    | 'admin_secret'
     | 'top1'
     | 'top2'
     | 'top3'
@@ -1029,6 +1235,272 @@ export interface ExclusiveSkinPermissionRecord {
   grantedAt: string;
   revokedAt: string | null;
   updatedAt: string;
+}
+
+// --- Capes System ---
+
+export type CapeId = 'none' | 'capa_personalizavel' | 'capa_camisa_10';
+export type CapeBackgroundStyle = 'solid' | 'striped' | 'gradient' | 'checkered' | 'stars';
+
+export interface CapeDefinition {
+  id: Exclude<CapeId, 'none'>;
+  name: string;
+  subtitle: string;
+  badge: string;
+  defaultPrimaryColor: string;
+  defaultSecondaryColor: string;
+  defaultTextColor: string;
+}
+
+export const CAPES_CATALOG: CapeDefinition[] = [
+  {
+    id: 'capa_personalizavel',
+    name: 'CAPA PERSONALIZÁVEL',
+    subtitle: 'Escreva qualquer palavra curta nas costas e personalize cores e estampa 3D.',
+    badge: 'GRÁTIS',
+    defaultPrimaryColor: '#e11d48',
+    defaultSecondaryColor: '#0f172a',
+    defaultTextColor: '#ffffff',
+  },
+  {
+    id: 'capa_camisa_10',
+    name: 'CAPA CAMISA 10',
+    subtitle: 'Exiba o lendário número #10 com seu nome ou apelido personalizado nas costas.',
+    badge: 'GRÁTIS',
+    defaultPrimaryColor: '#facc15',
+    defaultSecondaryColor: '#16a34a',
+    defaultTextColor: '#0f172a',
+  },
+];
+
+export interface PlayerCapeConfig {
+  equippedCapeId: CapeId;
+  customText: string;
+  shirt10Name: string;
+  primaryColor: string;
+  secondaryColor: string;
+  textColor: string;
+  backgroundStyle: CapeBackgroundStyle;
+  updatedAt: string;
+}
+
+export const DEFAULT_PLAYER_CAPE_CONFIG: PlayerCapeConfig = {
+  equippedCapeId: 'none',
+  customText: 'RATÃO',
+  shirt10Name: 'CRAQUE',
+  primaryColor: '#e11d48',
+  secondaryColor: '#0f172a',
+  textColor: '#ffffff',
+  backgroundStyle: 'gradient',
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
+// --- Live Mode Overlay ---
+
+export type LiveOverlayPosition =
+  | 'top_left'
+  | 'top_center'
+  | 'top_right'
+  | 'center_left'
+  | 'center_right'
+  | 'bottom_left'
+  | 'bottom_center'
+  | 'bottom_right';
+
+export type LiveOverlayFontFamily = 'display' | 'sans' | 'mono';
+
+export interface LiveOverlayText {
+  id: string;
+  text: string;
+  color: string;
+  fontSize: number;
+  position: LiveOverlayPosition;
+  fontFamily: LiveOverlayFontFamily;
+  shadow: boolean;
+  durationSec: number;
+  enabled: boolean;
+}
+
+export interface PlayerLiveModeConfig {
+  enabled: boolean;
+  texts: LiveOverlayText[];
+  updatedAt: string;
+}
+
+export const DEFAULT_LIVE_MODE_CONFIG: PlayerLiveModeConfig = {
+  enabled: false,
+  texts: [
+    {
+      id: 'live_default_1',
+      text: 'AO VIVO NO RATÃO RUN 3D!',
+      color: '#facc15',
+      fontSize: 22,
+      position: 'top_center',
+      fontFamily: 'display',
+      shadow: true,
+      durationSec: 6,
+      enabled: true,
+    },
+  ],
+  updatedAt: '2026-01-01T00:00:00.000Z',
+};
+
+// --- Shop & Skates System ---
+
+export type SkateId =
+  | 'skate_classico'
+  | 'skate_fogo'
+  | 'skate_eletrico'
+  | 'skate_galactico'
+  | 'skate_dourado'
+  | 'skate_camuflado';
+
+export interface SkateDefinition {
+  id: SkateId;
+  name: string;
+  description: string;
+  price: number;
+  primaryColor: string;
+  accentColor: string;
+  wheelColor: string;
+  effectColor: string;
+  badge: string;
+}
+
+export const SKATES_CATALOG: SkateDefinition[] = [
+  {
+    id: 'skate_classico',
+    name: 'Skate Clássico',
+    description: 'Prancha de rua resistente que absorve 1 batida fatal na corrida.',
+    price: 120,
+    primaryColor: '#e11d48',
+    accentColor: '#f8fafc',
+    wheelColor: '#facc15',
+    effectColor: '#fb7185',
+    badge: 'URBANO',
+  },
+  {
+    id: 'skate_fogo',
+    name: 'Skate Fogo',
+    description: 'Shape flamejante com rastros incandescentes e proteção contra colisão.',
+    price: 250,
+    primaryColor: '#dc2626',
+    accentColor: '#f97316',
+    wheelColor: '#fef08a',
+    effectColor: '#fb923c',
+    badge: 'INFERNO',
+  },
+  {
+    id: 'skate_eletrico',
+    name: 'Skate Elétrico',
+    description: 'Neon azul de alta voltagem para absorver impactos e manter o ritmo.',
+    price: 380,
+    primaryColor: '#0284c7',
+    accentColor: '#22d3ee',
+    wheelColor: '#a5f3fc',
+    effectColor: '#38bdf8',
+    badge: 'NEON',
+  },
+  {
+    id: 'skate_camuflado',
+    name: 'Skate Camuflado',
+    description: 'Design tático florestal reforçado para trilhas intensas.',
+    price: 480,
+    primaryColor: '#3f6212',
+    accentColor: '#a3e635',
+    wheelColor: '#1e293b',
+    effectColor: '#84cc16',
+    badge: 'TÁTICO',
+  },
+  {
+    id: 'skate_galactico',
+    name: 'Skate Galáctico',
+    description: 'Shape cósmico roxo-estelar com energia espacial protetora.',
+    price: 650,
+    primaryColor: '#6d28d9',
+    accentColor: '#e879f9',
+    wheelColor: '#38bdf8',
+    effectColor: '#c084fc',
+    badge: 'CÓSMICO',
+  },
+  {
+    id: 'skate_dourado',
+    name: 'Skate Dourado',
+    description: 'Edição de luxo em ouro maciço com brilho real e proteção suprema.',
+    price: 900,
+    primaryColor: '#eab308',
+    accentColor: '#fef08a',
+    wheelColor: '#ffffff',
+    effectColor: '#facc15',
+    badge: 'LENDÁRIO',
+  },
+];
+
+export const SKATE_IDS: SkateId[] = SKATES_CATALOG.map((s) => s.id);
+
+export function isValidSkateId(val: unknown): val is SkateId {
+  return typeof val === 'string' && (SKATE_IDS as string[]).includes(val);
+}
+
+export function getSkateDefinition(skateId: SkateId): SkateDefinition {
+  return SKATES_CATALOG.find((s) => s.id === skateId) || SKATES_CATALOG[0];
+}
+
+export interface PlayerSkateInventoryItem {
+  skateId: SkateId;
+  charges: number;
+  unlockedAt: string;
+  updatedAt: string;
+}
+
+// --- Friends & Private Chat System ---
+
+export type PlayerOnlineStatus = 'online' | 'in_match' | 'offline';
+
+export interface FriendEntry {
+  friendshipId: string;
+  userId: string;
+  nickname: string;
+  equippedSkin: SkinId;
+  status: PlayerOnlineStatus;
+  unreadCount: number;
+  lastSeenAt: string;
+  since: string;
+}
+
+export interface FriendRequestEntry {
+  id: string;
+  userId: string;
+  nickname: string;
+  equippedSkin: SkinId;
+  direction: 'incoming' | 'outgoing';
+  createdAt: string;
+}
+
+export interface FriendPrivateMessage {
+  id: string;
+  friendshipId: string;
+  senderUserId: string;
+  receiverUserId: string;
+  content: string;
+  read: boolean;
+  createdAt: string;
+}
+
+export interface FriendSearchResult {
+  id: string;
+  nickname: string;
+  equippedSkin: SkinId;
+  status: PlayerOnlineStatus;
+  relation: 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
+}
+
+export interface FriendsOverviewPayload {
+  friends: FriendEntry[];
+  incomingRequests: FriendRequestEntry[];
+  outgoingRequests: FriendRequestEntry[];
+  totalUnreadMessages: number;
+  pendingRequestsCount: number;
 }
 
 export interface PublicPlayerLookup {

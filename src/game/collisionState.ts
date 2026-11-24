@@ -169,4 +169,11 @@ export class CollisionStateController {
       nextSpeedState: this.speedState,
     };
   }
+
+  public forceRecoverWithLock(lockSec = 1.15): void {
+    this.speedState = 'normal';
+    this.slowRemainingSec = 0;
+    this.stumbleRemainingSec = 0;
+    this.collisionLockSec = Math.max(this.collisionLockSec, lockSec);
+  }
 }

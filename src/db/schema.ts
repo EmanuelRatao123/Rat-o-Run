@@ -14,11 +14,16 @@ import type {
   ExclusiveSkinId,
   LockedExclusiveSkinId,
   MapId,
+  MatchSummary,
   MultiplayerMode,
   PaintRegion,
   ParticipantAnimState,
+  PlayerCapeConfig,
+  PlayerLiveModeConfig,
   PromoRewardType,
   RoomStatus,
+  SecretExclusiveSkinId,
+  SkateId,
   SkinId,
   SoloGameMode,
   SpecialUnlockableSkinId,
@@ -38,11 +43,16 @@ export const users = pgTable(
     role: text('role').$type<'player' | 'admin'>().notNull().default('player'),
     mustChangePassword: boolean('must_change_password').notNull().default(false),
     equippedSkin: text('equipped_skin').$type<SkinId>().notNull().default('ratao'),
+    equippedSkateId: text('equipped_skate_id').$type<SkateId | null>(),
     unlockedSkins: jsonb('unlocked_skins').$type<SkinId[]>().notNull(),
     giftedSkins: jsonb('gifted_skins').$type<SkinId[]>().notNull(),
     bestNoCoinTimeMs: integer('best_no_coin_time_ms').notNull().default(0),
     bestDistance: integer('best_distance').notNull().default(0),
     bestScore: integer('best_score').notNull().default(0),
+    bestSingleMatchCoins: integer('best_single_match_coins').notNull().default(0),
+    bestSingleMatchCoinsAt: text('best_single_match_coins_at'),
+    bestSingleMatchCoinsSkin: text('best_single_match_coins_skin').$type<SkinId | null>(),
+    bestSingleMatchCoinsMap: text('best_single_match_coins_map').$type<MapId | null>(),
     totalMatches: integer('total_matches').notNull().default(0),
     totalCoins: integer('total_coins').notNull().default(0),
     favoriteSkin: text('favorite_skin').$type<SkinId>().notNull().default('ratao'),
@@ -52,6 +62,7 @@ export const users = pgTable(
   },
   (table) => [
     index('users_rank_idx').on(table.bestNoCoinTimeMs, table.bestDistance),
+    index('users_best_coins_rank_idx').on(table.bestSingleMatchCoins, table.bestDistance),
   ]
 );
 
@@ -82,6 +93,7 @@ export const activeMatches = pgTable(
     startedAt: bigint('started_at', { mode: 'number' }).notNull(),
     signature: text('signature').notNull(),
     completed: boolean('completed').notNull().default(false),
+    summaryJson: jsonb('summary_json').$type<MatchSummary | null>(),
   },
   (table) => [index('active_matches_started_idx').on(table.startedAt)]
 );
@@ -383,11 +395,14 @@ export const exclusiveSkinPermissions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     skinId: text('skin_id')
-      .$type<ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId>()
+      .$type<
+        ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId | SecretExclusiveSkinId
+      >()
       .notNull(),
     reason: text('reason')
       .$type<
         | 'admin'
+        | 'admin_secret'
         | 'top1'
         | 'top2'
         | 'top3'
@@ -572,4 +587,142 @@ export const skinGrantHistory = pgTable(
     index('skin_grant_hist_created_idx').on(table.createdAt),
     index('skin_grant_hist_target_idx').on(table.targetUserId, table.createdAt),
   ]
+);
+
+export const matchDiagnosticLogs = pgTable(
+  'match_diagnostic_logs',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id').notNull(),
+    matchId: text('match_id').notNull(),
+    mode: text('mode').$type<SoloGameMode>().notNull(),
+    stage: text('stage').notNull(),
+    status: text('status').notNull(),
+    detail: text('detail').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('match_diag_user_idx').on(table.userId, table.createdAt),
+    index('match_diag_match_idx').on(table.matchId),
+  ]
+);
+
+export const friendships = pgTable(
+  'friendships',
+  {
+    id: text('id').primaryKey(),
+    userLowId: text('user_low_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    userHighId: text('user_high_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    requestedByUserId: text('requested_by_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    status: text('status')
+      .$type<'pending' | 'accepted' | 'declined' | 'cancelled'>()
+      .notNull()
+      .default('pending'),
+    createdAt: text('created_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+    acceptedAt: text('accepted_at'),
+  },
+  (table) => [
+    uniqueIndex('friendships_pair_uidx').on(table.userLowId, table.userHighId),
+    index('friendships_low_status_idx').on(table.userLowId, table.status),
+    index('friendships_high_status_idx').on(table.userHighId, table.status),
+  ]
+);
+
+export const friendMessages = pgTable(
+  'friend_messages',
+  {
+    id: text('id').primaryKey(),
+    friendshipId: text('friendship_id')
+      .notNull()
+      .references(() => friendships.id, { onDelete: 'cascade' }),
+    senderUserId: text('sender_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    receiverUserId: text('receiver_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    read: boolean('read').notNull().default(false),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('friend_msg_ship_created_idx').on(table.friendshipId, table.createdAt),
+    index('friend_msg_recv_read_idx').on(table.receiverUserId, table.read),
+  ]
+);
+
+export const playerCapes = pgTable('player_capes', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  configJson: jsonb('config_json').$type<PlayerCapeConfig>().notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const playerLiveModeConfigs = pgTable('player_live_mode_configs', {
+  userId: text('user_id')
+    .primaryKey()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  configJson: jsonb('config_json').$type<PlayerLiveModeConfig>().notNull(),
+  updatedAt: text('updated_at').notNull(),
+});
+
+export const playerSkateInventory = pgTable(
+  'player_skate_inventory',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    skateId: text('skate_id').$type<SkateId>().notNull(),
+    charges: integer('charges').notNull().default(0),
+    unlockedAt: text('unlocked_at').notNull(),
+    updatedAt: text('updated_at').notNull(),
+  },
+  (table) => [
+    uniqueIndex('skate_inv_user_skate_uidx').on(table.userId, table.skateId),
+    index('skate_inv_user_idx').on(table.userId),
+  ]
+);
+
+export const shopTransactions = pgTable(
+  'shop_transactions',
+  {
+    id: text('id').primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    itemType: text('item_type').notNull(),
+    itemId: text('item_id').notNull(),
+    quantity: integer('quantity').notNull().default(1),
+    unitPrice: integer('unit_price').notNull(),
+    totalCost: integer('total_cost').notNull(),
+    balanceBefore: integer('balance_before').notNull(),
+    balanceAfter: integer('balance_after').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('shop_tx_user_idx').on(table.userId, table.createdAt)]
+);
+
+export const matchSkateUses = pgTable(
+  'match_skate_uses',
+  {
+    id: text('id').primaryKey(),
+    eventKey: text('event_key').notNull().unique(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    matchId: text('match_id').notNull(),
+    skateId: text('skate_id').$type<SkateId>().notNull(),
+    mode: text('mode').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [index('match_skate_uses_user_idx').on(table.userId, table.createdAt)]
 );

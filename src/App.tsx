@@ -12,7 +12,10 @@ import {
   Minimize2,
   Monitor,
   Play,
+  Radio,
   ShieldAlert,
+  Shirt,
+  ShoppingBag,
   Sliders,
   Smartphone,
   Sparkles,
@@ -27,10 +30,13 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AdminPortalModal } from './components/AdminPortalModal.tsx';
 import { AuthScreen } from './components/AuthScreen.tsx';
+import { CapesModal } from './components/CapesModal.tsx';
 import { CharacterCustomizerModal } from './components/CharacterCustomizerModal.tsx';
+import { FriendsChatModal } from './components/FriendsChatModal.tsx';
 import { GameView, MultiplayerSessionConfig } from './components/GameView.tsx';
 import { GlobalBroadcastOverlay } from './components/GlobalBroadcastOverlay.tsx';
 import { LeaderboardModal } from './components/LeaderboardModal.tsx';
+import { LiveModeModal } from './components/LiveModeModal.tsx';
 import { LivePollOverlay } from './components/LivePollOverlay.tsx';
 import { MapsModal } from './components/MapsModal.tsx';
 import { MultiplayerModal } from './components/MultiplayerModal.tsx';
@@ -38,11 +44,13 @@ import { ProfileModal } from './components/ProfileModal.tsx';
 import { PromoCodeModal } from './components/PromoCodeModal.tsx';
 import { RataoLogo } from './components/RataoLogo.tsx';
 import { ScenePreview3D } from './components/ScenePreview3D.tsx';
+import { ShopModal } from './components/ShopModal.tsx';
 import { SkinsModal } from './components/SkinsModal.tsx';
 import { SuggestionsModal } from './components/SuggestionsModal.tsx';
 import { gameAudio } from './game/audio.ts';
 import { useFullscreen, useMobileMode } from './hooks/useDeviceDisplay.ts';
 import { api, setMemorySessionToken } from './services/api.ts';
+import { flushPendingMatchFinishes } from './services/pendingMatches.ts';
 import {
   GlobalMessage,
   GraphicsQuality,
@@ -70,6 +78,10 @@ type ActiveModal =
   | 'play'
   | 'skins'
   | 'customizer'
+  | 'capes'
+  | 'shop'
+  | 'friends'
+  | 'live_mode'
   | 'maps'
   | 'ranking'
   | 'promo'
@@ -94,6 +106,14 @@ export default function App() {
   const [activeMpSession, setActiveMpSession] = useState<MultiplayerSessionConfig | null>(null);
   const [pendingInvites, setPendingInvites] = useState<MultiplayerInvite[]>([]);
   const [inviteBusy, setInviteBusy] = useState(false);
+  const [pendingDirectInvite, setPendingDirectInvite] = useState<{
+    targetNickname: string;
+    mode: MultiplayerMode;
+  } | null>(null);
+  const [friendBadges, setFriendBadges] = useState<{
+    unreadMessages: number;
+    pendingRequests: number;
+  }>({ unreadMessages: 0, pendingRequests: 0 });
 
   const [inspectNickname, setInspectNickname] = useState<string | undefined>(undefined);
   const [dockCollapsed, setDockCollapsed] = useState(false);
@@ -155,8 +175,20 @@ export default function App() {
     let cancelled = false;
     api
       .me()
-      .then((res) => {
-        if (!cancelled) setUser(res.user);
+      .then(async (res) => {
+        if (cancelled) return;
+        setUser(res.user);
+        setFriendBadges({
+          unreadMessages: res.user.unreadFriendsMessagesCount ?? 0,
+          pendingRequests: res.user.pendingFriendRequestsCount ?? 0,
+        });
+        const flushed = await flushPendingMatchFinishes();
+        if (!cancelled && flushed > 0) {
+          const updated = await api.me().catch(() => null);
+          if (!cancelled && updated) {
+            setUser(updated.user);
+          }
+        }
       })
       .catch(() => {
         if (!cancelled) setUser(null);
@@ -168,6 +200,14 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    if (!user) return;
+    setFriendBadges({
+      unreadMessages: user.unreadFriendsMessagesCount ?? 0,
+      pendingRequests: user.pendingFriendRequestsCount ?? 0,
+    });
+  }, [user?.unreadFriendsMessagesCount, user?.pendingFriendRequestsCount, user]);
 
   // Secret triggers: double F8 (<= 1000ms), Ctrl+Shift+A, or #admin hash
   useEffect(() => {
@@ -237,13 +277,26 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [user, refreshSocialFeed]);
 
-  // Live polling every 3 seconds for multiplayer invites & active room reconnect
+  // Live polling every 3.5 seconds for multiplayer invites, active room & friend alerts
   useEffect(() => {
     if (!user || playing) return;
     void refreshMultiplayerOverview();
+    const refreshFriendCounts = () => {
+      void api.friends
+        .overview()
+        .then((ov) => {
+          setFriendBadges({
+            unreadMessages: ov.totalUnreadMessages,
+            pendingRequests: ov.pendingRequestsCount,
+          });
+        })
+        .catch(() => {});
+    };
+    refreshFriendCounts();
     const timer = window.setInterval(() => {
       void refreshMultiplayerOverview();
-    }, 3000);
+      refreshFriendCounts();
+    }, 3500);
     return () => window.clearInterval(timer);
   }, [user, playing, refreshMultiplayerOverview]);
 
@@ -331,6 +384,11 @@ export default function App() {
   const accumulatedCoins = user
     ? user.walletStats?.totalCoinsCollected ?? user.totalCoins
     : 0;
+  const availableShopCoins = user
+    ? user.availableCoins ??
+      Math.max(0, accumulatedCoins - (user.walletStats?.spentCoins ?? 0))
+    : 0;
+  const friendBadgeTotal = friendBadges.unreadMessages + friendBadges.pendingRequests;
   const meuRataoUnlocked = user
     ? user.unlockedSkins.includes('meu_ratao') ||
       Boolean(user.allowedExclusiveSkins?.includes('meu_ratao'))
@@ -344,6 +402,9 @@ export default function App() {
           onToggleFullscreen={toggleFullscreen}
           onAuthenticated={(u) => {
             setUser(u);
+            void flushPendingMatchFinishes().then((n) => {
+              if (n > 0) void refreshUser();
+            });
           }}
         />
       ) : playing ? (
@@ -364,13 +425,18 @@ export default function App() {
             void toggleFullscreen();
           }}
           multiplayerSession={activeMpSession}
+          onUserPatch={(patch) =>
+            setUser((prev) => (prev ? { ...prev, ...patch } : prev))
+          }
           onExitToMenu={() => {
             setPlaying(false);
             setActiveMpSession(null);
             setMpLobbyRoom(null);
-            void refreshUser();
-            void refreshSocialFeed();
-            void refreshMultiplayerOverview();
+            void flushPendingMatchFinishes().finally(() => {
+              void refreshUser();
+              void refreshSocialFeed();
+              void refreshMultiplayerOverview();
+            });
           }}
         />
       ) : (
@@ -383,6 +449,8 @@ export default function App() {
               quality={quality}
               mode="showcase"
               customConfig={user.customCharacterConfig}
+              capeConfig={user.capeConfig}
+              skateId={user.equippedSkateId}
             />
           </div>
 
@@ -474,6 +542,41 @@ export default function App() {
                   type="button"
                   onClick={() => {
                     gameAudio.playUiClick();
+                    setActiveModal('friends');
+                  }}
+                  title="Amigos e Chat Privado"
+                  className="relative min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:border-sky-400 hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold"
+                >
+                  <Users className="w-4 h-4 text-sky-400" />
+                  <span className="hidden md:inline whitespace-nowrap">AMIGOS</span>
+                  {friendBadgeTotal > 0 && (
+                    <span className="px-1.5 py-0.5 rounded-full bg-rose-500 text-white text-[10px] font-mono-num font-extrabold leading-none">
+                      {friendBadgeTotal}
+                    </span>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.playUiClick();
+                    setActiveModal('live_mode');
+                  }}
+                  title="Configurações · Modo Live"
+                  className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold transition ${
+                    user.liveModeConfig?.enabled
+                      ? 'bg-rose-600/25 border-rose-400 text-rose-200'
+                      : 'bg-slate-950/90 border-slate-700 text-slate-200 hover:bg-slate-800'
+                  }`}
+                >
+                  <Radio className="w-4 h-4 text-rose-400" />
+                  <span className="hidden lg:inline whitespace-nowrap">MODO LIVE</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    gameAudio.playUiClick();
                     setInspectNickname(user.nickname);
                     setActiveModal('profile');
                   }}
@@ -536,7 +639,7 @@ export default function App() {
                   <button
                     type="button"
                     onClick={() => setShowQualityMenu((v) => !v)}
-                    title="Qualidade gráfica"
+                    title="Configurações"
                     className="min-w-[44px] min-h-[44px] px-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold"
                   >
                     <Sliders className="w-4 h-4 text-sky-400" />
@@ -545,7 +648,10 @@ export default function App() {
                     </span>
                   </button>
                   {showQualityMenu && (
-                    <div className="absolute right-0 mt-1.5 w-36 bg-slate-900 border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30">
+                    <div className="absolute right-0 mt-1.5 w-44 bg-slate-900 border border-slate-700 rounded-xl p-1.5 shadow-2xl z-30 space-y-1">
+                      <div className="px-2 py-1 text-[10px] font-extrabold uppercase text-slate-400">
+                        Qualidade Gráfica
+                      </div>
                       {(
                         [
                           { id: 'low', label: 'Baixo (Leve)' },
@@ -569,6 +675,17 @@ export default function App() {
                           {q.label}
                         </button>
                       ))}
+                      <div className="h-px bg-slate-800 my-1" />
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setShowQualityMenu(false);
+                          setActiveModal('live_mode');
+                        }}
+                        className="w-full text-left px-3 py-2 rounded-lg text-xs font-bold text-rose-300 hover:bg-slate-800 flex items-center gap-1.5 cursor-pointer"
+                      >
+                        <Radio className="w-3.5 h-3.5" /> Modo Live (Overlay)
+                      </button>
                     </div>
                   )}
                 </div>
@@ -617,14 +734,14 @@ export default function App() {
                       <Play className="w-5 h-5 fill-current" /> JOGAR
                     </button>
 
-                    <div className="grid grid-cols-4 gap-1.5">
+                    <div className="grid grid-cols-3 gap-1.5">
                       <button
                         type="button"
                         onClick={() => {
                           gameAudio.playUiClick();
                           setActiveModal('skins');
                         }}
-                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
                       >
                         <Sparkles className="w-4 h-4 text-amber-400" />
                         <span>SKINS</span>
@@ -634,9 +751,33 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           gameAudio.playUiClick();
+                          setActiveModal('capes');
+                        }}
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <Shirt className="w-4 h-4 text-rose-400" />
+                        <span>CAPAS</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
+                          setActiveModal('shop');
+                        }}
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/50 text-amber-200 font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                      >
+                        <ShoppingBag className="w-4 h-4 text-amber-400" />
+                        <span>LOJA</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          gameAudio.playUiClick();
                           setActiveModal('ranking');
                         }}
-                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
                       >
                         <Trophy className="w-4 h-4 text-amber-400" />
                         <span>RANKING</span>
@@ -648,7 +789,7 @@ export default function App() {
                           gameAudio.playUiClick();
                           setActiveModal('promo');
                         }}
-                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
                       >
                         <Ticket className="w-4 h-4 text-emerald-400" />
                         <span>CÓDIGO</span>
@@ -660,7 +801,7 @@ export default function App() {
                           gameAudio.playUiClick();
                           setActiveModal('suggestions');
                         }}
-                        className="min-h-[52px] px-1 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
+                        className="min-h-[48px] px-1 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-[10px] flex flex-col items-center justify-center gap-1 cursor-pointer whitespace-nowrap"
                       >
                         <Lightbulb className="w-4 h-4 text-amber-300" />
                         <span>IDEIAS</span>
@@ -668,7 +809,7 @@ export default function App() {
                     </div>
                   </div>
                 ) : (
-                  <div className="pointer-events-auto w-full max-w-4xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-3">
+                  <div className="pointer-events-auto w-full max-w-5xl bg-slate-950/95 border border-slate-700/90 rounded-2xl p-2.5 sm:p-3 shadow-2xl flex flex-wrap items-center justify-center gap-2 sm:gap-2.5">
                     <button
                       type="button"
                       onClick={() => {
@@ -676,7 +817,7 @@ export default function App() {
                         gameAudio.playUiClick();
                         setActiveModal('play');
                       }}
-                      className="px-7 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
+                      className="px-6 py-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-display font-bold text-base sm:text-lg tracking-wide shadow-lg shadow-rose-900/50 flex items-center gap-2 cursor-pointer transition transform active:scale-95"
                     >
                       <Play className="w-5 h-5 fill-current" /> JOGAR
                     </button>
@@ -687,7 +828,7 @@ export default function App() {
                         gameAudio.playUiClick();
                         setActiveModal('skins');
                       }}
-                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <Sparkles className="w-4 h-4 text-amber-400" /> SKINS
                     </button>
@@ -696,9 +837,35 @@ export default function App() {
                       type="button"
                       onClick={() => {
                         gameAudio.playUiClick();
+                        setActiveModal('capes');
+                      }}
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <Shirt className="w-4 h-4 text-rose-400" /> CAPAS
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
+                        setActiveModal('shop');
+                      }}
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/50 text-amber-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                    >
+                      <ShoppingBag className="w-4 h-4 text-amber-400" />
+                      <span>LOJA</span>
+                      <span className="px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 font-mono-num text-[11px]">
+                        {availableShopCoins.toLocaleString('pt-BR')}
+                      </span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        gameAudio.playUiClick();
                         setActiveModal('ranking');
                       }}
-                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <Trophy className="w-4 h-4 text-amber-400" /> RANKING
                     </button>
@@ -709,7 +876,7 @@ export default function App() {
                         gameAudio.playUiClick();
                         setActiveModal('promo');
                       }}
-                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-emerald-500/50 text-emerald-200 font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <Ticket className="w-4 h-4 text-emerald-400" /> RESGATAR CÓDIGO
                     </button>
@@ -720,7 +887,7 @@ export default function App() {
                         gameAudio.playUiClick();
                         setActiveModal('suggestions');
                       }}
-                      className="px-4 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
+                      className="px-3.5 py-3 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-white font-bold text-xs sm:text-sm flex items-center gap-1.5 cursor-pointer"
                     >
                       <Lightbulb className="w-4 h-4 text-amber-300" /> ENVIAR SUGESTÃO
                     </button>
@@ -1021,12 +1188,70 @@ export default function App() {
             />
           )}
 
+          {activeModal === 'capes' && (
+            <CapesModal
+              user={user}
+              selectedMap={selectedMap}
+              quality={quality}
+              onSaved={(cfg) => {
+                setUser((prev) => (prev ? { ...prev, capeConfig: cfg } : prev));
+              }}
+              onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {activeModal === 'shop' && (
+            <ShopModal
+              user={user}
+              onUpdated={(patch) => {
+                setUser((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        availableCoins: patch.availableCoins,
+                        equippedSkateId: patch.equippedSkateId,
+                        skateInventory: patch.skateInventory,
+                      }
+                    : prev
+                );
+              }}
+              onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {activeModal === 'friends' && (
+            <FriendsChatModal
+              user={user}
+              onRefreshCounts={(unreadMessages, pendingRequests) => {
+                setFriendBadges({ unreadMessages, pendingRequests });
+              }}
+              onDirectMultiplayerInvite={(targetNickname, mode) => {
+                setPendingDirectInvite({ targetNickname, mode });
+                setMultiplayerMode(mode);
+                setActiveModal('multiplayer');
+              }}
+              onClose={() => setActiveModal(null)}
+            />
+          )}
+
+          {activeModal === 'live_mode' && (
+            <LiveModeModal
+              user={user}
+              onSaved={(cfg) => {
+                setUser((prev) => (prev ? { ...prev, liveModeConfig: cfg } : prev));
+              }}
+              onClose={() => setActiveModal(null)}
+            />
+          )}
+
           {activeModal === 'multiplayer' && (
             <MultiplayerModal
               currentUser={user}
               initialMode={multiplayerMode}
               selectedMap={selectedMap}
               initialRoom={mpLobbyRoom}
+              prefillInvite={pendingDirectInvite}
+              onClearPrefillInvite={() => setPendingDirectInvite(null)}
               onEnterMatch={(room, participants) => {
                 gameAudio.unlock();
                 setActiveMpSession({ room, participants });
@@ -1035,6 +1260,7 @@ export default function App() {
               }}
               onClose={() => {
                 setMpLobbyRoom(null);
+                setPendingDirectInvite(null);
                 setActiveModal(null);
                 void refreshMultiplayerOverview();
               }}

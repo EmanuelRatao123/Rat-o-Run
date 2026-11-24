@@ -7,9 +7,12 @@ import {
   MultiplayerParticipant,
   POWERUPS,
   ParticipantAnimState,
+  PlayerCapeConfig,
   PowerUpType,
+  SkateId,
   SkinId,
   SoloGameMode,
+  getSkateDefinition,
 } from '../shared/constants.ts';
 import { createSeededRng, generateTrackWave } from '../shared/trackGenerator.ts';
 import { gameAudio } from './audio.ts';
@@ -21,6 +24,8 @@ import {
   CharacterAnimState,
   CharacterRig,
   animateCharacterRig,
+  applyCustomCapeToRig,
+  applyEquippedSkateToRig,
   createCharacterRig,
   createFloatingNameTag,
   createPoliceRig,
@@ -53,6 +58,10 @@ export interface HudSnapshot {
   speedState: SpeedState;
   activePowerUps: { type: PowerUpType; remainingSec: number; maxSec: number }[];
   speedKmh: number;
+  equippedSkateId: SkateId | null;
+  skateChargesRemaining: number;
+  skateActive: boolean;
+  skateRemainingSec: number;
 }
 
 export interface RunResultPayload {
@@ -72,6 +81,8 @@ export interface MultiplayerRunnerOptions {
   opponentNickname: string;
   opponentSkin: SkinId;
   opponentCustomConfig?: CustomCharacterConfig;
+  opponentCapeConfig?: PlayerCapeConfig | null;
+  opponentEquippedSkateId?: SkateId | null;
   frozenAtStart?: boolean;
   onCoinCollected?: (coinZ: number, coinLane: number) => void;
   onLocalCrashed?: (payload: RunResultPayload) => void;
@@ -204,6 +215,16 @@ export class RunnerEngine {
     hoverboard: 0,
   };
 
+  // Shop Skate State
+  private equippedSkateId: SkateId | null = null;
+  private skateChargesRemaining = 0;
+  private skateActive = false;
+  private skateRemainingSec = 0;
+  private skateUseSeq = 0;
+  private onSkateActivated?: (skateId: SkateId, useSeq: number) => void;
+  private onSkateAbsorbed?: (skateId: SkateId) => void;
+  private remoteEquippedSkateId: SkateId | null = null;
+
   private keyDownHandler: (e: KeyboardEvent) => void;
   private blurHandler: () => void;
   private resizeHandler: () => void;
@@ -212,6 +233,8 @@ export class RunnerEngine {
   private touchStartX = 0;
   private touchStartY = 0;
   private touchActive = false;
+  private touchMoved = false;
+  private lastTapAt = 0;
   private touchStartHandler: (e: TouchEvent) => void;
   private touchMoveHandler: (e: TouchEvent) => void;
   private touchEndHandler: () => void;
@@ -223,6 +246,11 @@ export class RunnerEngine {
     quality: GraphicsQuality;
     soloMode?: SoloGameMode;
     customConfig?: CustomCharacterConfig;
+    capeConfig?: PlayerCapeConfig | null;
+    equippedSkateId?: SkateId | null;
+    skateCharges?: number;
+    onSkateActivated?: (skateId: SkateId, useSeq: number) => void;
+    onSkateAbsorbed?: (skateId: SkateId) => void;
     onHudUpdate: (hud: HudSnapshot) => void;
     onGameOver: (result: RunResultPayload) => void;
     multiplayer?: MultiplayerRunnerOptions;
@@ -232,6 +260,11 @@ export class RunnerEngine {
     this.skinId = opts.skinId;
     this.quality = opts.quality;
     this.soloMode = opts.soloMode ?? 'no_coin';
+    this.equippedSkateId = opts.equippedSkateId ?? null;
+    this.skateChargesRemaining = Math.max(0, opts.skateCharges ?? 0);
+    this.onSkateActivated = opts.onSkateActivated;
+    this.onSkateAbsorbed = opts.onSkateAbsorbed;
+    this.remoteEquippedSkateId = opts.multiplayer?.opponentEquippedSkateId ?? null;
     this.onHudUpdate = opts.onHudUpdate;
     this.onGameOver = opts.onGameOver;
     this.multiplayer = opts.multiplayer;
@@ -324,6 +357,7 @@ export class RunnerEngine {
       this.ctx.renderer.shadowMap.enabled,
       opts.customConfig
     );
+    applyCustomCapeToRig(this.playerRig, opts.capeConfig);
     this.playerRig.root.rotation.y = Math.PI;
     this.playerRig.root.position.set(this.playerX, 0, 0);
     this.scene.add(this.playerRig.root);
@@ -334,6 +368,7 @@ export class RunnerEngine {
         this.ctx.renderer.shadowMap.enabled,
         opts.multiplayer.opponentCustomConfig
       );
+      applyCustomCapeToRig(this.remoteRig, opts.multiplayer.opponentCapeConfig);
       this.remoteRig.root.rotation.y = Math.PI;
       const initRemoteX = opts.multiplayer.isHost ? 0.65 : -0.65;
       this.remoteRig.root.position.set(initRemoteX, 0, 0);
@@ -379,7 +414,14 @@ export class RunnerEngine {
       } else if (e.code === 'ArrowRight' || e.code === 'KeyD') {
         e.preventDefault();
         this.moveRight();
-      } else if (e.code === 'Space' || e.code === 'ArrowUp' || e.code === 'KeyW') {
+      } else if (e.code === 'Space') {
+        e.preventDefault();
+        if (this.equippedSkateId && this.skateChargesRemaining > 0 && !this.skateActive) {
+          this.activateSkate();
+        } else {
+          this.jump();
+        }
+      } else if (e.code === 'ArrowUp' || e.code === 'KeyW') {
         e.preventDefault();
         this.jump();
       } else if (e.code === 'ArrowDown' || e.code === 'KeyS') {
@@ -402,6 +444,7 @@ export class RunnerEngine {
       this.touchStartX = e.touches[0].clientX;
       this.touchStartY = e.touches[0].clientY;
       this.touchActive = true;
+      this.touchMoved = false;
     };
 
     this.touchMoveHandler = (e: TouchEvent) => {
@@ -411,6 +454,7 @@ export class RunnerEngine {
       const dy = e.touches[0].clientY - this.touchStartY;
       const threshold = 18;
       if (Math.abs(dx) > threshold || Math.abs(dy) > threshold) {
+        this.touchMoved = true;
         if (Math.abs(dx) > Math.abs(dy)) {
           if (dx < 0) this.moveLeft();
           else this.moveRight();
@@ -423,6 +467,15 @@ export class RunnerEngine {
     };
 
     this.touchEndHandler = () => {
+      if (this.touchActive && !this.touchMoved) {
+        const now = performance.now();
+        if (now - this.lastTapAt <= 280) {
+          this.lastTapAt = 0;
+          this.activateSkate();
+        } else {
+          this.lastTapAt = now;
+        }
+      }
       this.touchActive = false;
     };
 
@@ -473,6 +526,12 @@ export class RunnerEngine {
       this.remoteInterpolator.recordRttSample(echoClientTs, serverNowMs, localNow);
     }
     this.remoteLastAlive = remote.alive;
+    if (remote.equippedSkateId !== undefined) {
+      this.remoteEquippedSkateId = remote.equippedSkateId ?? null;
+    }
+    if (this.remoteRig && remote.capeConfig) {
+      applyCustomCapeToRig(this.remoteRig, remote.capeConfig);
+    }
     this.remoteInterpolator.pushSnapshot({
       seq: remote.seq || 0,
       serverTimeMs: serverNowMs,
@@ -531,9 +590,39 @@ export class RunnerEngine {
       durationMs: Math.round(this.durationMs),
       collisionCount: this.collisionState.getTelemetryHitCount(),
       alive: !this.ended && !this.coopLocalDead,
-      hoverboard: this.powerTimers.hoverboard > 0,
+      hoverboard: this.powerTimers.hoverboard > 0 || this.skateActive,
       jetpack: this.powerTimers.jetpack > 0,
     };
+  }
+
+  public activateSkate(): boolean {
+    if (
+      !this.running ||
+      this.paused ||
+      this.frozen ||
+      this.coopLocalDead ||
+      this.ended ||
+      this.skateActive ||
+      !this.equippedSkateId ||
+      this.skateChargesRemaining <= 0
+    ) {
+      return false;
+    }
+    this.skateChargesRemaining -= 1;
+    this.skateActive = true;
+    this.skateRemainingSec = 14;
+    this.skateUseSeq += 1;
+    const def = getSkateDefinition(this.equippedSkateId);
+    const fxColor = parseInt(def.effectColor.replace('#', ''), 16);
+    gameAudio.playPowerUp();
+    this.spawnBurst(this.playerX, this.playerY + 0.35, this.playerZ, fxColor, 12);
+    this.onSkateActivated?.(this.equippedSkateId, this.skateUseSeq);
+    this.emitHud(this.currentSpeed);
+    return true;
+  }
+
+  public syncSkateCharges(charges: number): void {
+    this.skateChargesRemaining = Math.max(0, Math.floor(charges));
   }
 
   public forceEndExternal(animState: CharacterAnimState = 'idle'): void {
@@ -611,7 +700,13 @@ export class RunnerEngine {
     const sampled = this.remoteInterpolator.sample(Date.now(), dt);
     this.remoteRig.root.position.set(sampled.x, sampled.y, sampled.z);
     this.remoteRig.root.rotation.z = THREE.MathUtils.clamp(sampled.yaw, -0.3, 0.3);
-    this.remoteRig.hoverboardGroup.visible = sampled.hoverboard;
+    if (sampled.hoverboard && this.remoteEquippedSkateId) {
+      this.remoteRig.hoverboardGroup.visible = false;
+      applyEquippedSkateToRig(this.remoteRig, this.remoteEquippedSkateId, true);
+    } else {
+      applyEquippedSkateToRig(this.remoteRig, null, false);
+      this.remoteRig.hoverboardGroup.visible = sampled.hoverboard;
+    }
     this.remoteRig.jetpackGroup.visible = sampled.jetpack;
     this.remoteRig.contactShadow.position.y = Math.max(0.025, -sampled.y + 0.025);
     const speedFactor = Math.max(0.85, Math.min(2.1, Math.abs(sampled.vz) / BASE_SPEED));
@@ -715,6 +810,12 @@ export class RunnerEngine {
         this.powerTimers[k] = Math.max(0, this.powerTimers[k] - dt);
       }
     });
+    if (this.skateActive) {
+      this.skateRemainingSec = Math.max(0, this.skateRemainingSec - dt);
+      if (this.skateRemainingSec === 0) {
+        this.skateActive = false;
+      }
+    }
 
     const { recoveredToNormal } = this.collisionState.step(dt);
     if (recoveredToNormal) {
@@ -805,7 +906,13 @@ export class RunnerEngine {
 
     // Footstep sound
     this.stepSoundCooldown -= dt;
-    if (this.grounded && this.slideTimer <= 0 && this.powerTimers.hoverboard <= 0 && this.stepSoundCooldown <= 0) {
+    if (
+      this.grounded &&
+      this.slideTimer <= 0 &&
+      this.powerTimers.hoverboard <= 0 &&
+      !this.skateActive &&
+      this.stepSoundCooldown <= 0
+    ) {
       gameAudio.playStep();
       this.stepSoundCooldown = 0.24 / (currentSpeed / BASE_SPEED);
     }
@@ -821,12 +928,13 @@ export class RunnerEngine {
     this.playerRig.root.rotation.z = THREE.MathUtils.clamp(lateralVel * 0.12, -0.3, 0.3);
 
     // Accessory visibility
-    this.playerRig.hoverboardGroup.visible = this.powerTimers.hoverboard > 0;
+    this.playerRig.hoverboardGroup.visible = this.powerTimers.hoverboard > 0 && !this.skateActive;
+    applyEquippedSkateToRig(this.playerRig, this.equippedSkateId, this.skateActive);
     this.playerRig.jetpackGroup.visible = this.powerTimers.jetpack > 0;
     this.playerRig.magnetAura.visible = this.powerTimers.magnet > 0;
     this.playerRig.magnetAura.rotation.z += dt * 4;
     this.playerRig.shieldRing.visible =
-      this.powerTimers.super_jump > 0 || this.powerTimers.multiplier > 0;
+      this.powerTimers.super_jump > 0 || this.powerTimers.multiplier > 0 || this.skateActive;
     if (this.playerRig.shieldRing.visible) {
       this.playerRig.shieldRing.rotation.z -= dt * 3.5;
     }
@@ -956,6 +1064,10 @@ export class RunnerEngine {
       speedState: this.collisionState.getSpeedState(),
       activePowerUps,
       speedKmh: Math.round(currentSpeed * 2.4),
+      equippedSkateId: this.equippedSkateId,
+      skateChargesRemaining: this.skateChargesRemaining,
+      skateActive: this.skateActive,
+      skateRemainingSec: this.skateRemainingSec,
     });
   }
 
@@ -1027,7 +1139,7 @@ export class RunnerEngine {
   private handleObstacleCollision(obstacleId: number): void {
     const resolution = this.collisionState.resolveObstacleCollision({
       obstacleId,
-      hoverboardActive: this.powerTimers.hoverboard > 0,
+      hoverboardActive: this.powerTimers.hoverboard > 0 || this.skateActive,
       jetpackActive: this.powerTimers.jetpack > 0,
       alreadyEnded: this.ended || this.coopLocalDead,
     });
@@ -1037,6 +1149,19 @@ export class RunnerEngine {
     }
 
     if (resolution.outcome === 'hoverboard_absorbed') {
+      if (this.skateActive && this.equippedSkateId) {
+        const def = getSkateDefinition(this.equippedSkateId);
+        const fxColor = parseInt(def.effectColor.replace('#', ''), 16);
+        this.skateActive = false;
+        this.skateRemainingSec = 0;
+        this.collisionState.forceRecoverWithLock(1.15);
+        this.shakeIntensity = 0.4;
+        gameAudio.playPowerUp();
+        this.spawnBurst(this.playerX, this.playerY + 0.65, this.playerZ, fxColor, 18);
+        this.onSkateAbsorbed?.(this.equippedSkateId);
+        this.emitHud(this.currentSpeed);
+        return;
+      }
       this.powerTimers.hoverboard = 0;
       this.shakeIntensity = 0.35;
       gameAudio.playPowerUp();

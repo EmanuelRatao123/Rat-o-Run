@@ -126,6 +126,14 @@ export function AdminPortalModal({
   const [revokeBusyKey, setRevokeBusyKey] = useState<string | null>(null);
   const [quickPlayerMatches, setQuickPlayerMatches] = useState<AdminPlayerRecord[]>([]);
 
+  // Secret Admin Skin (Plankton) management state
+  const [secretOwners, setSecretOwners] = useState<AdminExclusiveSkinOwner[]>([]);
+  const [secretOwnersLoading, setSecretOwnersLoading] = useState(false);
+  const [secretGrantNickname, setSecretGrantNickname] = useState('');
+  const [secretQuickMatches, setSecretQuickMatches] = useState<AdminPlayerRecord[]>([]);
+  const [secretGrantBusy, setSecretGrantBusy] = useState(false);
+  const [secretRevokeBusyId, setSecretRevokeBusyId] = useState<string | null>(null);
+
   // GERENCIAR SKINS (Bulk grant / revoke / player skin count / grant history)
   const [skinsSearchNickname, setSkinsSearchNickname] = useState('');
   const [manageQuickMatches, setManageQuickMatches] = useState<AdminPlayerRecord[]>([]);
@@ -288,6 +296,18 @@ export function AdminPortalModal({
     }
   }, []);
 
+  const loadSecretOwners = useCallback(async () => {
+    setSecretOwnersLoading(true);
+    try {
+      const res = await api.adminListSecretSkinOwners('plankton');
+      setSecretOwners(res.owners);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao carregar skin secreta.');
+    } finally {
+      setSecretOwnersLoading(false);
+    }
+  }, []);
+
   const loadGrantHistory = useCallback(async (nicknameFilter?: string) => {
     setHistoryLoading(true);
     try {
@@ -370,8 +390,9 @@ export function AdminPortalModal({
   useEffect(() => {
     if (isVerifiedAdmin && tab === 'admin_skins') {
       void loadExclusiveOwners(ownerSkinFilter);
+      void loadSecretOwners();
     }
-  }, [isVerifiedAdmin, tab, ownerSkinFilter, loadExclusiveOwners]);
+  }, [isVerifiedAdmin, tab, ownerSkinFilter, loadExclusiveOwners, loadSecretOwners]);
 
   useEffect(() => {
     if (!isVerifiedAdmin || tab !== 'admin_skins') return;
@@ -388,6 +409,22 @@ export function AdminPortalModal({
     }, 220);
     return () => window.clearTimeout(t);
   }, [isVerifiedAdmin, tab, grantSkinNickname]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin || tab !== 'admin_skins') return;
+    const q = secretGrantNickname.trim();
+    if (q.length < 1) {
+      setSecretQuickMatches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void api
+        .searchAdminPlayers(q)
+        .then((res) => setSecretQuickMatches(res.players.slice(0, 6)))
+        .catch(() => {});
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [isVerifiedAdmin, tab, secretGrantNickname]);
 
   useEffect(() => {
     if (isVerifiedAdmin && tab === 'manage_skins') {
@@ -725,6 +762,67 @@ export function AdminPortalModal({
       setActionErr(err instanceof Error ? err.message : 'Erro ao remover permissão da skin.');
     } finally {
       setRevokeBusyKey(null);
+    }
+  };
+
+  const handleGrantSecretSkin = async (nicknameOverride?: string) => {
+    const targetNickname = (nicknameOverride ?? secretGrantNickname).trim();
+    setSecretGrantBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminGrantSecretSkin({
+        nickname: targetNickname || undefined,
+        skinId: 'plankton',
+      });
+      setActionMsg(
+        `Skin Secreta "Plankton" liberada exclusivamente para ${res.owner.nickname}!`
+      );
+      if (currentUser && currentUser.id === res.owner.userId) {
+        const nextAllowed = Array.from(
+          new Set([...(currentUser.allowedExclusiveSkins || []), 'plankton' as SkinId])
+        );
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: nextAllowed,
+          unlockedSkins: Array.from(new Set([...currentUser.unlockedSkins, 'plankton' as SkinId])),
+        });
+      }
+      if (!nicknameOverride) setSecretGrantNickname('');
+      await Promise.all([loadSecretOwners(), loadDashboard()]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao liberar skin secreta.');
+    } finally {
+      setSecretGrantBusy(false);
+    }
+  };
+
+  const handleRevokeSecretSkin = async (userId: string, nickname: string) => {
+    setSecretRevokeBusyId(userId);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminRevokeSecretSkin({ userId, skinId: 'plankton' });
+      setActionMsg(
+        `Skin secreta Plankton removida de ${res.targetNickname || nickname}${
+          res.resetEquipped ? ' (skin equipada voltou para Ratão)' : ''
+        }.`
+      );
+      if (currentUser && currentUser.id === userId) {
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: (currentUser.allowedExclusiveSkins || []).filter(
+            (s) => s !== 'plankton'
+          ),
+          unlockedSkins: currentUser.unlockedSkins.filter((s) => s !== 'plankton'),
+          equippedSkin: res.resetEquipped ? 'ratao' : currentUser.equippedSkin,
+        });
+      }
+      await Promise.all([loadSecretOwners(), loadDashboard()]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao remover skin secreta.');
+    } finally {
+      setSecretRevokeBusyId(null);
     }
   };
 
@@ -1735,7 +1833,137 @@ export function AdminPortalModal({
                     </div>
                   </div>
 
-                  {/* Gerenciar 10 Novas Skins Bloqueadas + Meu Ratão */}
+                  {/* Skin Secreta Exclusiva do Admin: Plankton */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-br from-emerald-950/60 via-slate-950 to-slate-950 border-2 border-emerald-500/45 space-y-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <span className="px-2.5 py-1 rounded bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 text-[10px] font-extrabold uppercase tracking-wider">
+                          SKIN SECRETA · INVISÍVEL NO CATÁLOGO PÚBLICO
+                        </span>
+                        <h3 className="font-display text-xl font-bold text-white mt-2 flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-emerald-400" />
+                          SKIN SECRETA: PLANKTON
+                        </h3>
+                        <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                          Oculta completamente para jogadores comuns (não aparece bloqueada, nem em presentes, códigos promocionais ou concessão em massa). Apenas quem receber acesso por esta seção pode vê-la e equipá-la.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        disabled={secretGrantBusy}
+                        onClick={() => void handleGrantSecretSkin(adminProfile?.nickname || undefined)}
+                        className="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs flex items-center gap-1.5 shadow-lg cursor-pointer disabled:opacity-60"
+                      >
+                        <Unlock className="w-4 h-4" />
+                        {secretGrantBusy ? 'LIBERANDO...' : 'LIBERAR PLANKTON PARA MIM'}
+                      </button>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void handleGrantSecretSkin();
+                      }}
+                      className="p-3.5 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5"
+                    >
+                      <div className="flex flex-col sm:flex-row gap-2.5">
+                        <div className="relative flex-1">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={secretGrantNickname}
+                            onChange={(e) => setSecretGrantNickname(e.target.value)}
+                            placeholder="Liberar Plankton para outro jogador (nickname exato)..."
+                            className="w-full pl-8 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={secretGrantBusy || !secretGrantNickname.trim()}
+                          className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-display font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Unlock className="w-3.5 h-3.5" />
+                          CONCEDER SECRETA
+                        </button>
+                      </div>
+
+                      {secretQuickMatches.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">
+                            Jogadores:
+                          </span>
+                          {secretQuickMatches.map((mp) => (
+                            <button
+                              key={mp.id}
+                              type="button"
+                              onClick={() => setSecretGrantNickname(mp.nickname)}
+                              className="px-2 py-0.5 rounded bg-slate-950 border border-slate-700 hover:border-emerald-400 text-[11px] font-bold text-slate-200 cursor-pointer"
+                            >
+                              {mp.nickname}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </form>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold uppercase text-emerald-300">
+                          Contas com Plankton ({secretOwners.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void loadSecretOwners()}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${secretOwnersLoading ? 'animate-spin' : ''}`} />
+                          Atualizar
+                        </button>
+                      </div>
+                      {secretOwnersLoading ? (
+                        <div className="text-xs text-slate-400">Consultando skin secreta...</div>
+                      ) : secretOwners.length === 0 ? (
+                        <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400">
+                          Nenhuma conta possui a skin secreta Plankton no momento.
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {secretOwners.map((owner) => (
+                            <div
+                              key={owner.id}
+                              className="p-2.5 rounded-xl bg-slate-900/80 border border-emerald-500/30 flex flex-wrap items-center justify-between gap-2"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="font-bold text-xs text-white">{owner.nickname}</span>
+                                <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                  PLANKTON
+                                </span>
+                                {owner.equipped && (
+                                  <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
+                                    EQUIPADA
+                                  </span>
+                                )}
+                              </div>
+                              <button
+                                type="button"
+                                disabled={secretRevokeBusyId === owner.userId}
+                                onClick={() =>
+                                  void handleRevokeSecretSkin(owner.userId, owner.nickname)
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 border border-rose-700/60 text-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                {secretRevokeBusyId === owner.userId ? 'Removendo...' : 'Revogar'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Gerenciar Skins Exclusivas Bloqueadas + Meu Ratão */}
                   <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-5">
                     <div>
                       <span className="px-2.5 py-1 rounded bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[10px] font-extrabold uppercase tracking-wider">
@@ -1746,7 +1974,7 @@ export function AdminPortalModal({
                         SKINS EXCLUSIVAS BLOQUEADAS (LIBERAR, CONSULTAR & REVOGAR)
                       </h3>
                       <p className="text-xs text-slate-400 mt-1">
-                        Todas as 10 novas skins começam bloqueadas para todos os jogadores. Libere
+                        Todas as skins exclusivas começam bloqueadas para todos os jogadores. Libere
                         para um jogador específico pelo nickname, consulte quem possui cada skin ou
                         remova a permissão a qualquer momento.
                       </p>

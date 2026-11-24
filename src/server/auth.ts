@@ -7,11 +7,18 @@ import {
   COMMON_SKIN_IDS,
   CustomCharacterConfig,
   DEFAULT_CUSTOM_CHARACTER_CONFIG,
+  DEFAULT_LIVE_MODE_CONFIG,
+  DEFAULT_PLAYER_CAPE_CONFIG,
+  PlayerCapeConfig,
   PlayerCompetitiveStats,
+  PlayerLiveModeConfig,
+  PlayerSkateInventoryItem,
   PlayerWalletStats,
+  SkateId,
   SkinId,
   UserProfile,
   isGiftableSkinId,
+  isSecretExclusiveSkinId,
 } from '../shared/constants.ts';
 import {
   SlidingRateLimiter,
@@ -38,6 +45,13 @@ import {
   repoUpdateUserLastSeen,
   repoUpdateUserPassword,
 } from './repository.ts';
+import {
+  computeAvailableCoins,
+  repoGetPlayerCapeConfig,
+  repoGetPlayerLiveModeConfig,
+  repoGetPlayerSkateInventory,
+  repoGetUnreadAndPendingCounts,
+} from './socialShopRepository.ts';
 import { StoredUser } from './store.ts';
 
 export const SESSION_COOKIE_NAME = 'ratao_session';
@@ -113,31 +127,49 @@ export function sanitizeUserProfile(
   allowedExclusiveSkins: SkinId[] = [],
   competitiveStats?: PlayerCompetitiveStats,
   walletStats?: PlayerWalletStats,
-  customCharacterConfig?: CustomCharacterConfig
+  customCharacterConfig?: CustomCharacterConfig,
+  extras?: {
+    capeConfig?: PlayerCapeConfig;
+    liveModeConfig?: PlayerLiveModeConfig;
+    skateInventory?: PlayerSkateInventoryItem[];
+    unreadFriendsMessagesCount?: number;
+    pendingFriendRequestsCount?: number;
+  }
 ): UserProfile {
   const allowedSet = new Set(allowedExclusiveSkins);
+  const safeAllowed = allowedExclusiveSkins.filter(
+    (s) => !isSecretExclusiveSkinId(s) || allowedSet.has(s)
+  );
   const unlockedSkins = Array.from(
     new Set([
       ...user.unlockedSkins.filter(
-        (s) => (COMMON_SKIN_IDS as string[]).includes(s) || allowedSet.has(s)
+        (s) => ((COMMON_SKIN_IDS as string[]).includes(s) || allowedSet.has(s)) && (!isSecretExclusiveSkinId(s) || allowedSet.has(s))
       ),
-      ...allowedExclusiveSkins,
+      ...safeAllowed,
     ])
   );
+  const totalCoins = walletStats ? walletStats.totalCoinsCollected : user.totalCoins;
+  const availableCoins = walletStats
+    ? computeAvailableCoins(walletStats, user.totalCoins)
+    : Math.max(0, user.totalCoins);
+
   return {
     id: user.id,
     nickname: user.nickname,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
     equippedSkin: user.equippedSkin,
+    equippedSkateId: user.equippedSkateId ?? null,
     unlockedSkins,
     giftedSkins: user.giftedSkins.filter((s) => isGiftableSkinId(s)),
-    allowedExclusiveSkins,
+    allowedExclusiveSkins: safeAllowed,
     bestNoCoinTimeMs: user.bestNoCoinTimeMs,
     bestDistance: user.bestDistance,
     bestScore: user.bestScore,
+    bestSingleMatchCoins: user.bestSingleMatchCoins ?? 0,
     totalMatches: user.totalMatches,
-    totalCoins: walletStats ? walletStats.totalCoinsCollected : user.totalCoins,
+    totalCoins,
+    availableCoins,
     favoriteSkin: user.favoriteSkin,
     skinUsage: user.skinUsage,
     createdAt: user.createdAt,
@@ -146,7 +178,44 @@ export function sanitizeUserProfile(
     competitiveStats,
     walletStats,
     customCharacterConfig,
+    capeConfig: extras?.capeConfig,
+    liveModeConfig: extras?.liveModeConfig,
+    skateInventory: extras?.skateInventory,
+    unreadFriendsMessagesCount: extras?.unreadFriendsMessagesCount ?? 0,
+    pendingFriendRequestsCount: extras?.pendingFriendRequestsCount ?? 0,
   };
+}
+
+async function buildFullUserProfile(user: StoredUser): Promise<UserProfile> {
+  const [
+    rank,
+    allowedExcl,
+    compStats,
+    walletStats,
+    customCfg,
+    capeConfig,
+    liveModeConfig,
+    skateInventory,
+    friendCounts,
+  ] = await Promise.all([
+    repoComputePlayerRank(user.id),
+    repoGetAllowedExclusiveSkinsForUser(user),
+    repoGetCompetitiveStatsForUser(user.id),
+    repoGetWalletStatsForUser(user.id),
+    repoGetCustomCharacterConfig(user.id),
+    repoGetPlayerCapeConfig(user.id),
+    repoGetPlayerLiveModeConfig(user.id),
+    repoGetPlayerSkateInventory(user.id),
+    repoGetUnreadAndPendingCounts(user.id),
+  ]);
+
+  return sanitizeUserProfile(user, rank, allowedExcl, compStats, walletStats, customCfg, {
+    capeConfig,
+    liveModeConfig,
+    skateInventory,
+    unreadFriendsMessagesCount: friendCounts.unreadMessages,
+    pendingFriendRequestsCount: friendCounts.pendingRequests,
+  });
 }
 
 async function createSessionForUser(
@@ -381,7 +450,14 @@ export async function registerHandler(req: Request, res: Response): Promise<void
         spentCoins: 0,
         updatedAt: now,
       },
-      { ...DEFAULT_CUSTOM_CHARACTER_CONFIG }
+      { ...DEFAULT_CUSTOM_CHARACTER_CONFIG },
+      {
+        capeConfig: { ...DEFAULT_PLAYER_CAPE_CONFIG },
+        liveModeConfig: { ...DEFAULT_LIVE_MODE_CONFIG },
+        skateInventory: [],
+        unreadFriendsMessagesCount: 0,
+        pendingFriendRequestsCount: 0,
+      }
     ),
     sessionToken,
   });
@@ -438,15 +514,9 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   const sessionToken = await createSessionForUser(user.id, user.role === 'admin' ? 'admin' : 'player');
   setSessionCookie(res, sessionToken);
 
-  const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
-    repoComputePlayerRank(user.id),
-    repoGetAllowedExclusiveSkinsForUser(user),
-    repoGetCompetitiveStatsForUser(user.id),
-    repoGetWalletStatsForUser(user.id),
-    repoGetCustomCharacterConfig(user.id),
-  ]);
+  const userProfile = await buildFullUserProfile(user);
   res.json({
-    user: sanitizeUserProfile(user, rank, allowedExcl, compStats, walletStats, customCfg),
+    user: userProfile,
     sessionToken,
   });
 }
@@ -667,15 +737,9 @@ export async function meHandler(req: AuthedRequest, res: Response): Promise<void
     res.status(401).json({ error: 'Não autenticado.' });
     return;
   }
-  const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
-    repoComputePlayerRank(req.authUser.id),
-    repoGetAllowedExclusiveSkinsForUser(req.authUser),
-    repoGetCompetitiveStatsForUser(req.authUser.id),
-    repoGetWalletStatsForUser(req.authUser.id),
-    repoGetCustomCharacterConfig(req.authUser.id),
-  ]);
+  const userProfile = await buildFullUserProfile(req.authUser);
   res.json({
-    user: sanitizeUserProfile(req.authUser, rank, allowedExcl, compStats, walletStats, customCfg),
+    user: userProfile,
   });
 }
 
@@ -918,15 +982,9 @@ export async function googleAuthHandler(req: Request, res: Response): Promise<vo
     const sessionToken = await createSessionForUser(user.id, 'player');
     setSessionCookie(res, sessionToken);
 
-    const [rank, allowedExcl, compStats, walletStats, customCfg] = await Promise.all([
-      repoComputePlayerRank(user.id),
-      repoGetAllowedExclusiveSkinsForUser(user),
-      repoGetCompetitiveStatsForUser(user.id),
-      repoGetWalletStatsForUser(user.id),
-      repoGetCustomCharacterConfig(user.id),
-    ]);
+    const userProfile = await buildFullUserProfile(user);
     res.json({
-      user: sanitizeUserProfile(user, rank, allowedExcl, compStats, walletStats, customCfg),
+      user: userProfile,
       sessionToken,
     });
   } catch (err) {

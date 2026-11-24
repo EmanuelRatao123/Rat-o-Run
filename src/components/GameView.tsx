@@ -15,7 +15,10 @@ import {
   Monitor,
   Pause,
   Play,
+  Radio,
+  RefreshCw,
   RotateCcw,
+  ShieldCheck,
   Smartphone,
   Swords,
   Timer,
@@ -24,20 +27,29 @@ import {
   VolumeX,
   Wifi,
 } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { gameAudio } from '../game/audio.ts';
 import { NetworkHealthStatus, TelemetryFilter } from '../game/netSync.ts';
 import { HudSnapshot, RunResultPayload, RunnerEngine } from '../game/RunnerEngine.ts';
 import { api } from '../services/api.ts';
 import { syncMatchToFirestore } from '../services/firestoreSync.ts';
 import {
+  flushPendingMatchFinishes,
+  PendingMatchFinishPayload,
+  submitMatchFinishWithRetry,
+} from '../services/pendingMatches.ts';
+import {
+  getSkateDefinition,
   GraphicsQuality,
+  LiveOverlayPosition,
+  LiveOverlayText,
   MAPS,
   MapId,
   MatchSummary,
   MultiplayerParticipant,
   MultiplayerRoom,
   POWERUPS,
+  SkateId,
   SkinId,
   SoloGameMode,
   UserProfile,
@@ -63,6 +75,7 @@ interface GameViewProps {
   onToggleMobileMode?: () => void;
   onToggleFullscreen?: () => void;
   multiplayerSession?: MultiplayerSessionConfig | null;
+  onUserPatch?: (patch: Partial<UserProfile>) => void;
   onExitToMenu: (updatedBest?: Partial<UserProfile>) => void;
 }
 
@@ -77,6 +90,7 @@ export function GameView({
   onToggleMobileMode,
   onToggleFullscreen,
   multiplayerSession,
+  onUserPatch,
   onExitToMenu,
 }: GameViewProps) {
   const isMultiplayer = Boolean(multiplayerSession);
@@ -85,6 +99,10 @@ export function GameView({
   const mountRef = useRef<HTMLDivElement | null>(null);
   const engineRef = useRef<RunnerEngine | null>(null);
   const matchTokenRef = useRef<{ matchId: string; signature: string } | null>(null);
+  const matchStartPromiseRef = useRef<Promise<{ matchId: string; signature: string } | null> | null>(
+    null
+  );
+  const lastFinishPayloadRef = useRef<PendingMatchFinishPayload | null>(null);
   const clockOffsetRef = useRef<number>(
     multiplayerSession?.serverNow ? multiplayerSession.serverNow - Date.now() : 0
   );
@@ -98,6 +116,13 @@ export function GameView({
     pingMs: number;
     jitterMs: number;
   }>({ healthStatus: 'ok', pingMs: 0, jitterMs: 0 });
+
+  const initialSkateId = user.equippedSkateId ?? null;
+  const initialSkateCharges = initialSkateId
+    ? user.skateInventory?.find((item) => item.skateId === initialSkateId)?.charges ?? 0
+    : 0;
+  const latestUserRef = useRef(user);
+  latestUserRef.current = user;
 
   const [runKey, setRunKey] = useState(1);
   const [paused, setPaused] = useState(false);
@@ -118,10 +143,46 @@ export function GameView({
     speedState: 'normal',
     activePowerUps: [],
     speedKmh: 40,
+    equippedSkateId: initialSkateId,
+    skateChargesRemaining: initialSkateCharges,
+    skateActive: false,
+    skateRemainingSec: 0,
   });
   const [summary, setSummary] = useState<MatchSummary | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+
+  // Personal Live Mode overlay state
+  const liveTexts = useMemo<LiveOverlayText[]>(
+    () => (user.liveModeConfig?.texts || []).filter((t) => t.enabled && t.text.trim().length > 0),
+    [user.liveModeConfig]
+  );
+  const [liveOverlayEnabled, setLiveOverlayEnabled] = useState<boolean>(
+    Boolean(user.liveModeConfig?.enabled)
+  );
+  const [liveTextIdx, setLiveTextIdx] = useState(0);
+  const [liveVisible, setLiveVisible] = useState(true);
+
+  useEffect(() => {
+    setLiveOverlayEnabled(Boolean(user.liveModeConfig?.enabled));
+  }, [user.liveModeConfig?.enabled]);
+
+  useEffect(() => {
+    if (!liveOverlayEnabled || liveTexts.length === 0) return;
+    const current = liveTexts[liveTextIdx % liveTexts.length];
+    const stayMs = Math.max(2000, Math.min(30000, (current?.durationSec || 5) * 1000));
+    setLiveVisible(true);
+    if (liveTexts.length === 1) return;
+    const fadeTimer = window.setTimeout(() => setLiveVisible(false), Math.max(800, stayMs - 400));
+    const nextTimer = window.setTimeout(() => {
+      setLiveTextIdx((i) => (i + 1) % liveTexts.length);
+      setLiveVisible(true);
+    }, stayMs);
+    return () => {
+      window.clearTimeout(fadeTimer);
+      window.clearTimeout(nextTimer);
+    };
+  }, [liveOverlayEnabled, liveTexts, liveTextIdx]);
 
   // Multiplayer live states
   const [mpRoom, setMpRoom] = useState<MultiplayerRoom | null>(
@@ -199,20 +260,55 @@ export function GameView({
     [user.id]
   );
 
+  const handleSkateConsumption = useCallback(
+    (skateId: SkateId, useSeq: number) => {
+      const matchId =
+        matchTokenRef.current?.matchId ||
+        mpRoom?.id ||
+        `run_${user.id}_${runKey}`;
+      const mode = isMultiplayer ? mpRoom?.mode || 'coop' : soloMode;
+      const eventKey = `${matchId}:${useSeq}`;
+      void api
+        .consumeMatchSkate({ matchId, skateId, mode, eventKey })
+        .then((res) => {
+          engineRef.current?.syncSkateCharges(res.remainingCharges);
+          if (onUserPatch) {
+            const currentInv = latestUserRef.current.skateInventory || [];
+            const nextInv = currentInv.map((item) =>
+              item.skateId === skateId ? { ...item, charges: res.remainingCharges } : item
+            );
+            onUserPatch({ skateInventory: nextInv });
+          }
+        })
+        .catch(() => {
+          // Transient error does not block in-match skate activation
+        });
+    },
+    [isMultiplayer, mpRoom?.id, mpRoom?.mode, onUserPatch, runKey, soloMode, user.id]
+  );
+
   const handleSoloGameOver = useCallback(
     async (result: RunResultPayload) => {
       setSubmitting(true);
       setSubmitError(null);
       try {
-        const token = matchTokenRef.current;
-        if (!token) {
-          throw new Error('Sessão da partida não inicializada.');
+        let token = matchTokenRef.current;
+        if (!token && matchStartPromiseRef.current) {
+          token = await matchStartPromiseRef.current.catch(() => null);
         }
-        const res = await api.finishMatch({
+        if (!token) {
+          const started = await api.startMatch(effectiveMapId, skinId, soloMode);
+          token = { matchId: started.matchId, signature: started.signature };
+          matchTokenRef.current = token;
+        }
+        const payload: PendingMatchFinishPayload = {
           matchId: token.matchId,
           signature: token.signature,
           ...result,
-        });
+        };
+        lastFinishPayloadRef.current = payload;
+        const res = await submitMatchFinishWithRetry(payload, 3);
+        lastFinishPayloadRef.current = null;
         setSummary(res.summary);
         void syncMatchToFirestore({
           matchId: token.matchId,
@@ -226,7 +322,11 @@ export function GameView({
           durationMs: result.durationMs,
         }).catch(() => {});
       } catch (err) {
-        setSubmitError(err instanceof Error ? err.message : 'Erro ao registrar partida.');
+        setSubmitError(
+          err instanceof Error
+            ? `${err.message} (Resultado salvo localmente para reenvio automático.)`
+            : 'Erro ao registrar partida. Resultado salvo localmente para reenvio automático.'
+        );
         setSummary({
           matchId: matchTokenRef.current?.matchId || 'local',
           mode: soloMode,
@@ -249,6 +349,22 @@ export function GameView({
     [effectiveMapId, skinId, soloMode, user.bestNoCoinTimeMs, user.nickname, user.rank]
   );
 
+  const handleRetrySyncSummary = useCallback(async () => {
+    const payload = lastFinishPayloadRef.current;
+    if (!payload) return;
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const res = await submitMatchFinishWithRetry(payload, 2);
+      lastFinishPayloadRef.current = null;
+      setSummary(res.summary);
+    } catch (err) {
+      setSubmitError(err instanceof Error ? err.message : 'Erro ao sincronizar partida.');
+    } finally {
+      setSubmitting(false);
+    }
+  }, []);
+
   // Main Engine Lifecycle (Solo or Multiplayer)
   useEffect(() => {
     const container = mountRef.current;
@@ -257,10 +373,19 @@ export function GameView({
     let cancelled = false;
     coinEventSentRef.current = false;
     crashEventSentRef.current = false;
+    matchTokenRef.current = null;
+    lastFinishPayloadRef.current = null;
     setPaused(false);
     setSummary(null);
     setSubmitError(null);
     setCoopSpectating(false);
+
+    const activeUser = latestUserRef.current;
+    const activeSkateId = activeUser.equippedSkateId ?? null;
+    const activeSkateCharges = activeSkateId
+      ? activeUser.skateInventory?.find((i) => i.skateId === activeSkateId)?.charges ?? 0
+      : 0;
+
     setHud({
       noCoinTimeMs: 0,
       coinFrozen: false,
@@ -273,7 +398,13 @@ export function GameView({
       speedState: 'normal',
       activePowerUps: [],
       speedKmh: 40,
+      equippedSkateId: activeSkateId,
+      skateChargesRemaining: activeSkateCharges,
+      skateActive: false,
+      skateRemainingSec: 0,
     });
+
+    void flushPendingMatchFinishes();
 
     if (multiplayerSession) {
       const room = multiplayerSession.room;
@@ -292,7 +423,11 @@ export function GameView({
         mapId: room.mapId,
         skinId,
         quality,
-        customConfig: user.customCharacterConfig,
+        customConfig: activeUser.customCharacterConfig,
+        capeConfig: activeUser.capeConfig,
+        equippedSkateId: activeSkateId,
+        skateCharges: activeSkateCharges,
+        onSkateActivated: handleSkateConsumption,
         onHudUpdate: (snapshot) => {
           if (!cancelled) setHud(snapshot);
         },
@@ -310,6 +445,8 @@ export function GameView({
           opponentNickname: opponent?.nickname || 'Adversário',
           opponentSkin: opponent?.skinId || 'ratao',
           opponentCustomConfig: opponent?.customConfig,
+          opponentCapeConfig: opponent?.capeConfig,
+          opponentEquippedSkateId: opponent?.equippedSkateId,
           frozenAtStart: stillCountingDown,
           onDiscreteAction: () => {
             if (!cancelled) {
@@ -389,14 +526,18 @@ export function GameView({
       };
     }
 
-    // Standard Solo Mode
+    // Standard Solo Mode (Normal & No Coin)
     const engine = new RunnerEngine({
       container,
       mapId,
       skinId,
       quality,
       soloMode,
-      customConfig: user.customCharacterConfig,
+      customConfig: activeUser.customCharacterConfig,
+      capeConfig: activeUser.capeConfig,
+      equippedSkateId: activeSkateId,
+      skateCharges: activeSkateCharges,
+      onSkateActivated: handleSkateConsumption,
       onHudUpdate: (snapshot) => {
         if (!cancelled) setHud(snapshot);
       },
@@ -406,19 +547,33 @@ export function GameView({
     });
     engineRef.current = engine;
 
-    void api
-      .startMatch(mapId, skinId, soloMode)
-      .then((tok) => {
-        if (!cancelled) {
-          matchTokenRef.current = { matchId: tok.matchId, signature: tok.signature };
-          engine.start();
+    const startWithRetry = async () => {
+      for (let attempt = 1; attempt <= 2; attempt += 1) {
+        try {
+          const tok = await api.startMatch(mapId, skinId, soloMode);
+          return { matchId: tok.matchId, signature: tok.signature };
+        } catch {
+          if (attempt < 2) {
+            await new Promise((r) => window.setTimeout(r, 200));
+          }
         }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          engine.start();
-        }
-      });
+      }
+      return null;
+    };
+
+    const startPromise = startWithRetry().then((tok) => {
+      if (!cancelled && tok) {
+        matchTokenRef.current = tok;
+      }
+      return tok;
+    });
+    matchStartPromiseRef.current = startPromise;
+
+    void startPromise.finally(() => {
+      if (!cancelled) {
+        engine.start();
+      }
+    });
 
     return () => {
       cancelled = true;
@@ -433,7 +588,7 @@ export function GameView({
     soloMode,
     multiplayerSession,
     user.id,
-    user.customCharacterConfig,
+    handleSkateConsumption,
     handleSoloGameOver,
     sendMultiplayerSync,
   ]);
@@ -723,6 +878,23 @@ export function GameView({
                 <Gamepad2 className="w-4 h-4" />
               </button>
 
+              {liveTexts.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setLiveOverlayEnabled((v) => !v)}
+                  title={liveOverlayEnabled ? 'Ocultar overlay Modo Live' : 'Mostrar overlay Modo Live'}
+                  aria-label="Alternar Modo Live"
+                  className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border transition cursor-pointer flex items-center justify-center gap-1 text-xs font-bold ${
+                    liveOverlayEnabled
+                      ? 'bg-rose-600/90 border-rose-400 text-white'
+                      : 'bg-slate-950/90 border-slate-700 text-slate-300 hover:bg-slate-800'
+                  }`}
+                >
+                  <Radio className="w-4 h-4" />
+                  {!mobileMode && <span className="hidden xl:inline">LIVE</span>}
+                </button>
+              )}
+
               <button
                 type="button"
                 onClick={toggleMute}
@@ -828,82 +1000,168 @@ export function GameView({
           </div>
         )}
 
-        {/* Bottom Area: Ergonomic Thumb Arcade Controls (Mobile Mode) or Subtle Hint */}
-        <div className="flex items-end justify-between">
-          {showTouchButtons && !paused && !summary && !mpFinished && !coopSpectating ? (
-            <div className="w-full flex items-end justify-between pointer-events-auto pb-1">
-              <div className="flex gap-2.5">
+        {/* Bottom Area: Skate Activation Badge + Ergonomic Thumb Arcade Controls */}
+        <div className="flex flex-col gap-2">
+          {hud.equippedSkateId &&
+            (hud.skateChargesRemaining > 0 || hud.skateActive) &&
+            !paused &&
+            !summary &&
+            !mpFinished &&
+            !coopSpectating && (
+              <div className="flex justify-center pointer-events-auto">
                 <button
                   type="button"
-                  aria-label="Mover para esquerda"
+                  disabled={hud.skateActive}
                   onPointerDown={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
                     triggerHaptic();
-                    engineRef.current?.moveLeft();
+                    engineRef.current?.activateSkate();
                   }}
-                  className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-slate-500/80 text-white flex items-center justify-center active:scale-90 active:bg-slate-800 shadow-xl touch-none"
+                  onClick={() => engineRef.current?.activateSkate()}
+                  className={`min-h-[44px] px-4 py-2 rounded-xl border-2 shadow-xl flex items-center gap-2.5 transition touch-none ${
+                    hud.skateActive
+                      ? 'bg-emerald-950/95 border-emerald-400 text-emerald-200 cursor-default'
+                      : 'bg-slate-950/95 border-amber-400 hover:bg-slate-900 text-white cursor-pointer active:scale-95'
+                  }`}
                 >
-                  <ArrowLeft className="w-7 h-7" />
-                </button>
-                <button
-                  type="button"
-                  aria-label="Mover para direita"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    triggerHaptic();
-                    engineRef.current?.moveRight();
-                  }}
-                  className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-slate-500/80 text-white flex items-center justify-center active:scale-90 active:bg-slate-800 shadow-xl touch-none"
-                >
-                  <ArrowRight className="w-7 h-7" />
-                </button>
-              </div>
-              <div className="flex gap-2.5">
-                <button
-                  type="button"
-                  aria-label="Deslizar"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    triggerHaptic();
-                    engineRef.current?.slide();
-                  }}
-                  className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-sky-400 text-sky-300 flex flex-col items-center justify-center active:scale-90 active:bg-sky-950 shadow-xl touch-none"
-                >
-                  <ArrowDown className="w-6 h-6" />
-                  <span className="text-[9px] font-extrabold uppercase leading-none mt-0.5">
-                    Descer
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  aria-label="Pular"
-                  onPointerDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    triggerHaptic();
-                    engineRef.current?.jump();
-                  }}
-                  className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-rose-600/95 border-2 border-rose-300 text-white flex flex-col items-center justify-center active:scale-90 active:bg-rose-500 shadow-xl touch-none"
-                >
-                  <ArrowUp className="w-6 h-6" />
-                  <span className="text-[9px] font-extrabold uppercase leading-none mt-0.5">
-                    Pular
-                  </span>
+                  <ShieldCheck
+                    className={`w-4 h-4 shrink-0 ${
+                      hud.skateActive ? 'text-emerald-300' : 'text-amber-300'
+                    }`}
+                  />
+                  <div className="text-left leading-tight">
+                    <div className="text-[11px] font-extrabold uppercase tracking-wide">
+                      {getSkateDefinition(hud.equippedSkateId).name}
+                    </div>
+                    <div className="text-[10px] font-mono-num text-slate-300">
+                      {hud.skateActive
+                        ? `ESCUDO ATIVO · ${hud.skateRemainingSec.toFixed(1)}s`
+                        : `${hud.skateChargesRemaining}x · ${
+                            mobileMode ? '2x TOQUE ou TOQUE AQUI' : 'ESPAÇO ou CLIQUE'
+                          }`}
+                    </div>
+                  </div>
                 </button>
               </div>
-            </div>
-          ) : (
-            <div className="mx-auto px-3 py-1 rounded-lg bg-slate-950/75 border border-slate-800 text-[11px] text-slate-300 font-semibold text-center">
-              {mobileMode
-                ? 'Deslize para os lados, cima ou baixo · Toque no ícone de controle para botões'
-                : 'A/D ou ←/→ Faixas · Espaço/↑ Pular · S/↓ Deslizar · Deslize na tela no celular'}
-            </div>
-          )}
+            )}
+
+          <div className="flex items-end justify-between">
+            {showTouchButtons && !paused && !summary && !mpFinished && !coopSpectating ? (
+              <div className="w-full flex items-end justify-between pointer-events-auto pb-1">
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    aria-label="Mover para esquerda"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerHaptic();
+                      engineRef.current?.moveLeft();
+                    }}
+                    className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-slate-500/80 text-white flex items-center justify-center active:scale-90 active:bg-slate-800 shadow-xl touch-none"
+                  >
+                    <ArrowLeft className="w-7 h-7" />
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Mover para direita"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerHaptic();
+                      engineRef.current?.moveRight();
+                    }}
+                    className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-slate-500/80 text-white flex items-center justify-center active:scale-90 active:bg-slate-800 shadow-xl touch-none"
+                  >
+                    <ArrowRight className="w-7 h-7" />
+                  </button>
+                </div>
+                <div className="flex gap-2.5">
+                  <button
+                    type="button"
+                    aria-label="Deslizar"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerHaptic();
+                      engineRef.current?.slide();
+                    }}
+                    className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-slate-900/90 border-2 border-sky-400 text-sky-300 flex flex-col items-center justify-center active:scale-90 active:bg-sky-950 shadow-xl touch-none"
+                  >
+                    <ArrowDown className="w-6 h-6" />
+                    <span className="text-[9px] font-extrabold uppercase leading-none mt-0.5">
+                      Descer
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="Pular"
+                    onPointerDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      triggerHaptic();
+                      engineRef.current?.jump();
+                    }}
+                    className="w-16 h-16 sm:w-14 sm:h-14 rounded-2xl bg-rose-600/95 border-2 border-rose-300 text-white flex flex-col items-center justify-center active:scale-90 active:bg-rose-500 shadow-xl touch-none"
+                  >
+                    <ArrowUp className="w-6 h-6" />
+                    <span className="text-[9px] font-extrabold uppercase leading-none mt-0.5">
+                      Pular
+                    </span>
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="mx-auto px-3 py-1 rounded-lg bg-slate-950/75 border border-slate-800 text-[11px] text-slate-300 font-semibold text-center">
+                {mobileMode
+                  ? 'Deslize para lados/cima/baixo · 2x toque ativa Skate · Ícone de controle para botões'
+                  : 'A/D ou ←/→ Faixas · ↑ Pular · Espaço Skate/Pular · S/↓ Deslizar'}
+              </div>
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Personal Live Mode Text Overlay (strictly non-blocking, personal only) */}
+      {liveOverlayEnabled && liveTexts.length > 0 && (() => {
+        const currentLive = liveTexts[liveTextIdx % liveTexts.length];
+        if (!currentLive) return null;
+        const posClassMap: Record<LiveOverlayPosition, string> = {
+          top_left: 'top-20 left-4 items-start text-left',
+          top_center: 'top-24 left-1/2 -translate-x-1/2 items-center text-center',
+          top_right: 'top-20 right-4 items-end text-right',
+          center_left: 'top-1/2 -translate-y-1/2 left-4 items-start text-left',
+          center_right: 'top-1/2 -translate-y-1/2 right-4 items-end text-right',
+          bottom_left: 'bottom-24 left-4 items-start text-left',
+          bottom_center: 'bottom-24 left-1/2 -translate-x-1/2 items-center text-center',
+          bottom_right: 'bottom-24 right-4 items-end text-right',
+        };
+        const fontClass =
+          currentLive.fontFamily === 'display'
+            ? 'font-display font-extrabold'
+            : currentLive.fontFamily === 'mono'
+              ? 'font-mono-num font-bold'
+              : 'font-sans font-extrabold';
+        return (
+          <div
+            className={`absolute z-20 pointer-events-none flex flex-col max-w-[85vw] sm:max-w-lg transition-all duration-300 ${
+              posClassMap[currentLive.position]
+            } ${liveVisible ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-1.5'}`}
+          >
+            <div
+              className={`${fontClass} px-3.5 py-1.5 rounded-xl bg-slate-950/55 border border-white/15 tracking-wide`}
+              style={{
+                color: currentLive.color,
+                fontSize: `${Math.min(44, Math.max(12, currentLive.fontSize))}px`,
+                textShadow: currentLive.shadow ? '0 3px 12px rgba(0,0,0,0.9)' : 'none',
+              }}
+            >
+              {currentLive.text}
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Solo Pause Modal */}
       {paused && !summary && !isMultiplayer && (
@@ -995,8 +1253,19 @@ export function GameView({
             )}
 
             {submitError && (
-              <div className="mb-3 px-3 py-2 rounded-lg bg-red-950 border border-red-500/50 text-red-200 text-xs">
-                {submitError}
+              <div className="mb-3 px-3 py-2.5 rounded-lg bg-red-950 border border-red-500/50 text-red-200 text-xs flex items-center justify-between gap-2">
+                <span>{submitError}</span>
+                {lastFinishPayloadRef.current && (
+                  <button
+                    type="button"
+                    disabled={submitting}
+                    onClick={() => void handleRetrySyncSummary()}
+                    className="px-2.5 py-1 rounded bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-[11px] flex items-center gap-1 shrink-0 cursor-pointer"
+                  >
+                    <RefreshCw className={`w-3 h-3 ${submitting ? 'animate-spin' : ''}`} />
+                    Tentar agora
+                  </button>
+                )}
               </div>
             )}
 

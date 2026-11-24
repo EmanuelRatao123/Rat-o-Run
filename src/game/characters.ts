@@ -3,7 +3,10 @@ import {
   CustomCharacterConfig,
   DEFAULT_CUSTOM_CHARACTER_CONFIG,
   PaintRegion,
+  PlayerCapeConfig,
+  SkateId,
   SkinId,
+  getSkateDefinition,
 } from '../shared/constants.ts';
 import { createRadialShadowTexture } from './materials.ts';
 
@@ -52,6 +55,13 @@ export interface CharacterRig {
   rightLegPivot: THREE.Group;
   tailPivot?: THREE.Group;
   capePivot?: THREE.Group;
+  customCapePivot?: THREE.Group;
+  customCapeMesh?: THREE.Mesh;
+  customCapeTex?: THREE.CanvasTexture;
+  customCapeKey?: string;
+  customSkateGroup?: THREE.Group;
+  customSkateId?: SkateId | null;
+  customSkateDispose?: () => void;
   followerMice?: FollowerMouseRig[];
   auraParticles?: AuraParticleRig[];
   blinkLids?: THREE.Mesh[];
@@ -1495,6 +1505,280 @@ function buildCharacterBase(
         }
       }
     }
+  } else if (skin === 'enderman') {
+    // Enderman: Tall obsidian-black voxel silhouette, glowing magenta eyes & void particles
+    v(torsoPivot, { w: 0.44, h: 0.72, d: 0.24, x: 0, y: 0.36, z: 0, color: 0x09090b, roughness: 0.55 });
+    v(torsoPivot, { w: 0.46, h: 0.14, d: 0.26, x: 0, y: 0.54, z: 0, color: 0x18181b, roughness: 0.5 });
+    headPivot.position.set(0, 0.74, 0);
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.26, z: 0, color: 0x09090b, roughness: 0.5 });
+    // Glowing purple eyes
+    v(headPivot, { w: 0.14, h: 0.07, d: 0.05, x: -0.13, y: 0.27, z: 0.25, color: 0xe879f9, emissive: 0xc026d3, emissiveIntensity: 1.8 });
+    v(headPivot, { w: 0.14, h: 0.07, d: 0.05, x: 0.13, y: 0.27, z: 0.25, color: 0xe879f9, emissive: 0xc026d3, emissiveIntensity: 1.8 });
+    v(headPivot, { w: 0.06, h: 0.07, d: 0.06, x: -0.13, y: 0.27, z: 0.255, color: 0xfdf4ff, emissive: 0xf0abfc, emissiveIntensity: 2.0 });
+    v(headPivot, { w: 0.06, h: 0.07, d: 0.06, x: 0.13, y: 0.27, z: 0.255, color: 0xfdf4ff, emissive: 0xf0abfc, emissiveIntensity: 2.0 });
+    // Long slender arms & legs
+    v(leftArmPivot, { w: 0.13, h: 0.68, d: 0.13, x: 0, y: -0.3, z: 0, color: 0x09090b, roughness: 0.55 });
+    v(rightArmPivot, { w: 0.13, h: 0.68, d: 0.13, x: 0, y: -0.3, z: 0, color: 0x09090b, roughness: 0.55 });
+    v(leftLegPivot, { w: 0.14, h: 0.68, d: 0.14, x: 0, y: -0.32, z: 0, color: 0x09090b, roughness: 0.55 });
+    v(rightLegPivot, { w: 0.14, h: 0.68, d: 0.14, x: 0, y: -0.32, z: 0, color: 0x09090b, roughness: 0.55 });
+    auraParticles = [];
+    for (let i = 0; i < 7; i++) {
+      const pMesh = v(bodyPivot, {
+        w: 0.07,
+        h: 0.07,
+        d: 0.07,
+        x: 0,
+        y: 1.0,
+        z: 0,
+        color: 0xd946ef,
+        emissive: 0xa21caf,
+        emissiveIntensity: 1.6,
+      });
+      auraParticles.push({
+        mesh: pMesh,
+        radius: 0.58 + (i % 2) * 0.16,
+        heightOffset: 0.55 + i * 0.18,
+        speed: 1.8 + (i % 3) * 0.4,
+        angle: (i / 7) * Math.PI * 2,
+      });
+    }
+  } else if (skin === 'deadpool') {
+    // Deadpool: Red/black tactical suit, white mask eyes & twin crossed katanas
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xdc2626, roughness: 0.55 });
+    v(torsoPivot, { w: 0.18, h: 0.58, d: 0.33, x: -0.18, y: 0.3, z: 0, color: 0x111827, roughness: 0.6 });
+    v(torsoPivot, { w: 0.18, h: 0.58, d: 0.33, x: 0.18, y: 0.3, z: 0, color: 0x111827, roughness: 0.6 });
+    v(torsoPivot, { w: 0.58, h: 0.09, d: 0.35, x: 0, y: 0.07, z: 0, color: 0x7f1d1d }); // Belt
+    v(torsoPivot, { w: 0.14, h: 0.12, d: 0.05, x: 0, y: 0.07, z: 0.19, color: 0xef4444 }); // Buckle
+    // Twin katanas on back
+    v(torsoPivot, { w: 0.06, h: 0.72, d: 0.06, x: 0.04, y: 0.38, z: -0.2, color: 0x1e293b, rz: 0.55 });
+    v(torsoPivot, { w: 0.06, h: 0.72, d: 0.06, x: -0.04, y: 0.38, z: -0.21, color: 0x1e293b, rz: -0.55 });
+    v(torsoPivot, { w: 0.08, h: 0.18, d: 0.08, x: -0.22, y: 0.72, z: -0.2, color: 0x991b1b, rz: 0.55 });
+    v(torsoPivot, { w: 0.08, h: 0.18, d: 0.08, x: 0.22, y: 0.72, z: -0.21, color: 0x991b1b, rz: -0.55 });
+    // Head
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xdc2626, roughness: 0.5 });
+    v(headPivot, { w: 0.16, h: 0.18, d: 0.04, x: -0.12, y: 0.27, z: 0.24, color: 0x09090b });
+    v(headPivot, { w: 0.16, h: 0.18, d: 0.04, x: 0.12, y: 0.27, z: 0.24, color: 0x09090b });
+    v(headPivot, { w: 0.11, h: 0.07, d: 0.05, x: -0.12, y: 0.27, z: 0.25, color: 0xffffff, emissive: 0xe2e8f0, emissiveIntensity: 0.25 });
+    v(headPivot, { w: 0.11, h: 0.07, d: 0.05, x: 0.12, y: 0.27, z: 0.25, color: 0xffffff, emissive: 0xe2e8f0, emissiveIntensity: 0.25 });
+    buildLimbs(0x111827, 0xdc2626, 0x111827, 0xdc2626, 0x09090b);
+  } else if (skin === 'mario') {
+    // Mario: Red cap, thick mustache, blue overalls & red shirt
+    v(torsoPivot, { w: 0.56, h: 0.56, d: 0.34, x: 0, y: 0.29, z: 0, color: 0x2563eb, roughness: 0.7 }); // Overalls
+    v(torsoPivot, { w: 0.58, h: 0.22, d: 0.33, x: 0, y: 0.48, z: -0.01, color: 0xdc2626, roughness: 0.65 }); // Red shirt
+    v(torsoPivot, { w: 0.1, h: 0.24, d: 0.35, x: -0.14, y: 0.47, z: 0, color: 0x2563eb });
+    v(torsoPivot, { w: 0.1, h: 0.24, d: 0.35, x: 0.14, y: 0.47, z: 0, color: 0x2563eb });
+    v(torsoPivot, { w: 0.08, h: 0.08, d: 0.04, x: -0.14, y: 0.38, z: 0.18, color: 0xfacc15 }); // Gold buttons
+    v(torsoPivot, { w: 0.08, h: 0.08, d: 0.04, x: 0.14, y: 0.38, z: 0.18, color: 0xfacc15 });
+    // Head + Red Cap
+    v(headPivot, { w: 0.48, h: 0.44, d: 0.48, x: 0, y: 0.23, z: 0, color: 0xfdba74, roughness: 0.72 });
+    v(headPivot, { w: 0.52, h: 0.18, d: 0.52, x: 0, y: 0.49, z: 0, color: 0xdc2626 });
+    v(headPivot, { w: 0.52, h: 0.05, d: 0.18, x: 0, y: 0.41, z: 0.28, color: 0xb91c1c });
+    v(headPivot, { w: 0.16, h: 0.14, d: 0.04, x: 0, y: 0.5, z: 0.27, color: 0xffffff });
+    v(headPivot, { w: 0.09, h: 0.09, d: 0.05, x: 0, y: 0.5, z: 0.28, color: 0xdc2626 });
+    // Nose & Mustache
+    v(headPivot, { w: 0.14, h: 0.12, d: 0.12, x: 0, y: 0.2, z: 0.26, color: 0xfb923c });
+    v(headPivot, { w: 0.32, h: 0.08, d: 0.08, x: 0, y: 0.12, z: 0.26, color: 0x451a03 });
+    addEyes(0.28, 0.24, 0x2563eb);
+    buildLimbs(0xffffff, 0xdc2626, 0x2563eb, 0x78350f, 0x451a03);
+  } else if (skin === 'luigi') {
+    // Luigi: Slightly taller green cap, dark mustache, blue overalls & green shirt
+    v(torsoPivot, { w: 0.52, h: 0.6, d: 0.3, x: 0, y: 0.31, z: 0, color: 0x1d4ed8, roughness: 0.7 });
+    v(torsoPivot, { w: 0.54, h: 0.24, d: 0.29, x: 0, y: 0.51, z: -0.01, color: 0x16a34a, roughness: 0.65 });
+    v(torsoPivot, { w: 0.09, h: 0.24, d: 0.31, x: -0.13, y: 0.49, z: 0, color: 0x1d4ed8 });
+    v(torsoPivot, { w: 0.09, h: 0.24, d: 0.31, x: 0.13, y: 0.49, z: 0, color: 0x1d4ed8 });
+    v(torsoPivot, { w: 0.07, h: 0.07, d: 0.04, x: -0.13, y: 0.4, z: 0.16, color: 0xfacc15 });
+    v(torsoPivot, { w: 0.07, h: 0.07, d: 0.04, x: 0.13, y: 0.4, z: 0.16, color: 0xfacc15 });
+    headPivot.position.set(0, 0.66, 0);
+    v(headPivot, { w: 0.45, h: 0.48, d: 0.45, x: 0, y: 0.25, z: 0, color: 0xfdba74, roughness: 0.72 });
+    v(headPivot, { w: 0.49, h: 0.18, d: 0.49, x: 0, y: 0.52, z: 0, color: 0x16a34a });
+    v(headPivot, { w: 0.49, h: 0.05, d: 0.18, x: 0, y: 0.44, z: 0.26, color: 0x15803d });
+    v(headPivot, { w: 0.15, h: 0.14, d: 0.04, x: 0, y: 0.53, z: 0.25, color: 0xffffff });
+    v(headPivot, { w: 0.08, h: 0.09, d: 0.05, x: 0, y: 0.53, z: 0.26, color: 0x16a34a });
+    v(headPivot, { w: 0.13, h: 0.13, d: 0.12, x: 0, y: 0.21, z: 0.25, color: 0xfb923c });
+    v(headPivot, { w: 0.3, h: 0.07, d: 0.08, x: 0, y: 0.13, z: 0.25, color: 0x27272a });
+    addEyes(0.3, 0.23, 0x1d4ed8);
+    buildLimbs(0xffffff, 0x16a34a, 0x1d4ed8, 0x78350f, 0x451a03);
+  } else if (skin === 'gigachad') {
+    // Gigachad: Broad muscular shoulders, sculpted jaw & beard, dark fitted shirt
+    v(torsoPivot, { w: 0.66, h: 0.36, d: 0.38, x: 0, y: 0.42, z: 0, color: 0x334155, roughness: 0.55 });
+    v(torsoPivot, { w: 0.5, h: 0.28, d: 0.3, x: 0, y: 0.14, z: 0, color: 0x1e293b, roughness: 0.65 });
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.46, x: 0, y: 0.25, z: 0, color: 0xd6b094, roughness: 0.65 });
+    v(headPivot, { w: 0.44, h: 0.18, d: 0.44, x: 0, y: 0.09, z: 0.03, color: 0x27272a, roughness: 0.8 }); // Chiseled beard
+    v(headPivot, { w: 0.22, h: 0.11, d: 0.1, x: 0, y: 0.03, z: 0.22, color: 0x18181b }); // Strong chin
+    v(headPivot, { w: 0.5, h: 0.16, d: 0.48, x: 0, y: 0.5, z: -0.02, color: 0x18181b }); // Hair
+    v(headPivot, { w: 0.12, h: 0.04, d: 0.04, x: -0.12, y: 0.34, z: 0.25, color: 0x18181b, rz: -0.12 });
+    v(headPivot, { w: 0.12, h: 0.04, d: 0.04, x: 0.12, y: 0.34, z: 0.25, color: 0x18181b, rz: 0.12 });
+    addEyes(0.28, 0.24, 0x334155);
+    buildLimbs(0xd6b094, 0x334155, 0x0f172a, 0x18181b, 0x475569);
+  } else if (skin === 'quandale_dingle') {
+    // Quandale Dingle: Expressive wide eyes, iconic giant nose & bright orange/yellow streetwear
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.34, x: 0, y: 0.3, z: 0, color: 0xf97316, roughness: 0.72 });
+    v(torsoPivot, { w: 0.42, h: 0.18, d: 0.36, x: 0, y: 0.14, z: 0.01, color: 0xea580c });
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.25, z: 0, color: 0x8d5524, roughness: 0.72 });
+    v(headPivot, { w: 0.5, h: 0.12, d: 0.48, x: 0, y: 0.5, z: 0, color: 0x111827 });
+    // Iconic oversized nose
+    v(headPivot, { w: 0.18, h: 0.16, d: 0.34, x: 0, y: 0.2, z: 0.34, color: 0x7c471b, roughness: 0.65 });
+    // Huge goofy eyes
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.05, x: -0.13, y: 0.31, z: 0.25, color: 0xffffff });
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.05, x: 0.13, y: 0.31, z: 0.25, color: 0xffffff });
+    v(headPivot, { w: 0.07, h: 0.07, d: 0.06, x: -0.15, y: 0.31, z: 0.26, color: 0x09090b });
+    v(headPivot, { w: 0.07, h: 0.07, d: 0.06, x: 0.11, y: 0.31, z: 0.26, color: 0x09090b });
+    v(headPivot, { w: 0.26, h: 0.05, d: 0.05, x: 0, y: 0.09, z: 0.25, color: 0xffffff });
+    buildLimbs(0x8d5524, 0xf97316, 0x1d4ed8, 0xfacc15, 0xffffff);
+  } else if (skin === 'doge') {
+    // Doge: Golden Shiba Inu, cream belly & muzzle, sideways meme eyes, curled tail
+    v(torsoPivot, { w: 0.54, h: 0.56, d: 0.34, x: 0, y: 0.29, z: 0, color: 0xeab308, roughness: 0.78 });
+    v(torsoPivot, { w: 0.36, h: 0.44, d: 0.06, x: 0, y: 0.26, z: 0.16, color: 0xfef3c7 }); // Cream belly
+    v(torsoPivot, { w: 0.56, h: 0.09, d: 0.36, x: 0, y: 0.55, z: 0, color: 0xdc2626 }); // Red collar
+    v(torsoPivot, { w: 0.1, h: 0.1, d: 0.05, x: 0, y: 0.48, z: 0.2, color: 0xfacc15, metalness: 0.6 }); // Tag
+    v(headPivot, { w: 0.5, h: 0.44, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xeab308, roughness: 0.75 });
+    v(headPivot, { w: 0.32, h: 0.2, d: 0.22, x: 0, y: 0.14, z: 0.28, color: 0xfef3c7 }); // Snout
+    v(headPivot, { w: 0.11, h: 0.08, d: 0.06, x: 0, y: 0.2, z: 0.4, color: 0x0f172a }); // Nose
+    // Pointed Shiba ears
+    v(headPivot, { w: 0.14, h: 0.18, d: 0.1, x: -0.18, y: 0.52, z: 0, color: 0xca8a04, rz: 0.12 });
+    v(headPivot, { w: 0.14, h: 0.18, d: 0.1, x: 0.18, y: 0.52, z: 0, color: 0xca8a04, rz: -0.12 });
+    // Sideways meme eyes
+    v(headPivot, { w: 0.12, h: 0.1, d: 0.04, x: -0.12, y: 0.3, z: 0.25, color: 0xffffff });
+    v(headPivot, { w: 0.12, h: 0.1, d: 0.04, x: 0.12, y: 0.3, z: 0.25, color: 0xffffff });
+    v(headPivot, { w: 0.06, h: 0.07, d: 0.05, x: -0.14, y: 0.3, z: 0.26, color: 0x0f172a });
+    v(headPivot, { w: 0.06, h: 0.07, d: 0.05, x: 0.1, y: 0.3, z: 0.26, color: 0x0f172a });
+    buildLimbs(0xeab308, 0xeab308, 0xca8a04, 0xfef3c7, 0xca8a04);
+    tailPivot = new THREE.Group();
+    tailPivot.position.set(0, 0.18, -0.18);
+    torsoPivot.add(tailPivot);
+    v(tailPivot, { w: 0.14, h: 0.24, d: 0.2, x: 0, y: 0.1, z: -0.14, color: 0xfef3c7, rx: 0.5 });
+  } else if (skin === 'ronaldinho_gaucho') {
+    // Ronaldinho Gaúcho: Yellow/green #10 Seleção kit, headband, curly long hair & signature grin
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xfacc15, roughness: 0.5 });
+    v(torsoPivot, { w: 0.58, h: 0.1, d: 0.34, x: 0, y: 0.56, z: 0, color: 0x16a34a });
+    v(torsoPivot, { w: 0.18, h: 0.24, d: 0.04, x: 0, y: 0.3, z: -0.17, color: 0x15803d }); // #10 back
+    v(headPivot, { w: 0.46, h: 0.46, d: 0.46, x: 0, y: 0.24, z: 0, color: 0x8d5524, roughness: 0.7 });
+    // Headband + curly hair + ponytail
+    v(headPivot, { w: 0.49, h: 0.08, d: 0.49, x: 0, y: 0.41, z: 0, color: 0xffffff });
+    v(headPivot, { w: 0.52, h: 0.16, d: 0.5, x: 0, y: 0.5, z: -0.03, color: 0x18181b });
+    v(headPivot, { w: 0.38, h: 0.32, d: 0.16, x: 0, y: 0.2, z: -0.26, color: 0x18181b });
+    // Big cheerful smile
+    v(headPivot, { w: 0.22, h: 0.08, d: 0.05, x: 0, y: 0.1, z: 0.24, color: 0xffffff });
+    addEyes(0.28, 0.24, 0x1c1917);
+    buildLimbs(0x8d5524, 0xfacc15, 0x1d4ed8, 0xfacc15, 0x16a34a);
+  } else if (skin === 'vini_jr') {
+    // Vini Jr.: White & gold royal football kit, high-top fade, dynamic smile & golden cleats
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xf8fafc, roughness: 0.45 });
+    v(torsoPivot, { w: 0.12, h: 0.58, d: 0.33, x: -0.22, y: 0.3, z: 0, color: 0xf59e0b });
+    v(torsoPivot, { w: 0.12, h: 0.58, d: 0.33, x: 0.22, y: 0.3, z: 0, color: 0xf59e0b });
+    v(torsoPivot, { w: 0.16, h: 0.24, d: 0.04, x: 0, y: 0.3, z: -0.17, color: 0x1e293b }); // #7 back
+    v(headPivot, { w: 0.46, h: 0.46, d: 0.46, x: 0, y: 0.24, z: 0, color: 0x6b3e26, roughness: 0.7 });
+    v(headPivot, { w: 0.46, h: 0.16, d: 0.46, x: 0, y: 0.51, z: 0, color: 0x111827 });
+    v(headPivot, { w: 0.2, h: 0.07, d: 0.05, x: 0, y: 0.1, z: 0.24, color: 0xffffff });
+    addEyes(0.28, 0.24, 0x0f172a);
+    buildLimbs(0x6b3e26, 0xf8fafc, 0xf8fafc, 0xf59e0b, 0xffffff);
+  } else if (skin === 'rato_cosmico') {
+    // Rato Cósmico: Deep violet cosmic suit, neon cyan eyes, starlight helmet & orbiting stars
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x312e81, roughness: 0.3, metalness: 0.45 });
+    v(torsoPivot, { w: 0.26, h: 0.26, d: 0.06, x: 0, y: 0.34, z: 0.18, color: 0x38bdf8, emissive: 0x0284c7, emissiveIntensity: 1.4 });
+    v(headPivot, { w: 0.5, h: 0.44, d: 0.5, x: 0, y: 0.24, z: 0, color: 0x4c1d95, roughness: 0.35 });
+    v(headPivot, { w: 0.28, h: 0.18, d: 0.24, x: 0, y: 0.16, z: 0.3, color: 0xc4b5fd });
+    v(headPivot, { w: 0.12, h: 0.09, d: 0.07, x: 0, y: 0.22, z: 0.43, color: 0x22d3ee, emissive: 0x06b6d4, emissiveIntensity: 1.5 });
+    // Glowing cosmic ears
+    v(headPivot, { w: 0.22, h: 0.22, d: 0.08, x: -0.25, y: 0.48, z: -0.02, color: 0x6d28d9 });
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.09, x: -0.25, y: 0.48, z: 0, color: 0xe879f9, emissive: 0xd946ef, emissiveIntensity: 1.1 });
+    v(headPivot, { w: 0.22, h: 0.22, d: 0.08, x: 0.25, y: 0.48, z: -0.02, color: 0x6d28d9 });
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.09, x: 0.25, y: 0.48, z: 0, color: 0xe879f9, emissive: 0xd946ef, emissiveIntensity: 1.1 });
+    // Glowing cyan visor eyes
+    v(headPivot, { w: 0.13, h: 0.1, d: 0.05, x: -0.12, y: 0.3, z: 0.26, color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.8 });
+    v(headPivot, { w: 0.13, h: 0.1, d: 0.05, x: 0.12, y: 0.3, z: 0.26, color: 0x22d3ee, emissive: 0x22d3ee, emissiveIntensity: 1.8 });
+    buildLimbs(0xc4b5fd, 0x312e81, 0x1e1b4b, 0x38bdf8, 0xe879f9);
+    tailPivot = new THREE.Group();
+    tailPivot.position.set(0, 0.12, -0.18);
+    torsoPivot.add(tailPivot);
+    v(tailPivot, { w: 0.08, h: 0.08, d: 0.5, x: 0, y: -0.04, z: -0.24, color: 0x22d3ee, emissive: 0x0891b2, emissiveIntensity: 1.1, rx: -0.25 });
+    auraParticles = [];
+    for (let i = 0; i < 6; i++) {
+      const star = v(bodyPivot, {
+        w: 0.09,
+        h: 0.09,
+        d: 0.09,
+        x: 0,
+        y: 1.1,
+        z: 0,
+        color: i % 2 === 0 ? 0xfef08a : 0x38bdf8,
+        emissive: i % 2 === 0 ? 0xfacc15 : 0x06b6d4,
+        emissiveIntensity: 1.7,
+      });
+      auraParticles.push({
+        mesh: star,
+        radius: 0.72,
+        heightOffset: 0.8 + (i % 3) * 0.3,
+        speed: 2.2,
+        angle: (i / 6) * Math.PI * 2,
+      });
+    }
+  } else if (skin === 'bob_esponja') {
+    // Bob Esponja: Yellow square sponge body, white shirt, red tie, brown square pants & blue eyes
+    v(torsoPivot, { w: 0.64, h: 0.56, d: 0.34, x: 0, y: 0.38, z: 0, color: 0xfacc15, roughness: 0.8 });
+    v(torsoPivot, { w: 0.65, h: 0.14, d: 0.35, x: 0, y: 0.14, z: 0, color: 0xffffff, roughness: 0.55 }); // Shirt
+    v(torsoPivot, { w: 0.65, h: 0.16, d: 0.35, x: 0, y: 0.0, z: 0, color: 0x78350f, roughness: 0.7 }); // Brown pants
+    v(torsoPivot, { w: 0.1, h: 0.18, d: 0.05, x: 0, y: 0.11, z: 0.18, color: 0xdc2626 }); // Red tie
+    // Sponge dimples
+    v(torsoPivot, { w: 0.08, h: 0.08, d: 0.02, x: -0.22, y: 0.56, z: 0.175, color: 0xca8a04 });
+    v(torsoPivot, { w: 0.07, h: 0.07, d: 0.02, x: 0.21, y: 0.34, z: 0.175, color: 0xca8a04 });
+    // Face directly on upper sponge block
+    headPivot.position.set(0, 0.52, 0);
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.04, x: -0.12, y: 0.08, z: 0.18, color: 0xffffff });
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.04, x: 0.12, y: 0.08, z: 0.18, color: 0xffffff });
+    v(headPivot, { w: 0.08, h: 0.08, d: 0.05, x: -0.11, y: 0.08, z: 0.19, color: 0x0ea5e9 });
+    v(headPivot, { w: 0.08, h: 0.08, d: 0.05, x: 0.11, y: 0.08, z: 0.19, color: 0x0ea5e9 });
+    v(headPivot, { w: 0.08, h: 0.08, d: 0.14, x: 0, y: 0.01, z: 0.22, color: 0xfacc15 }); // Nose
+    v(headPivot, { w: 0.08, h: 0.07, d: 0.04, x: -0.06, y: -0.12, z: 0.18, color: 0xffffff }); // Buck tooth L
+    v(headPivot, { w: 0.08, h: 0.07, d: 0.04, x: 0.06, y: -0.12, z: 0.18, color: 0xffffff }); // Buck tooth R
+    buildLimbs(0xfacc15, 0xffffff, 0xfacc15, 0x09090b, 0xffffff);
+  } else if (skin === 'patrick') {
+    // Patrick Estrela: Pink cone-head starfish with lime green shorts & purple flowers
+    v(torsoPivot, { w: 0.62, h: 0.5, d: 0.42, x: 0, y: 0.24, z: 0, color: 0xfb7185, roughness: 0.78 });
+    v(torsoPivot, { w: 0.64, h: 0.22, d: 0.44, x: 0, y: 0.06, z: 0, color: 0x4ade80, roughness: 0.7 }); // Green shorts
+    v(torsoPivot, { w: 0.1, h: 0.1, d: 0.04, x: -0.18, y: 0.08, z: 0.23, color: 0x9333ea }); // Purple flower patch
+    v(torsoPivot, { w: 0.1, h: 0.1, d: 0.04, x: 0.16, y: 0.04, z: -0.23, color: 0x9333ea });
+    // Cone starfish head
+    v(headPivot, { w: 0.48, h: 0.36, d: 0.4, x: 0, y: 0.14, z: 0, color: 0xfb7185, roughness: 0.78 });
+    v(headPivot, { w: 0.34, h: 0.24, d: 0.3, x: 0, y: 0.4, z: 0, color: 0xfb7185, roughness: 0.78 });
+    v(headPivot, { w: 0.2, h: 0.18, d: 0.2, x: 0, y: 0.56, z: 0, color: 0xfb7185, roughness: 0.78 });
+    addEyes(0.24, 0.21, 0x0f172a);
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.05, x: -0.11, y: 0.35, z: 0.22, color: 0x18181b, rz: 0.15 });
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.05, x: 0.11, y: 0.35, z: 0.22, color: 0x18181b, rz: -0.15 });
+    v(headPivot, { w: 0.22, h: 0.06, d: 0.04, x: 0, y: 0.08, z: 0.21, color: 0xbe123c });
+    buildLimbs(0xfb7185, 0xfb7185, 0x4ade80, 0xfb7185, 0xf43f5e);
+  } else if (skin === 'lula_molusco') {
+    // Lula Molusco: Turquoise-teal squid, tall dome head, drooping squid nose & brown shirt
+    v(torsoPivot, { w: 0.48, h: 0.56, d: 0.3, x: 0, y: 0.3, z: 0, color: 0x92400e, roughness: 0.75 }); // Brown polo
+    v(torsoPivot, { w: 0.32, h: 0.1, d: 0.32, x: 0, y: 0.55, z: 0, color: 0x78350f });
+    headPivot.position.set(0, 0.64, 0);
+    v(headPivot, { w: 0.46, h: 0.38, d: 0.46, x: 0, y: 0.22, z: 0, color: 0x5eead4, roughness: 0.65 });
+    v(headPivot, { w: 0.58, h: 0.28, d: 0.54, x: 0, y: 0.48, z: -0.02, color: 0x5eead4, roughness: 0.65 }); // Dome head
+    v(headPivot, { w: 0.14, h: 0.26, d: 0.18, x: 0, y: 0.14, z: 0.28, color: 0x2dd4bf }); // Droopy squid nose
+    // Half-lidded grumpy eyes
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.05, x: -0.11, y: 0.29, z: 0.24, color: 0xfef08a });
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.05, x: 0.11, y: 0.29, z: 0.24, color: 0xfef08a });
+    v(headPivot, { w: 0.14, h: 0.06, d: 0.06, x: -0.11, y: 0.34, z: 0.245, color: 0x14b8a6 });
+    v(headPivot, { w: 0.14, h: 0.06, d: 0.06, x: 0.11, y: 0.34, z: 0.245, color: 0x14b8a6 });
+    v(headPivot, { w: 0.06, h: 0.06, d: 0.06, x: -0.11, y: 0.27, z: 0.25, color: 0x7f1d1d });
+    v(headPivot, { w: 0.06, h: 0.06, d: 0.06, x: 0.11, y: 0.27, z: 0.25, color: 0x7f1d1d });
+    buildLimbs(0x5eead4, 0x92400e, 0x5eead4, 0x2dd4bf, 0x0f766e);
+  } else if (skin === 'plankton') {
+    // Plankton (Secret Admin Exclusive): Emerald pill body, twin tall antennae & giant red cyclops eye
+    v(torsoPivot, { w: 0.44, h: 0.66, d: 0.38, x: 0, y: 0.34, z: 0, color: 0x15803d, roughness: 0.55 });
+    v(torsoPivot, { w: 0.38, h: 0.12, d: 0.34, x: 0, y: 0.68, z: 0, color: 0x166534 });
+    headPivot.position.set(0, 0.62, 0);
+    // Giant glowing cyclops eye
+    v(headPivot, { w: 0.24, h: 0.24, d: 0.06, x: 0, y: -0.06, z: 0.2, color: 0xfef08a, emissive: 0xfacc15, emissiveIntensity: 0.45 });
+    v(headPivot, { w: 0.12, h: 0.12, d: 0.07, x: 0, y: -0.06, z: 0.21, color: 0xef4444, emissive: 0xdc2626, emissiveIntensity: 1.4 });
+    v(headPivot, { w: 0.28, h: 0.06, d: 0.07, x: 0, y: 0.08, z: 0.21, color: 0x052e16 }); // Unibrow
+    v(headPivot, { w: 0.22, h: 0.06, d: 0.05, x: 0, y: -0.26, z: 0.2, color: 0xffffff }); // Menacing grin
+    // Twin tall segmented antennae
+    v(headPivot, { w: 0.06, h: 0.42, d: 0.06, x: -0.14, y: 0.28, z: 0, color: 0x166534, rz: 0.24 });
+    v(headPivot, { w: 0.06, h: 0.42, d: 0.06, x: 0.14, y: 0.28, z: 0, color: 0x166534, rz: -0.24 });
+    v(headPivot, { w: 0.09, h: 0.09, d: 0.09, x: -0.2, y: 0.49, z: 0, color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 1.2 });
+    v(headPivot, { w: 0.09, h: 0.09, d: 0.09, x: 0.2, y: 0.49, z: 0, color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 1.2 });
+    buildLimbs(0x15803d, 0x15803d, 0x166534, 0x052e16, 0x4ade80);
   } else {
     // Police Pursuer
     v(torsoPivot, { w: 0.58, h: 0.6, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x1e3a8a, roughness: 0.65 });
@@ -1633,6 +1917,309 @@ function buildCharacterBase(
       }
     },
   };
+}
+
+function drawCapeCanvas(cfg: PlayerCapeConfig): HTMLCanvasElement {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 384;
+  const ctx = canvas.getContext('2d')!;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const primary = cfg.primaryColor || '#e11d48';
+  const secondary = cfg.secondaryColor || '#0f172a';
+  const textCol = cfg.textColor || '#ffffff';
+
+  if (cfg.backgroundStyle === 'gradient') {
+    const grad = ctx.createLinearGradient(0, 0, w, h);
+    grad.addColorStop(0, primary);
+    grad.addColorStop(1, secondary);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h);
+  } else if (cfg.backgroundStyle === 'striped') {
+    ctx.fillStyle = primary;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = secondary;
+    for (let x = 0; x < w; x += 48) {
+      ctx.fillRect(x, 0, 24, h);
+    }
+  } else if (cfg.backgroundStyle === 'checkered') {
+    const cell = 32;
+    for (let y = 0; y < h; y += cell) {
+      for (let x = 0; x < w; x += cell) {
+        ctx.fillStyle = ((x / cell + y / cell) % 2 === 0) ? primary : secondary;
+        ctx.fillRect(x, y, cell, cell);
+      }
+    }
+  } else if (cfg.backgroundStyle === 'stars') {
+    ctx.fillStyle = primary;
+    ctx.fillRect(0, 0, w, h);
+    ctx.fillStyle = secondary;
+    for (let i = 0; i < 24; i++) {
+      const sx = ((i * 73) % (w - 30)) + 15;
+      const sy = ((i * 119) % (h - 30)) + 15;
+      ctx.beginPath();
+      ctx.arc(sx, sy, i % 3 === 0 ? 9 : 5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else {
+    ctx.fillStyle = primary;
+    ctx.fillRect(0, 0, w, h);
+  }
+
+  // Border trim
+  ctx.strokeStyle = secondary;
+  ctx.lineWidth = 14;
+  ctx.strokeRect(7, 7, w - 14, h - 14);
+
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = textCol;
+  ctx.shadowColor = 'rgba(0,0,0,0.45)';
+  ctx.shadowBlur = 8;
+
+  if (cfg.equippedCapeId === 'capa_camisa_10') {
+    const label = (cfg.shirt10Name || 'CRAQUE').toUpperCase().slice(0, 12);
+    ctx.font = 'bold 34px sans-serif';
+    ctx.fillText(label, w / 2, 100, w - 36);
+    ctx.font = '900 132px sans-serif';
+    ctx.fillText('10', w / 2, 232);
+  } else {
+    const raw = (cfg.customText || 'RATÃO').toUpperCase().slice(0, 16);
+    ctx.font = raw.length > 9 ? '900 38px sans-serif' : '900 48px sans-serif';
+    ctx.fillText(raw, w / 2, 192, w - 34);
+  }
+
+  return canvas;
+}
+
+export function applyCustomCapeToRig(
+  rig: CharacterRig,
+  capeConfig?: PlayerCapeConfig | null
+): void {
+  const active = Boolean(capeConfig && capeConfig.equippedCapeId !== 'none');
+  if (rig.capePivot) {
+    rig.capePivot.visible = !active;
+  }
+  if (!active || !capeConfig) {
+    if (rig.customCapePivot) {
+      rig.customCapePivot.visible = false;
+    }
+    return;
+  }
+
+  const key = JSON.stringify({
+    e: capeConfig.equippedCapeId,
+    t: capeConfig.customText,
+    s: capeConfig.shirt10Name,
+    p: capeConfig.primaryColor,
+    sec: capeConfig.secondaryColor,
+    tc: capeConfig.textColor,
+    bg: capeConfig.backgroundStyle,
+  });
+
+  if (!rig.customCapePivot) {
+    const pivot = new THREE.Group();
+    pivot.position.set(0, 0.56, -0.18);
+    rig.torsoPivot.add(pivot);
+
+    const geo = new THREE.BoxGeometry(0.58, 0.86, 0.04);
+    const mat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      roughness: 0.45,
+      metalness: 0.08,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(0, -0.43, -0.03);
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    pivot.add(mesh);
+
+    rig.customCapePivot = pivot;
+    rig.customCapeMesh = mesh;
+
+    const prevDispose = rig.dispose;
+    rig.dispose = () => {
+      prevDispose();
+      geo.dispose();
+      mat.dispose();
+      rig.customCapeTex?.dispose();
+    };
+  }
+
+  rig.customCapePivot.visible = true;
+  if (rig.customCapeKey !== key && rig.customCapeMesh) {
+    rig.customCapeKey = key;
+    rig.customCapeTex?.dispose();
+    const canvas = drawCapeCanvas(capeConfig);
+    const tex = new THREE.CanvasTexture(canvas);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    tex.needsUpdate = true;
+    rig.customCapeTex = tex;
+    const mat = rig.customCapeMesh.material as THREE.MeshStandardMaterial;
+    mat.map = tex;
+    mat.needsUpdate = true;
+  }
+}
+
+export function createSkateMesh(skateId: SkateId): {
+  group: THREE.Group;
+  dispose: () => void;
+} {
+  const def = getSkateDefinition(skateId);
+  const group = new THREE.Group();
+  const geos: THREE.BufferGeometry[] = [];
+  const mats: THREE.Material[] = [];
+  const dummyFlash: THREE.MeshStandardMaterial[] = [];
+
+  const primary = parseInt(def.primaryColor.replace('#', ''), 16);
+  const accent = parseInt(def.accentColor.replace('#', ''), 16);
+  const wheel = parseInt(def.wheelColor.replace('#', ''), 16);
+  const effect = parseInt(def.effectColor.replace('#', ''), 16);
+
+  // Main deck + upturned nose/tail
+  addVoxel(
+    group,
+    {
+      w: 0.64,
+      h: 0.08,
+      d: 1.24,
+      x: 0,
+      y: 0.11,
+      z: 0,
+      color: primary,
+      roughness: skateId === 'skate_dourado' ? 0.2 : 0.4,
+      metalness: skateId === 'skate_dourado' ? 0.85 : 0.25,
+      emissive: skateId === 'skate_eletrico' || skateId === 'skate_galactico' ? effect : 0x000000,
+      emissiveIntensity: skateId === 'skate_eletrico' || skateId === 'skate_galactico' ? 0.35 : 0,
+    },
+    geos,
+    mats,
+    dummyFlash
+  );
+  addVoxel(
+    group,
+    { w: 0.56, h: 0.07, d: 0.24, x: 0, y: 0.14, z: 0.68, color: accent, rx: -0.35 },
+    geos,
+    mats,
+    dummyFlash
+  );
+  addVoxel(
+    group,
+    { w: 0.56, h: 0.07, d: 0.24, x: 0, y: 0.14, z: -0.68, color: accent, rx: 0.35 },
+    geos,
+    mats,
+    dummyFlash
+  );
+  // Center grip stripe
+  addVoxel(
+    group,
+    {
+      w: 0.24,
+      h: 0.09,
+      d: 1.05,
+      x: 0,
+      y: 0.115,
+      z: 0,
+      color: accent,
+      emissive: skateId === 'skate_fogo' || skateId === 'skate_eletrico' ? effect : 0x000000,
+      emissiveIntensity: skateId === 'skate_fogo' || skateId === 'skate_eletrico' ? 0.8 : 0,
+    },
+    geos,
+    mats,
+    dummyFlash
+  );
+
+  // Trucks
+  addVoxel(group, { w: 0.48, h: 0.06, d: 0.08, x: 0, y: 0.05, z: 0.4, color: 0xcbd5e1, metalness: 0.7 }, geos, mats, dummyFlash);
+  addVoxel(group, { w: 0.48, h: 0.06, d: 0.08, x: 0, y: 0.05, z: -0.4, color: 0xcbd5e1, metalness: 0.7 }, geos, mats, dummyFlash);
+
+  // 4 Wheels
+  const wheelCoords = [
+    [-0.28, 0.05, 0.4],
+    [0.28, 0.05, 0.4],
+    [-0.28, 0.05, -0.4],
+    [0.28, 0.05, -0.4],
+  ];
+  for (const [wx, wy, wz] of wheelCoords) {
+    addVoxel(
+      group,
+      {
+        w: 0.1,
+        h: 0.12,
+        d: 0.12,
+        x: wx,
+        y: wy,
+        z: wz,
+        color: wheel,
+        roughness: 0.35,
+        emissive: skateId === 'skate_eletrico' ? effect : 0x000000,
+        emissiveIntensity: skateId === 'skate_eletrico' ? 0.7 : 0,
+      },
+      geos,
+      mats,
+      dummyFlash
+    );
+  }
+
+  // Theme-specific voxel flair
+  if (skateId === 'skate_fogo') {
+    addVoxel(group, { w: 0.18, h: 0.12, d: 0.28, x: -0.2, y: 0.14, z: -0.78, color: 0xf97316, emissive: 0xf97316, emissiveIntensity: 1.4 }, geos, mats, dummyFlash);
+    addVoxel(group, { w: 0.18, h: 0.12, d: 0.28, x: 0.2, y: 0.14, z: -0.78, color: 0xfacc15, emissive: 0xf97316, emissiveIntensity: 1.4 }, geos, mats, dummyFlash);
+  } else if (skateId === 'skate_galactico') {
+    addVoxel(group, { w: 0.12, h: 0.12, d: 0.12, x: -0.22, y: 0.17, z: 0.22, color: 0x38bdf8, emissive: 0x38bdf8, emissiveIntensity: 1.3 }, geos, mats, dummyFlash);
+    addVoxel(group, { w: 0.12, h: 0.12, d: 0.12, x: 0.22, y: 0.17, z: -0.22, color: 0xe879f9, emissive: 0xd946ef, emissiveIntensity: 1.3 }, geos, mats, dummyFlash);
+  } else if (skateId === 'skate_camuflado') {
+    addVoxel(group, { w: 0.22, h: 0.092, d: 0.28, x: -0.18, y: 0.112, z: 0.24, color: 0x14532d }, geos, mats, dummyFlash);
+    addVoxel(group, { w: 0.22, h: 0.092, d: 0.28, x: 0.18, y: 0.112, z: -0.24, color: 0x713f12 }, geos, mats, dummyFlash);
+  } else if (skateId === 'skate_dourado') {
+    addVoxel(group, { w: 0.68, h: 0.04, d: 1.28, x: 0, y: 0.14, z: 0, color: 0xfef08a, emissive: 0xeab308, emissiveIntensity: 0.6 }, geos, mats, dummyFlash);
+  }
+
+  return {
+    group,
+    dispose: () => {
+      geos.forEach((g) => g.dispose());
+      mats.forEach((m) => m.dispose());
+    },
+  };
+}
+
+export function applyEquippedSkateToRig(
+  rig: CharacterRig,
+  skateId?: SkateId | null,
+  active = false
+): void {
+  if (!skateId || !active) {
+    if (rig.customSkateGroup) {
+      rig.customSkateGroup.visible = false;
+    }
+    return;
+  }
+
+  if (rig.customSkateId !== skateId) {
+    if (rig.customSkateGroup) {
+      rig.bodyPivot.remove(rig.customSkateGroup);
+      rig.customSkateDispose?.();
+    }
+    const built = createSkateMesh(skateId);
+    built.group.position.set(0, 0.02, 0);
+    rig.bodyPivot.add(built.group);
+    rig.customSkateGroup = built.group;
+    rig.customSkateId = skateId;
+    rig.customSkateDispose = built.dispose;
+
+    const prevDispose = rig.dispose;
+    rig.dispose = () => {
+      prevDispose();
+      built.dispose();
+    };
+  }
+
+  if (rig.customSkateGroup) {
+    rig.customSkateGroup.visible = true;
+  }
 }
 
 export function createCharacterRig(
@@ -1892,6 +2479,7 @@ export function animateCharacterRig(
     rig.rightLegPivot.rotation.z = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.z, 0.22, k);
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(elapsed * 5) * 0.3;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.25 + Math.sin(elapsed * 4) * 0.08;
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.25 + Math.sin(elapsed * 4) * 0.08;
     return;
   }
 
@@ -1920,24 +2508,40 @@ export function animateCharacterRig(
       const twitchZ = twitchCycle > 2.95 ? Math.sin(elapsed * 42) * 0.16 : 0;
       rig.headPivot.rotation.y = Math.sin(elapsed * 1.1) * 0.12 + (twitchCycle > 2.95 ? 0.12 : 0);
       rig.headPivot.rotation.z = twitchZ;
+    } else if (rig.skinId === 'plankton') {
+      rig.headPivot.rotation.y = Math.sin(elapsed * 2.8) * 0.18;
     } else {
       rig.headPivot.rotation.y = Math.sin(elapsed * 1.4) * 0.14;
     }
 
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(elapsed * 4.5) * 0.25;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.08 + Math.sin(elapsed * 3.5) * 0.06;
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.08 + Math.sin(elapsed * 3.5) * 0.06;
     return;
   }
 
   resetSecondaryAxes();
+  const ridingBoard = Boolean(rig.hoverboardGroup.visible || rig.customSkateGroup?.visible);
 
   if (state === 'run' || state === 'stumble') {
     const isTungTung = rig.skinId === 'tung_tung_sahur';
     const isFreddy = rig.skinId === 'freddy_fazbear';
     const isSonic = rig.skinId === 'sonic';
     const isCR7 = rig.skinId === 'cristiano_ronaldo';
+    const isEnderman = rig.skinId === 'enderman';
+    const isPlankton = rig.skinId === 'plankton';
+    const isFootballer =
+      isCR7 || rig.skinId === 'ronaldinho_gaucho' || rig.skinId === 'vini_jr';
 
-    const freqMult = isSonic ? 1.25 : isTungTung ? 1.15 : isCR7 ? 1.1 : 1.0;
+    const freqMult = isSonic
+      ? 1.25
+      : isPlankton
+        ? 1.32
+        : isTungTung
+          ? 1.15
+          : isFootballer
+            ? 1.1
+            : 1.0;
     const strideFreq = 13.5 * speedFactor * freqMult;
     const phase = elapsed * strideFreq;
     const swing = isFreddy
@@ -1947,12 +2551,12 @@ export function animateCharacterRig(
 
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(
       rig.bodyPivot.position.y,
-      rig.hoverboardGroup.visible ? 0.14 + Math.sin(elapsed * 6) * 0.04 : bob,
+      ridingBoard ? 0.16 + Math.sin(elapsed * 6) * 0.04 : bob,
       k
     );
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(
       rig.bodyPivot.rotation.x,
-      state === 'stumble' ? 0.25 : isSonic ? 0.24 : isCR7 ? 0.18 : 0.12,
+      state === 'stumble' ? 0.25 : isSonic ? 0.24 : isFootballer ? 0.18 : 0.12,
       k
     );
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(
@@ -1961,18 +2565,22 @@ export function animateCharacterRig(
         ? Math.sin(elapsed * 28) * 0.25
         : isTungTung
           ? Math.cos(phase) * 0.11
-          : 0,
+          : ridingBoard
+            ? Math.sin(elapsed * 4.5) * 0.08
+            : 0,
       k
     );
     rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, isSonic ? 0.18 : 0.1, k);
     rig.torsoPivot.rotation.y = Math.cos(phase) * (isTungTung ? 0.18 : 0.08);
     rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
 
-    if (rig.hoverboardGroup.visible) {
-      rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.15, k);
-      rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.15, k);
+    if (ridingBoard) {
+      rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.18, k);
+      rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.18, k);
       rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -0.35, k);
       rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.35, k);
+      rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -0.32, k);
+      rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0.32, k);
     } else if (isTungTung) {
       // Hilarious exaggerated comedic running gait for Tung Tung Tung Sahur
       rig.leftLegPivot.rotation.x = swing * 1.25;
@@ -1987,7 +2595,12 @@ export function animateCharacterRig(
       rig.rightLegPivot.rotation.x = -swing * 1.15;
       rig.leftArmPivot.rotation.x = 0.72 - swing * 0.28;
       rig.rightArmPivot.rotation.x = 0.72 + swing * 0.28;
-    } else if (isCR7) {
+    } else if (isEnderman) {
+      rig.leftLegPivot.rotation.x = swing * 1.05;
+      rig.rightLegPivot.rotation.x = -swing * 1.05;
+      rig.leftArmPivot.rotation.x = state === 'stumble' ? -1.4 : -swing * 0.55;
+      rig.rightArmPivot.rotation.x = state === 'stumble' ? -1.4 : swing * 0.55;
+    } else if (isFootballer) {
       // Athletic footballer sprint stride
       rig.leftLegPivot.rotation.x = swing * 1.05;
       rig.rightLegPivot.rotation.x = -swing * 1.05;
@@ -2015,15 +2628,22 @@ export function animateCharacterRig(
 
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(phase) * 0.35;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.35 + Math.sin(phase * 1.4) * 0.18;
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.35 + Math.sin(phase * 1.4) * 0.18;
   } else if (state === 'jump') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, 0.05, k);
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, -0.08, k);
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(rig.bodyPivot.rotation.z, 0, k);
-    rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -2.2, k);
-    rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -2.2, k);
+    if (rig.skinId === 'mario' || rig.skinId === 'luigi') {
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -0.35, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -2.75, k);
+    } else {
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -2.2, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -2.2, k);
+    }
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.65, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.45, k);
     if (rig.capePivot) rig.capePivot.rotation.x = 0.55;
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.55;
   } else if (state === 'slide') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, -0.34, k);
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, -1.05, k);
@@ -2032,6 +2652,7 @@ export function animateCharacterRig(
     rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, 0.9, k);
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.4, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0.4, k);
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.72;
   } else if (state === 'jetpack') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, Math.sin(elapsed * 8) * 0.08, k);
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, 0.42, k);
@@ -2039,10 +2660,12 @@ export function animateCharacterRig(
     rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.8, k);
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, -0.2, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.2, k);
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.65;
   } else if (state === 'crash') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, -0.2, k);
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, -1.35, k);
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(rig.bodyPivot.rotation.z, 0.35, k);
+    if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.25;
   }
 
   // Police flashing shoulder lights

@@ -16,6 +16,7 @@ import {
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../services/api.ts';
 import {
+  FriendEntry,
   MAPS,
   MapId,
   MultiplayerInvite,
@@ -40,6 +41,11 @@ interface MultiplayerModalProps {
     room: MultiplayerRoom;
     participants: MultiplayerParticipant[];
   } | null;
+  prefillInvite?: {
+    targetNickname: string;
+    mode: MultiplayerMode;
+  } | null;
+  onClearPrefillInvite?: () => void;
   onEnterMatch: (room: MultiplayerRoom, participants: MultiplayerParticipant[]) => void;
   onClose: () => void;
 }
@@ -49,6 +55,8 @@ export function MultiplayerModal({
   initialMode,
   selectedMap,
   initialRoom,
+  prefillInvite,
+  onClearPrefillInvite,
   onEnterMatch,
   onClose,
 }: MultiplayerModalProps) {
@@ -76,6 +84,30 @@ export function MultiplayerModal({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const [friendsList, setFriendsList] = useState<FriendEntry[]>([]);
+
+  useEffect(() => {
+    if (!prefillInvite) return;
+    setMode(prefillInvite.mode);
+    setSearchQuery(prefillInvite.targetNickname);
+    void api.multiplayer
+      .search(prefillInvite.targetNickname)
+      .then((res) => {
+        setSearchResults(res.players);
+        setSelectedPlayer(res.players[0] || null);
+      })
+      .catch(() => {});
+    onClearPrefillInvite?.();
+  }, [prefillInvite, onClearPrefillInvite]);
+
+  const loadFriendsQuickList = useCallback(async () => {
+    try {
+      const ov = await api.friends.overview();
+      setFriendsList(ov.friends);
+    } catch {
+      // Ignore
+    }
+  }, []);
 
   const loadOverview = useCallback(async () => {
     try {
@@ -109,6 +141,7 @@ export function MultiplayerModal({
   // Initial load + fast room/overview polling
   useEffect(() => {
     void loadOverview();
+    void loadFriendsQuickList();
     const timer = window.setInterval(() => {
       if (room && room.status !== 'finished' && room.status !== 'cancelled') {
         api.multiplayer
@@ -435,6 +468,9 @@ export function MultiplayerModal({
                         <ScenePreview3D
                           skinId={p.skinId}
                           mapId={roomMapId}
+                          customConfig={p.customConfig}
+                          capeConfig={p.capeConfig}
+                          skateId={p.equippedSkateId}
                           mode="turntable"
                           quality="low"
                         />
@@ -628,6 +664,39 @@ export function MultiplayerModal({
                           </div>
                         );
                       })}
+                    </div>
+                  )}
+
+                  {friendsList.length > 0 && (
+                    <div className="pt-2 border-t border-slate-800 space-y-2">
+                      <div className="text-[11px] font-extrabold uppercase tracking-wider text-sky-300 flex items-center gap-1.5">
+                        <Users className="w-3.5 h-3.5" /> Convidar Amigo Direto ({friendsList.length})
+                      </div>
+                      <div className="flex flex-wrap gap-2">
+                        {friendsList.map((fr) => (
+                          <button
+                            key={fr.friendshipId}
+                            type="button"
+                            disabled={busy}
+                            onClick={() => void handleInvite(fr.nickname)}
+                            className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-sky-400 text-xs font-bold text-white flex items-center gap-2 cursor-pointer"
+                          >
+                            <span
+                              className={`w-2 h-2 rounded-full ${
+                                fr.status === 'in_match'
+                                  ? 'bg-amber-400'
+                                  : fr.status === 'online'
+                                    ? 'bg-emerald-400'
+                                    : 'bg-slate-500'
+                              }`}
+                            />
+                            <span>{fr.nickname}</span>
+                            <span className="text-[10px] text-amber-300">
+                              {mode === 'x1' ? 'X1' : 'Co-op'}
+                            </span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   )}
                 </div>

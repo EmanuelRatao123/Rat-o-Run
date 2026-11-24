@@ -7,6 +7,7 @@ import {
   exclusiveSkinPermissions,
   gameSettings,
   globalMessages,
+  matchDiagnosticLogs,
   matches,
   playerCompetitiveStats,
   playerWalletStats,
@@ -37,9 +38,11 @@ import {
   LeaderboardEntry,
   LockedExclusiveSkinId,
   MapId,
+  MatchSummary,
   PlayerCompetitiveStats,
   PlayerWalletStats,
   PollItem,
+  SECRET_EXCLUSIVE_SKIN_IDS,
   SKINS,
   SkinGiftItem,
   SkinGrantHistoryRecord,
@@ -51,6 +54,7 @@ import {
   isExclusiveSkinId,
   isGiftableSkinId,
   isLockedExclusiveSkinId,
+  isSecretExclusiveSkinId,
   isSpecialUnlockableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
@@ -81,11 +85,16 @@ function mapNeonUserRow(row: typeof users.$inferSelect): StoredUser {
     role: row.role,
     mustChangePassword: row.mustChangePassword,
     equippedSkin: row.equippedSkin,
+    equippedSkateId: row.equippedSkateId ?? null,
     unlockedSkins: Array.isArray(row.unlockedSkins) ? row.unlockedSkins : [...COMMON_SKIN_IDS],
     giftedSkins: Array.isArray(row.giftedSkins) ? row.giftedSkins : [],
     bestNoCoinTimeMs: row.bestNoCoinTimeMs,
     bestDistance: row.bestDistance,
     bestScore: row.bestScore,
+    bestSingleMatchCoins: row.bestSingleMatchCoins ?? 0,
+    bestSingleMatchCoinsAt: row.bestSingleMatchCoinsAt ?? null,
+    bestSingleMatchCoinsSkin: row.bestSingleMatchCoinsSkin ?? null,
+    bestSingleMatchCoinsMap: row.bestSingleMatchCoinsMap ?? null,
     totalMatches: row.totalMatches,
     totalCoins: row.totalCoins,
     favoriteSkin: row.favoriteSkin,
@@ -439,25 +448,109 @@ export async function repoGetActiveMatch(matchId: string): Promise<ActiveMatchTo
   return {
     ...rows[0],
     mode: rows[0].mode === 'normal' ? 'normal' : 'no_coin',
+    summaryJson: rows[0].summaryJson ?? null,
   };
+}
+
+export async function repoLogMatchDiagnostic(params: {
+  userId: string;
+  matchId: string;
+  mode: SoloGameMode;
+  stage: string;
+  status: string;
+  detail: string;
+}): Promise<void> {
+  const entry = {
+    id: `mdiag_${generateToken(8)}`,
+    userId: params.userId,
+    matchId: params.matchId,
+    mode: params.mode,
+    stage: params.stage.slice(0, 40),
+    status: params.status.slice(0, 32),
+    detail: params.detail.slice(0, 300),
+    createdAt: new Date().toISOString(),
+  };
+  try {
+    if (!isNeonConfigured()) {
+      const db = getLocalDb();
+      db.matchDiagnosticLogs.unshift(entry);
+      if (db.matchDiagnosticLogs.length > 500) {
+        db.matchDiagnosticLogs.length = 500;
+      }
+      saveLocalDb();
+      return;
+    }
+    await ensureNeonSchema();
+    const db = getNeonDb();
+    await db.insert(matchDiagnosticLogs).values(entry);
+  } catch (err) {
+    console.error('Match diagnostic logging error:', err);
+  }
 }
 
 export async function repoCompleteMatchAndRecord(params: {
   match: StoredMatch;
   user: StoredUser;
-}): Promise<{ ok: boolean; isNewPersonalRecord: boolean; globalRank: number | null }> {
-  const { match, user } = params;
+  endReason?: 'police' | 'coin';
+}): Promise<{
+  ok: boolean;
+  idempotent?: boolean;
+  isNewPersonalRecord: boolean;
+  globalRank: number | null;
+  summary?: MatchSummary;
+}> {
+  const { match, user, endReason } = params;
   const matchMode: SoloGameMode = match.mode === 'normal' ? 'normal' : 'no_coin';
-  const effectiveNoCoinMs = matchMode === 'no_coin' ? match.noCoinTimeMs : 0;
-  // Coins collected during a No Coin attempt must NEVER increase accumulated wallet coins
+  const effectiveNoCoinMs = matchMode === 'no_coin' ? Math.max(0, match.noCoinTimeMs) : 0;
+  // Coins collected during a No Coin attempt must NEVER increase accumulated wallet coins or single-match coin record
   const effectiveCoinsCredit = matchMode === 'normal' ? Math.max(0, Math.round(match.coins)) : 0;
+  const normalizedEndReason: 'police' | 'coin' =
+    matchMode === 'no_coin' && (endReason === 'coin' || match.collectedCoin) ? 'coin' : 'police';
 
   if (!isNeonConfigured()) {
     const db = getLocalDb();
     const active = db.activeMatches[match.id];
-    if (!active || active.userId !== user.id || active.completed) {
+    if (!active || active.userId !== user.id) {
       return { ok: false, isNewPersonalRecord: false, globalRank: null };
     }
+    if (active.completed) {
+      if (active.summaryJson) {
+        return {
+          ok: true,
+          idempotent: true,
+          isNewPersonalRecord: active.summaryJson.isNewPersonalRecord,
+          globalRank: active.summaryJson.globalRank,
+          summary: active.summaryJson,
+        };
+      }
+      const existingMatch = db.matches.find((m) => m.id === match.id && m.userId === user.id);
+      if (existingMatch) {
+        const fallbackSummary: MatchSummary = {
+          matchId: existingMatch.id,
+          mode: existingMatch.mode,
+          mapId: existingMatch.mapId,
+          skinId: existingMatch.skinId,
+          noCoinTimeMs: existingMatch.noCoinTimeMs,
+          collectedCoin: existingMatch.collectedCoin,
+          coins: existingMatch.coins,
+          distance: existingMatch.distance,
+          score: existingMatch.score,
+          durationMs: existingMatch.durationMs,
+          isNewPersonalRecord: false,
+          globalRank: await repoComputePlayerRank(user.id),
+          endReason: normalizedEndReason,
+        };
+        return {
+          ok: true,
+          idempotent: true,
+          isNewPersonalRecord: false,
+          globalRank: fallbackSummary.globalRank,
+          summary: fallbackSummary,
+        };
+      }
+      return { ok: false, isNewPersonalRecord: false, globalRank: null };
+    }
+
     active.completed = true;
     db.matches.push({
       ...match,
@@ -477,6 +570,12 @@ export async function repoCompleteMatchAndRecord(params: {
     storedUser.totalMatches += 1;
     if (effectiveCoinsCredit > 0) {
       storedUser.totalCoins += effectiveCoinsCredit;
+      if (effectiveCoinsCredit > (storedUser.bestSingleMatchCoins ?? 0)) {
+        storedUser.bestSingleMatchCoins = effectiveCoinsCredit;
+        storedUser.bestSingleMatchCoinsAt = match.createdAt;
+        storedUser.bestSingleMatchCoinsSkin = match.skinId;
+        storedUser.bestSingleMatchCoinsMap = match.mapId;
+      }
     }
     storedUser.skinUsage[match.skinId] = (storedUser.skinUsage[match.skinId] || 0) + 1;
 
@@ -504,31 +603,90 @@ export async function repoCompleteMatchAndRecord(params: {
 
     await repoSyncExclusiveSkinPermissions();
     const globalRank = await repoComputePlayerRank(user.id);
-    return { ok: true, isNewPersonalRecord, globalRank };
+    const summary: MatchSummary = {
+      matchId: match.id,
+      mode: matchMode,
+      mapId: match.mapId,
+      skinId: match.skinId,
+      noCoinTimeMs: effectiveNoCoinMs,
+      collectedCoin: match.collectedCoin,
+      coins: match.coins,
+      distance: match.distance,
+      score: match.score,
+      durationMs: match.durationMs,
+      isNewPersonalRecord,
+      globalRank,
+      endReason: normalizedEndReason,
+    };
+    active.summaryJson = summary;
+    saveLocalDb();
+    return { ok: true, idempotent: false, isNewPersonalRecord, globalRank, summary };
   }
 
   await ensureNeonSchema();
   const pool = getNeonPool();
   const client = await pool.connect();
   let isNewPersonalRecord = false;
+  let idempotentSummary: MatchSummary | null = null;
 
   try {
     await client.query('BEGIN');
 
-    const activeRes = await client.query<{ match_id: string; completed: boolean }>(
-      `SELECT match_id, completed FROM active_matches WHERE match_id = $1 AND user_id = $2 FOR UPDATE`,
+    const activeRes = await client.query<{
+      match_id: string;
+      completed: boolean;
+      summary_json: MatchSummary | null;
+    }>(
+      `SELECT match_id, completed, summary_json FROM active_matches WHERE match_id = $1 AND user_id = $2 FOR UPDATE`,
       [match.id, user.id]
     );
-    if (activeRes.rows.length === 0 || activeRes.rows[0].completed) {
+    if (activeRes.rows.length === 0) {
       await client.query('ROLLBACK');
       return { ok: false, isNewPersonalRecord: false, globalRank: null };
+    }
+    if (activeRes.rows[0].completed) {
+      idempotentSummary = activeRes.rows[0].summary_json ?? null;
+      await client.query('COMMIT');
+      if (idempotentSummary) {
+        return {
+          ok: true,
+          idempotent: true,
+          isNewPersonalRecord: idempotentSummary.isNewPersonalRecord,
+          globalRank: idempotentSummary.globalRank,
+          summary: idempotentSummary,
+        };
+      }
+      const rankNow = await repoComputePlayerRank(user.id);
+      const fallbackSummary: MatchSummary = {
+        matchId: match.id,
+        mode: matchMode,
+        mapId: match.mapId,
+        skinId: match.skinId,
+        noCoinTimeMs: effectiveNoCoinMs,
+        collectedCoin: match.collectedCoin,
+        coins: match.coins,
+        distance: match.distance,
+        score: match.score,
+        durationMs: match.durationMs,
+        isNewPersonalRecord: false,
+        globalRank: rankNow,
+        endReason: normalizedEndReason,
+      };
+      return {
+        ok: true,
+        idempotent: true,
+        isNewPersonalRecord: false,
+        globalRank: rankNow,
+        summary: fallbackSummary,
+      };
     }
 
     await client.query(`UPDATE active_matches SET completed = TRUE WHERE match_id = $1`, [match.id]);
 
     await client.query(
       `INSERT INTO matches (id, user_id, nickname, mode, skin_id, map_id, no_coin_time_ms, collected_coin, coins, distance, score, duration_ms, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+       ON CONFLICT (id) DO NOTHING`,
       [
         match.id,
         match.userId,
@@ -550,11 +708,17 @@ export async function repoCompleteMatchAndRecord(params: {
       best_no_coin_time_ms: number;
       best_distance: number;
       best_score: number;
+      best_single_match_coins: number;
+      best_single_match_coins_at: string | null;
+      best_single_match_coins_skin: SkinId | null;
+      best_single_match_coins_map: MapId | null;
       total_matches: number;
       total_coins: number;
       skin_usage: Record<string, number>;
     }>(
-      `SELECT best_no_coin_time_ms, best_distance, best_score, total_matches, total_coins, skin_usage
+      `SELECT best_no_coin_time_ms, best_distance, best_score,
+              best_single_match_coins, best_single_match_coins_at, best_single_match_coins_skin, best_single_match_coins_map,
+              total_matches, total_coins, skin_usage
        FROM users WHERE id = $1 FOR UPDATE`,
       [user.id]
     );
@@ -568,6 +732,20 @@ export async function repoCompleteMatchAndRecord(params: {
     const nextTotalMatches = (cur?.total_matches ?? user.totalMatches) + 1;
     const prevTotalCoins = cur?.total_coins ?? user.totalCoins;
     const nextTotalCoins = prevTotalCoins + effectiveCoinsCredit;
+
+    const curBestSingleCoins = cur?.best_single_match_coins ?? 0;
+    const beatSingleCoins = matchMode === 'normal' && effectiveCoinsCredit > curBestSingleCoins;
+    const nextBestSingleCoins = beatSingleCoins ? effectiveCoinsCredit : curBestSingleCoins;
+    const nextBestSingleCoinsAt = beatSingleCoins
+      ? match.createdAt
+      : (cur?.best_single_match_coins_at ?? null);
+    const nextBestSingleCoinsSkin = beatSingleCoins
+      ? match.skinId
+      : (cur?.best_single_match_coins_skin ?? null);
+    const nextBestSingleCoinsMap = beatSingleCoins
+      ? match.mapId
+      : (cur?.best_single_match_coins_map ?? null);
+
     const nextSkinUsage = {
       ...(cur?.skin_usage && typeof cur.skin_usage === 'object' ? cur.skin_usage : user.skinUsage),
     };
@@ -587,16 +765,24 @@ export async function repoCompleteMatchAndRecord(params: {
        SET best_no_coin_time_ms = $1,
            best_distance = $2,
            best_score = $3,
-           total_matches = $4,
-           total_coins = $5,
-           skin_usage = $6::jsonb,
-           favorite_skin = $7,
-           last_seen_at = $8
-       WHERE id = $9`,
+           best_single_match_coins = $4,
+           best_single_match_coins_at = $5,
+           best_single_match_coins_skin = $6,
+           best_single_match_coins_map = $7,
+           total_matches = $8,
+           total_coins = $9,
+           skin_usage = $10::jsonb,
+           favorite_skin = $11,
+           last_seen_at = $12
+       WHERE id = $13`,
       [
         nextBestNoCoin,
         nextBestDist,
         nextBestScore,
+        nextBestSingleCoins,
+        nextBestSingleCoinsAt,
+        nextBestSingleCoinsSkin,
+        nextBestSingleCoinsMap,
         nextTotalMatches,
         nextTotalCoins,
         JSON.stringify(nextSkinUsage),
@@ -664,7 +850,28 @@ export async function repoCompleteMatchAndRecord(params: {
 
   await repoSyncExclusiveSkinPermissions();
   const globalRank = await repoComputePlayerRank(user.id);
-  return { ok: true, isNewPersonalRecord, globalRank };
+  const summary: MatchSummary = {
+    matchId: match.id,
+    mode: matchMode,
+    mapId: match.mapId,
+    skinId: match.skinId,
+    noCoinTimeMs: effectiveNoCoinMs,
+    collectedCoin: match.collectedCoin,
+    coins: match.coins,
+    distance: match.distance,
+    score: match.score,
+    durationMs: match.durationMs,
+    isNewPersonalRecord,
+    globalRank,
+    endReason: normalizedEndReason,
+  };
+  await pool
+    .query(`UPDATE active_matches SET summary_json = $1::jsonb WHERE match_id = $2`, [
+      JSON.stringify(summary),
+      match.id,
+    ])
+    .catch(() => {});
+  return { ok: true, idempotent: false, isNewPersonalRecord, globalRank, summary };
 }
 
 export async function repoGetLeaderboard(params: {
@@ -856,24 +1063,62 @@ export async function repoGetCoinsLeaderboard(params: {
 
   if (!isNeonConfigured()) {
     const db = getLocalDb();
+    const bestMatchByUser = new Map<
+      string,
+      { coins: number; skinId: SkinId; mapId: MapId; achievedAt: string }
+    >();
+
+    for (const m of db.matches) {
+      if ((m.mode || 'no_coin') !== 'normal' || m.coins <= 0) continue;
+      const prev = bestMatchByUser.get(m.userId);
+      if (
+        !prev ||
+        m.coins > prev.coins ||
+        (m.coins === prev.coins && m.createdAt < prev.achievedAt)
+      ) {
+        bestMatchByUser.set(m.userId, {
+          coins: m.coins,
+          skinId: m.skinId,
+          mapId: m.mapId,
+          achievedAt: m.createdAt,
+        });
+      }
+    }
+
     const rankedUsers = Object.values(db.users)
       .map((u) => {
+        const fromMatches = bestMatchByUser.get(u.id);
+        const bestMatchCoins = Math.max(u.bestSingleMatchCoins ?? 0, fromMatches?.coins ?? 0);
+        const skinId = fromMatches?.skinId || u.bestSingleMatchCoinsSkin || u.equippedSkin;
+        const mapId = fromMatches?.mapId || u.bestSingleMatchCoinsMap || 'brasil';
+        const achievedAt = fromMatches?.achievedAt || u.bestSingleMatchCoinsAt || u.lastSeenAt;
         const walletTotal = db.playerWalletStats[u.id]?.totalCoinsCollected ?? 0;
         const totalCoinsCollected = Math.max(walletTotal, u.totalCoins);
-        return { user: u, totalCoinsCollected };
+        return {
+          user: u,
+          bestMatchCoins,
+          skinId,
+          mapId,
+          achievedAt,
+          totalCoinsCollected,
+        };
       })
-      .filter((item) => item.totalCoinsCollected > 0)
+      .filter((item) => item.bestMatchCoins > 0)
       .sort(
         (a, b) =>
-          b.totalCoinsCollected - a.totalCoinsCollected ||
-          b.user.totalMatches - a.user.totalMatches ||
+          b.bestMatchCoins - a.bestMatchCoins ||
+          b.user.bestDistance - a.user.bestDistance ||
+          a.achievedAt.localeCompare(b.achievedAt) ||
           a.user.createdAt.localeCompare(b.user.createdAt)
       )
       .map((item, idx): CoinsLeaderboardEntry => ({
         rank: idx + 1,
         userId: item.user.id,
         nickname: item.user.nickname,
-        skinId: item.user.equippedSkin,
+        skinId: item.skinId,
+        mapId: item.mapId,
+        bestMatchCoins: item.bestMatchCoins,
+        achievedAt: item.achievedAt,
         totalCoinsCollected: item.totalCoinsCollected,
         totalMatches: item.user.totalMatches,
       }));
@@ -904,8 +1149,7 @@ export async function repoGetCoinsLeaderboard(params: {
   const countRes = await pool.query<{ cnt: string }>(
     `SELECT COUNT(*)::text AS cnt
      FROM users u
-     LEFT JOIN player_wallet_stats w ON w.user_id = u.id
-     WHERE GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) > 0`
+     WHERE u.best_single_match_coins > 0`
   );
   const totalRanked = Number(countRes.rows[0]?.cnt ?? 0);
   const totalPages = Math.max(1, Math.ceil(totalRanked / pageSize));
@@ -916,18 +1160,30 @@ export async function repoGetCoinsLeaderboard(params: {
     id: string;
     nickname: string;
     equipped_skin: SkinId;
+    best_single_match_coins: number;
+    best_single_match_coins_at: string | null;
+    best_single_match_coins_skin: SkinId | null;
+    best_single_match_coins_map: MapId | null;
+    best_distance: number;
     total_matches: number;
+    last_seen_at: string;
     coins_total: number;
   }>(
     `SELECT u.id,
             u.nickname,
             u.equipped_skin,
+            u.best_single_match_coins,
+            u.best_single_match_coins_at,
+            u.best_single_match_coins_skin,
+            u.best_single_match_coins_map,
+            u.best_distance,
             u.total_matches,
+            u.last_seen_at,
             GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) AS coins_total
      FROM users u
      LEFT JOIN player_wallet_stats w ON w.user_id = u.id
-     WHERE GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) > 0
-     ORDER BY coins_total DESC, u.total_matches DESC, u.created_at ASC
+     WHERE u.best_single_match_coins > 0
+     ORDER BY u.best_single_match_coins DESC, u.best_distance DESC, COALESCE(u.best_single_match_coins_at, u.last_seen_at) ASC, u.created_at ASC
      LIMIT $1 OFFSET $2`,
     [pageSize, offset]
   );
@@ -936,7 +1192,10 @@ export async function repoGetCoinsLeaderboard(params: {
     rank: offset + idx + 1,
     userId: row.id,
     nickname: row.nickname,
-    skinId: row.equipped_skin,
+    skinId: row.best_single_match_coins_skin || row.equipped_skin,
+    mapId: row.best_single_match_coins_map || 'brasil',
+    bestMatchCoins: Number(row.best_single_match_coins),
+    achievedAt: row.best_single_match_coins_at || row.last_seen_at,
     totalCoinsCollected: Number(row.coins_total),
     totalMatches: Number(row.total_matches),
   }));
@@ -951,15 +1210,27 @@ export async function repoGetCoinsLeaderboard(params: {
         id: string;
         nickname: string;
         equipped_skin: SkinId;
+        best_single_match_coins: number;
+        best_single_match_coins_at: string | null;
+        best_single_match_coins_skin: SkinId | null;
+        best_single_match_coins_map: MapId | null;
+        best_distance: number;
         total_matches: number;
         created_at: string;
+        last_seen_at: string;
         coins_total: number;
       }>(
         `SELECT u.id,
                 u.nickname,
                 u.equipped_skin,
+                u.best_single_match_coins,
+                u.best_single_match_coins_at,
+                u.best_single_match_coins_skin,
+                u.best_single_match_coins_map,
+                u.best_distance,
                 u.total_matches,
                 u.created_at,
+                u.last_seen_at,
                 GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) AS coins_total
          FROM users u
          LEFT JOIN player_wallet_stats w ON w.user_id = u.id
@@ -968,26 +1239,35 @@ export async function repoGetCoinsLeaderboard(params: {
         [currentUserId]
       );
       const me = myRes.rows[0];
-      if (me && Number(me.coins_total) > 0) {
+      if (me && Number(me.best_single_match_coins) > 0) {
+        const myAt = me.best_single_match_coins_at || me.last_seen_at;
         const aheadRes = await pool.query<{ cnt: string }>(
           `SELECT COUNT(*)::text AS cnt
            FROM users u
-           LEFT JOIN player_wallet_stats w ON w.user_id = u.id
-           WHERE GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) > $1
+           WHERE u.best_single_match_coins > $1
               OR (
-                GREATEST(COALESCE(w.total_coins_collected, 0), u.total_coins) = $1
+                u.best_single_match_coins = $1
                 AND (
-                  u.total_matches > $2
-                  OR (u.total_matches = $2 AND u.created_at < $3)
+                  u.best_distance > $2
+                  OR (
+                    u.best_distance = $2
+                    AND (
+                      COALESCE(u.best_single_match_coins_at, u.last_seen_at) < $3
+                      OR (COALESCE(u.best_single_match_coins_at, u.last_seen_at) = $3 AND u.created_at < $4)
+                    )
+                  )
                 )
               )`,
-          [Number(me.coins_total), Number(me.total_matches), me.created_at]
+          [Number(me.best_single_match_coins), Number(me.best_distance), myAt, me.created_at]
         );
         currentUserEntry = {
           rank: Number(aheadRes.rows[0]?.cnt ?? 0) + 1,
           userId: me.id,
           nickname: me.nickname,
-          skinId: me.equipped_skin,
+          skinId: me.best_single_match_coins_skin || me.equipped_skin,
+          mapId: me.best_single_match_coins_map || 'brasil',
+          bestMatchCoins: Number(me.best_single_match_coins),
+          achievedAt: myAt,
           totalCoinsCollected: Number(me.coins_total),
           totalMatches: Number(me.total_matches),
         };
@@ -1833,12 +2113,13 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
       }
     }
 
-    // Revert equipped skin if a user holds an exclusive/unlockable skin without active permission
+    // Revert equipped skin if a user holds an exclusive/unlockable/secret skin without active permission
     for (const u of Object.values(db.users)) {
       if (
         isExclusiveSkinId(u.equippedSkin) ||
         isSpecialUnlockableSkinId(u.equippedSkin) ||
-        isLockedExclusiveSkinId(u.equippedSkin)
+        isLockedExclusiveSkinId(u.equippedSkin) ||
+        isSecretExclusiveSkinId(u.equippedSkin)
       ) {
         const hasPerm = db.exclusiveSkinPermissions.some(
           (p) => p.userId === u.id && p.skinId === u.equippedSkin && p.active
@@ -1925,7 +2206,7 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
     }
   }
 
-  // Revert any user who currently has an exclusive/unlockable skin equipped without active permission
+  // Revert any user who currently has an exclusive/unlockable/secret skin equipped without active permission
   const exclusiveHolders = await db
     .select()
     .from(users)
@@ -1937,6 +2218,7 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
         'guerreiro_bronze',
         'meu_ratao',
         ...LOCKED_EXCLUSIVE_SKIN_IDS,
+        ...SECRET_EXCLUSIVE_SKIN_IDS,
       ])
     );
   const freshActivePerms = await db
@@ -3274,6 +3556,282 @@ export async function repoCreditWalletCoins(params: {
   }
 
   return { credited: true, wallet: nextWallet };
+}
+
+// ============================================================
+// SECRET EXCLUSIVE SKINS (PLANKTON — ADMIN-ONLY MANAGEMENT)
+// ============================================================
+
+export async function repoAdminListSecretSkinOwners(
+  adminUser: StoredUser,
+  skinId: SkinId = 'plankton'
+): Promise<AdminExclusiveSkinOwner[]> {
+  if (adminUser.role !== 'admin' || !isSecretExclusiveSkinId(skinId)) {
+    return [];
+  }
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    return db.exclusiveSkinPermissions
+      .filter((p) => p.active && p.skinId === skinId)
+      .map((p) => {
+        const u = db.users[p.userId];
+        return {
+          id: p.id,
+          userId: p.userId,
+          nickname: u?.nickname || 'Jogador removido',
+          skinId: p.skinId,
+          reason: p.reason,
+          grantedAt: p.grantedAt,
+          equipped: u?.equippedSkin === p.skinId,
+        };
+      })
+      .sort((a, b) => new Date(b.grantedAt).getTime() - new Date(a.grantedAt).getTime());
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const perms = await db
+    .select()
+    .from(exclusiveSkinPermissions)
+    .where(and(eq(exclusiveSkinPermissions.active, true), eq(exclusiveSkinPermissions.skinId, skinId)))
+    .orderBy(desc(exclusiveSkinPermissions.grantedAt));
+
+  if (perms.length === 0) return [];
+  const userIds = Array.from(new Set(perms.map((p) => p.userId)));
+  const userRows = await db
+    .select({ id: users.id, nickname: users.nickname, equippedSkin: users.equippedSkin })
+    .from(users)
+    .where(inArray(users.id, userIds));
+  const userMap = new Map(userRows.map((u) => [u.id, u]));
+
+  return perms.map((p) => {
+    const u = userMap.get(p.userId);
+    return {
+      id: p.id,
+      userId: p.userId,
+      nickname: u?.nickname || 'Jogador removido',
+      skinId: p.skinId,
+      reason: p.reason,
+      grantedAt: p.grantedAt,
+      equipped: u?.equippedSkin === p.skinId,
+    };
+  });
+}
+
+export async function repoAdminGrantSecretSkin(params: {
+  adminUser: StoredUser;
+  targetNickname: string;
+  skinId: SkinId;
+}): Promise<
+  | { status: 'ok'; owner: AdminExclusiveSkinOwner }
+  | { status: 'forbidden' | 'invalid_skin' | 'not_found' }
+  | { status: 'already_unlocked'; targetNickname: string; skinName: string }
+> {
+  if (params.adminUser.role !== 'admin') {
+    return { status: 'forbidden' };
+  }
+  if (!isSecretExclusiveSkinId(params.skinId)) {
+    return { status: 'invalid_skin' };
+  }
+  const target = await repoFindUserByNickname(params.targetNickname);
+  if (!target) {
+    return { status: 'not_found' };
+  }
+  const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
+  const nowIso = new Date().toISOString();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const already = db.exclusiveSkinPermissions.some(
+      (p) => p.userId === target.id && p.skinId === params.skinId && p.active
+    );
+    if (already) {
+      return { status: 'already_unlocked', targetNickname: target.nickname, skinName };
+    }
+    const permId = `eperm_${generateToken(8)}`;
+    db.exclusiveSkinPermissions.push({
+      id: permId,
+      userId: target.id,
+      skinId: params.skinId,
+      reason: 'admin_secret',
+      rankPosition: null,
+      active: true,
+      grantedAt: nowIso,
+      revokedAt: null,
+      updatedAt: nowIso,
+    });
+    const u = db.users[target.id];
+    if (u && !u.unlockedSkins.includes(params.skinId)) {
+      u.unlockedSkins.push(params.skinId);
+    }
+    await addLocalAdminLog(
+      params.adminUser.nickname,
+      'LIBERAR_SKIN_SECRETA',
+      `Liberou a skin secreta "${skinName}" (${params.skinId}) para ${target.nickname}`
+    );
+    saveLocalDb();
+    return {
+      status: 'ok',
+      owner: {
+        id: permId,
+        userId: target.id,
+        nickname: target.nickname,
+        skinId: params.skinId,
+        reason: 'admin_secret',
+        grantedAt: nowIso,
+        equipped: target.equippedSkin === params.skinId,
+      },
+    };
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const existing = await db
+    .select()
+    .from(exclusiveSkinPermissions)
+    .where(
+      and(
+        eq(exclusiveSkinPermissions.userId, target.id),
+        eq(exclusiveSkinPermissions.skinId, params.skinId),
+        eq(exclusiveSkinPermissions.active, true)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    return { status: 'already_unlocked', targetNickname: target.nickname, skinName };
+  }
+
+  const permId = `eperm_${generateToken(8)}`;
+  await db.insert(exclusiveSkinPermissions).values({
+    id: permId,
+    userId: target.id,
+    skinId: params.skinId,
+    reason: 'admin_secret',
+    rankPosition: null,
+    active: true,
+    grantedAt: nowIso,
+    revokedAt: null,
+    updatedAt: nowIso,
+  });
+
+  if (!target.unlockedSkins.includes(params.skinId)) {
+    await db
+      .update(users)
+      .set({ unlockedSkins: [...target.unlockedSkins, params.skinId] })
+      .where(eq(users.id, target.id));
+  }
+
+  await addNeonAdminLog(
+    params.adminUser.nickname,
+    'LIBERAR_SKIN_SECRETA',
+    `Liberou a skin secreta "${skinName}" (${params.skinId}) para ${target.nickname}`
+  );
+
+  return {
+    status: 'ok',
+    owner: {
+      id: permId,
+      userId: target.id,
+      nickname: target.nickname,
+      skinId: params.skinId,
+      reason: 'admin_secret',
+      grantedAt: nowIso,
+      equipped: target.equippedSkin === params.skinId,
+    },
+  };
+}
+
+export async function repoAdminRevokeSecretSkin(params: {
+  adminUser: StoredUser;
+  userId: string;
+  skinId: SkinId;
+}): Promise<
+  | { status: 'ok'; targetNickname: string; resetEquipped: boolean }
+  | { status: 'forbidden' | 'invalid_skin' | 'not_found' }
+> {
+  if (params.adminUser.role !== 'admin') {
+    return { status: 'forbidden' };
+  }
+  if (!isSecretExclusiveSkinId(params.skinId)) {
+    return { status: 'invalid_skin' };
+  }
+  const target = await repoFindUserById(params.userId);
+  if (!target) {
+    return { status: 'not_found' };
+  }
+  const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
+  const nowIso = new Date().toISOString();
+  const resetEquipped = target.equippedSkin === params.skinId;
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    let revokedAny = false;
+    for (const perm of db.exclusiveSkinPermissions) {
+      if (perm.userId === target.id && perm.skinId === params.skinId && perm.active) {
+        perm.active = false;
+        perm.revokedAt = nowIso;
+        perm.updatedAt = nowIso;
+        revokedAny = true;
+      }
+    }
+    const u = db.users[target.id];
+    if (u) {
+      u.unlockedSkins = u.unlockedSkins.filter((s) => s !== params.skinId);
+      if (u.equippedSkin === params.skinId) {
+        u.equippedSkin = 'ratao';
+      }
+    }
+    if (!revokedAny && !target.unlockedSkins.includes(params.skinId) && !resetEquipped) {
+      return { status: 'not_found' };
+    }
+    await addLocalAdminLog(
+      params.adminUser.nickname,
+      'REVOGAR_SKIN_SECRETA',
+      `Removeu a skin secreta "${skinName}" (${params.skinId}) de ${target.nickname}`
+    );
+    saveLocalDb();
+    return { status: 'ok', targetNickname: target.nickname, resetEquipped };
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const updatedPerms = await db
+    .update(exclusiveSkinPermissions)
+    .set({ active: false, revokedAt: nowIso, updatedAt: nowIso })
+    .where(
+      and(
+        eq(exclusiveSkinPermissions.userId, target.id),
+        eq(exclusiveSkinPermissions.skinId, params.skinId),
+        eq(exclusiveSkinPermissions.active, true)
+      )
+    )
+    .returning({ id: exclusiveSkinPermissions.id });
+
+  const nextUnlocked = target.unlockedSkins.filter((s) => s !== params.skinId);
+  await db
+    .update(users)
+    .set({
+      unlockedSkins: nextUnlocked,
+      ...(resetEquipped ? { equippedSkin: 'ratao' } : {}),
+    })
+    .where(eq(users.id, target.id));
+
+  if (
+    updatedPerms.length === 0 &&
+    !target.unlockedSkins.includes(params.skinId) &&
+    !resetEquipped
+  ) {
+    return { status: 'not_found' };
+  }
+
+  await addNeonAdminLog(
+    params.adminUser.nickname,
+    'REVOGAR_SKIN_SECRETA',
+    `Removeu a skin secreta "${skinName}" (${params.skinId}) de ${target.nickname}`
+  );
+  return { status: 'ok', targetNickname: target.nickname, resetEquipped };
 }
 
 

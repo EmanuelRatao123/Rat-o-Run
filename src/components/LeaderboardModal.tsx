@@ -89,7 +89,7 @@ export function LeaderboardModal({
             <p className="text-xs text-slate-400">
               {category === 'no_coin'
                 ? `Modo No Coin · Maior tempo sem pegar moedas · ${totalRanked} jogadores ranqueados`
-                : `Modo Normal · Total acumulado de moedas coletadas · ${totalRanked} jogadores ranqueados`}
+                : `Modo Normal · Recorde de moedas em 1 partida · ${totalRanked} jogadores ranqueados`}
             </p>
           </div>
           <button
@@ -126,7 +126,7 @@ export function LeaderboardModal({
               }`}
             >
               <Coins className="w-3.5 h-3.5" />
-              MOEDAS ACUMULADAS
+              MOEDAS (1 PARTIDA)
             </button>
           </div>
 
@@ -142,7 +142,7 @@ export function LeaderboardModal({
             )}
             {category === 'coins' && currentCoinEntry && (
               <span className="font-mono-num text-emerald-300 font-bold">
-                ({currentCoinEntry.totalCoinsCollected.toLocaleString('pt-BR')} moedas)
+                ({currentCoinEntry.bestMatchCoins.toLocaleString('pt-BR')} moedas em 1 partida)
               </span>
             )}
           </div>
@@ -189,7 +189,7 @@ export function LeaderboardModal({
               </div>
               <div>
                 <div className="text-[10px] font-extrabold uppercase tracking-widest text-emerald-300">
-                  TOP 1 COLECIONADOR · MOEDAS
+                  TOP 1 COLECIONADOR · RECORDE EM 1 PARTIDA
                 </div>
                 <button
                   type="button"
@@ -199,15 +199,18 @@ export function LeaderboardModal({
                   {leaderCoins.nickname}
                 </button>
                 <div className="text-xs text-slate-300">
-                  {getSkinDefinition(leaderCoins.skinId).name} · {leaderCoins.totalMatches} partidas
+                  {getSkinDefinition(leaderCoins.skinId).name} ·{' '}
+                  {MAPS.find((m) => m.id === leaderCoins.mapId)?.name || leaderCoins.mapId}
                 </div>
               </div>
             </div>
             <div className="text-right">
-              <div className="text-[10px] font-bold uppercase text-emerald-300">TOTAL ACUMULADO</div>
+              <div className="text-[10px] font-bold uppercase text-emerald-300">
+                RECORDE EM 1 PARTIDA
+              </div>
               <div className="font-mono-num text-2xl sm:text-3xl font-extrabold text-white flex items-center justify-end gap-2">
                 <Coins className="w-6 h-6 text-amber-400" />
-                {leaderCoins.totalCoinsCollected.toLocaleString('pt-BR')}
+                {leaderCoins.bestMatchCoins.toLocaleString('pt-BR')}
               </div>
             </div>
           </div>
@@ -290,7 +293,7 @@ export function LeaderboardModal({
             )
           ) : coinEntries.length === 0 ? (
             <div className="py-16 text-center text-slate-400 text-sm">
-              Nenhum jogador com moedas acumuladas ainda. Jogue no Modo Normal para coletar moedas!
+              Nenhum recorde de moedas em 1 partida registrado ainda. Jogue no Modo Normal para competir!
             </div>
           ) : (
             <div className="space-y-2">
@@ -338,7 +341,11 @@ export function LeaderboardModal({
                         <div className="text-[11px] text-slate-400 flex flex-wrap items-center gap-2">
                           <span>{skinDef?.name || entry.skinId}</span>
                           <span>·</span>
-                          <span>{entry.totalMatches} partidas</span>
+                          <span>
+                            {MAPS.find((m) => m.id === entry.mapId)?.name || entry.mapId}
+                          </span>
+                          <span>·</span>
+                          <span>{new Date(entry.achievedAt).toLocaleDateString('pt-BR')}</span>
                         </div>
                       </div>
                     </div>
@@ -346,7 +353,7 @@ export function LeaderboardModal({
                     <div className="text-right shrink-0 flex items-center gap-2">
                       <Coins className="w-4 h-4 text-amber-400" />
                       <span className="font-mono-num font-extrabold text-base sm:text-lg text-emerald-300">
-                        {entry.totalCoinsCollected.toLocaleString('pt-BR')}
+                        {entry.bestMatchCoins.toLocaleString('pt-BR')}
                       </span>
                     </div>
                   </div>

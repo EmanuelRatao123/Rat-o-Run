@@ -14,6 +14,7 @@ import {
   GraphicsQuality,
   LOCKED_EXCLUSIVE_SKINS,
   MapId,
+  SECRET_EXCLUSIVE_SKINS,
   SKINS,
   SPECIAL_UNLOCKABLE_SKINS,
   SkinDefinition,
@@ -22,6 +23,7 @@ import {
   getSkinDefinition,
   isExclusiveSkinId,
   isLockedExclusiveSkinId,
+  isSecretExclusiveSkinId,
   isSpecialUnlockableSkinId,
 } from '../shared/constants.ts';
 import { ScenePreview3D } from './ScenePreview3D.tsx';
@@ -49,7 +51,8 @@ export function SkinsModal({
     if (
       !isExclusiveSkinId(skinId) &&
       !isSpecialUnlockableSkinId(skinId) &&
-      !isLockedExclusiveSkinId(skinId)
+      !isLockedExclusiveSkinId(skinId) &&
+      !isSecretExclusiveSkinId(skinId)
     ) {
       return true;
     }
@@ -58,10 +61,13 @@ export function SkinsModal({
 
   // Single unified SKINS list:
   // - All common skins
-  // - Meu Ratão & the 10 Locked Exclusive Skins (always shown, with lock while locked)
-  // - Hidden exclusive skins (Top 1/2/3 & Ratão Rei) ONLY when actually unlocked
+  // - Meu Ratão & Locked Exclusive Skins (always shown, with lock while locked)
+  // - Hidden exclusive & secret skins (Top 1/2/3, Ratão Rei, Plankton) ONLY when actually unlocked
   const visibleSkins = useMemo<SkinDefinition[]>(() => {
     const unlockedExclusives = EXCLUSIVE_SKINS.filter(
+      (skin) => allowedExclusive.includes(skin.id)
+    );
+    const unlockedSecrets = SECRET_EXCLUSIVE_SKINS.filter(
       (skin) => allowedExclusive.includes(skin.id)
     );
     return [
@@ -69,6 +75,7 @@ export function SkinsModal({
       ...SPECIAL_UNLOCKABLE_SKINS,
       ...LOCKED_EXCLUSIVE_SKINS,
       ...unlockedExclusives,
+      ...unlockedSecrets,
     ];
   }, [allowedExclusive]);
 
@@ -87,7 +94,8 @@ export function SkinsModal({
       const unlocked =
         (!isExclusiveSkinId(skin.id) &&
           !isSpecialUnlockableSkinId(skin.id) &&
-          !isLockedExclusiveSkinId(skin.id)) ||
+          !isLockedExclusiveSkinId(skin.id) &&
+          !isSecretExclusiveSkinId(skin.id)) ||
         allowedExclusive.includes(skin.id);
       const customCfg =
         skin.id === 'meu_ratao'
@@ -124,7 +132,9 @@ export function SkinsModal({
   const isExclusive = isExclusiveSkinId(previewSkin);
   const isSpecialUnlockable = isSpecialUnlockableSkinId(previewSkin);
   const isLockedCatalogSkin = isLockedExclusiveSkinId(previewSkin);
-  const isRestrictedCategory = isExclusive || isSpecialUnlockable || isLockedCatalogSkin;
+  const isSecretSkin = isSecretExclusiveSkinId(previewSkin);
+  const isRestrictedCategory =
+    isExclusive || isSpecialUnlockable || isLockedCatalogSkin || isSecretSkin;
   const isAllowed = isSkinUnlocked(previewSkin);
 
   const handleEquip = async () => {
@@ -176,6 +186,7 @@ export function SkinsModal({
                 mode="turntable"
                 animState={previewAnim}
                 interactiveRotate
+                capeConfig={user.capeConfig}
                 customConfig={
                   previewSkin === 'meu_ratao'
                     ? isAllowed
@@ -316,7 +327,8 @@ export function SkinsModal({
                 const equipped = user.equippedSkin === skin.id;
                 const unlocked = isSkinUnlocked(skin.id);
                 const gifted = user.giftedSkins.includes(skin.id);
-                const isExclusiveBadge = isExclusiveSkinId(skin.id);
+                const isExclusiveBadge =
+                  isExclusiveSkinId(skin.id) || isSecretExclusiveSkinId(skin.id);
                 const isMeuRatao = skin.id === 'meu_ratao';
                 const isCatalogUnlockable =
                   isMeuRatao || isLockedExclusiveSkinId(skin.id);

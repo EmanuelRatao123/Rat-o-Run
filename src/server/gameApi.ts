@@ -17,10 +17,13 @@ import {
   repoAdminGetPlayerSkinsSummary,
   repoAdminGrantAllEligibleSkins,
   repoAdminGrantLockedSkin,
+  repoAdminGrantSecretSkin,
   repoAdminListExclusiveSkinOwners,
+  repoAdminListSecretSkinOwners,
   repoAdminListSkinGrantHistory,
   repoAdminRevokeBulkGrantedSkins,
   repoAdminRevokeLockedSkin,
+  repoAdminRevokeSecretSkin,
   repoCanUserEquipSkin,
   repoCloseGlobalPoll,
   repoCompleteMatchAndRecord,
@@ -39,6 +42,7 @@ import {
   repoGetSocialFeed,
   repoGetWalletStatsForUser,
   repoGiftSkinToPlayer,
+  repoLogMatchDiagnostic,
   repoMarkGiftsSeen,
   repoSearchPlayersForAdmin,
   repoUpdateUserEquippedSkin,
@@ -101,6 +105,14 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
     signature,
     completed: false,
   });
+  void repoLogMatchDiagnostic({
+    userId: user.id,
+    matchId,
+    mode: chosenMode,
+    stage: 'start',
+    status: 'ok',
+    detail: `Started ${chosenMode} map=${mapId} skin=${chosenSkin}`,
+  });
 
   res.json({ matchId, startedAt, signature, mode: chosenMode });
 }
@@ -125,8 +137,16 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
   }
 
   const active = await repoGetActiveMatch(matchId);
-  if (!active || active.userId !== user.id || active.completed) {
-    res.status(400).json({ error: 'Partida inválida ou já finalizada.' });
+  if (!active || active.userId !== user.id) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: 'no_coin',
+      stage: 'finish',
+      status: 'not_found',
+      detail: 'Active match missing or belongs to another user',
+    });
+    res.status(400).json({ error: 'Partida inválida ou expirada.' });
     return;
   }
 
@@ -138,7 +158,29 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     (verifyHmac(expectedPayload, signature) || verifyHmac(legacyPayload, signature));
 
   if (!sigMatches) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'bad_signature',
+      detail: 'Signature mismatch on match finish',
+    });
     res.status(403).json({ error: 'Assinatura de partida inválida.' });
+    return;
+  }
+
+  // Idempotent return if match already finalized
+  if (active.completed && active.summaryJson) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'idempotent_hit',
+      detail: 'Returned persisted summary for already finalized match',
+    });
+    res.json({ summary: active.summaryJson, idempotent: true });
     return;
   }
 
@@ -164,17 +206,33 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     safeDistance < 0 ||
     safeScore < 0
   ) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'invalid_numbers',
+      detail: 'Non-finite or negative metrics payload',
+    });
     res.status(400).json({ error: 'Dados da partida inválidos.' });
     return;
   }
 
-  // Server-side anti-cheat plausibility checks
-  if (safeDuration > wallElapsedMs + 5000) {
+  // Server-side anti-cheat plausibility checks (generous tolerance for network retry latency)
+  if (safeDuration > wallElapsedMs + 10000) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'rejected_duration',
+      detail: `safeDuration=${safeDuration} wallElapsed=${wallElapsedMs}`,
+    });
     res.status(422).json({ error: 'Duração incompatível com o tempo real da partida.' });
     return;
   }
   if (activeMode === 'no_coin') {
-    if (safeNoCoin > safeDuration + 150) {
+    if (safeNoCoin > safeDuration + 250) {
       res.status(422).json({ error: 'Tempo sem moedas não pode superar a duração da partida.' });
       return;
     }
@@ -194,7 +252,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     }
   }
 
-  const maxPlausibleDistance = (safeDuration / 1000) * 75 + 40;
+  const maxPlausibleDistance = (safeDuration / 1000) * 75 + 45;
   if (safeDistance > maxPlausibleDistance) {
     res.status(422).json({ error: 'Distância incompatível com os limites físicos do jogo.' });
     return;
@@ -210,9 +268,12 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
   const roundedScore = Math.round(safeScore);
   const roundedCoins = Math.round(safeCoins);
   const roundedDuration = Math.round(safeDuration);
+  const normalizedEndReason: 'police' | 'coin' =
+    activeMode === 'no_coin' && (endReason === 'coin' || safeCollectedCoin) ? 'coin' : 'police';
 
   const outcome = await repoCompleteMatchAndRecord({
     user,
+    endReason: normalizedEndReason,
     match: {
       id: matchId,
       userId: user.id,
@@ -231,15 +292,30 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
   });
 
   if (!outcome.ok) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'repo_failed',
+      detail: 'repoCompleteMatchAndRecord returned ok=false',
+    });
     res.status(400).json({ error: 'Partida inválida ou já finalizada.' });
     return;
   }
 
-  const normalizedEndReason: 'police' | 'coin' =
-    activeMode === 'no_coin' && (endReason === 'coin' || safeCollectedCoin) ? 'coin' : 'police';
+  void repoLogMatchDiagnostic({
+    userId: user.id,
+    matchId,
+    mode: activeMode,
+    stage: 'finish',
+    status: outcome.idempotent ? 'idempotent_ok' : 'ok',
+    detail: `Recorded mode=${activeMode} noCoinMs=${roundedNoCoin} coins=${roundedCoins} dist=${roundedDistance}`,
+  });
 
   res.json({
-    summary: {
+    idempotent: Boolean(outcome.idempotent),
+    summary: outcome.summary ?? {
       matchId,
       mode: activeMode,
       mapId: active.mapId,
@@ -698,5 +774,88 @@ export async function adminListSkinGrantHistoryHandler(
   const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, Math.floor(rawLimit)) : 60;
   const history = await repoAdminListSkinGrantHistory(nickname, limit);
   res.json({ history });
+}
+
+export async function adminListSecretSkinOwnersHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Acesso restrito a administradores.' });
+    return;
+  }
+  const skinId = typeof req.query.skinId === 'string' ? (req.query.skinId as SkinId) : 'plankton';
+  const owners = await repoAdminListSecretSkinOwners(admin, skinId);
+  res.json({ owners });
+}
+
+export async function adminGrantSecretSkinHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Apenas administradores podem gerenciar skins secretas.' });
+    return;
+  }
+  const { nickname, skinId } = req.body ?? {};
+  const targetNick = typeof nickname === 'string' && nickname.trim() ? nickname.trim() : admin.nickname;
+  const chosenSkin: SkinId = isValidSkinId(skinId) ? skinId : 'plankton';
+
+  const result = await repoAdminGrantSecretSkin({
+    adminUser: admin,
+    targetNickname: targetNick,
+    skinId: chosenSkin,
+  });
+
+  if (result.status === 'ok') {
+    res.status(201).json({ owner: result.owner });
+    return;
+  }
+  if (result.status === 'not_found') {
+    res.status(404).json({ error: `Jogador "${targetNick}" não encontrado.` });
+    return;
+  }
+  if (result.status === 'already_unlocked') {
+    res.status(409).json({
+      error: `${result.targetNickname} já possui a skin secreta "${result.skinName}".`,
+    });
+    return;
+  }
+  res.status(403).json({ error: 'Skin secreta inválida ou acesso não autorizado.' });
+}
+
+export async function adminRevokeSecretSkinHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Apenas administradores podem gerenciar skins secretas.' });
+    return;
+  }
+  const { userId, skinId } = req.body ?? {};
+  if (typeof userId !== 'string' || !userId.trim()) {
+    res.status(400).json({ error: 'Jogador inválido.' });
+    return;
+  }
+  const chosenSkin: SkinId = isValidSkinId(skinId) ? skinId : 'plankton';
+  const result = await repoAdminRevokeSecretSkin({
+    adminUser: admin,
+    userId: userId.trim(),
+    skinId: chosenSkin,
+  });
+  if (result.status !== 'ok') {
+    res.status(result.status === 'forbidden' ? 403 : 404).json({
+      error: 'Não foi possível revogar a skin secreta.',
+    });
+    return;
+  }
+  res.json({
+    ok: true,
+    targetNickname: result.targetNickname,
+    resetEquipped: result.resetEquipped,
+  });
 }
 

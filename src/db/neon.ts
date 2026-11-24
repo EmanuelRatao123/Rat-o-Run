@@ -72,6 +72,12 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
       await sql`CREATE INDEX IF NOT EXISTS users_rank_idx ON users (best_no_coin_time_ms DESC, best_distance DESC)`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS equipped_skate_id TEXT`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS best_single_match_coins INTEGER NOT NULL DEFAULT 0`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS best_single_match_coins_at TEXT`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS best_single_match_coins_skin TEXT`;
+      await sql`ALTER TABLE users ADD COLUMN IF NOT EXISTS best_single_match_coins_map TEXT`;
+      await sql`CREATE INDEX IF NOT EXISTS users_best_coins_rank_idx ON users (best_single_match_coins DESC, best_distance DESC)`;
 
       await sql`
         CREATE TABLE IF NOT EXISTS sessions (
@@ -98,6 +104,7 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
       await sql`ALTER TABLE active_matches ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'no_coin'`;
+      await sql`ALTER TABLE active_matches ADD COLUMN IF NOT EXISTS summary_json JSONB`;
       await sql`CREATE INDEX IF NOT EXISTS active_matches_started_idx ON active_matches (started_at)`;
 
       await sql`
@@ -506,6 +513,132 @@ export async function ensureNeonSchema(): Promise<void> {
       `;
       await sql`CREATE INDEX IF NOT EXISTS skin_grant_hist_created_idx ON skin_grant_history (created_at DESC)`;
       await sql`CREATE INDEX IF NOT EXISTS skin_grant_hist_target_idx ON skin_grant_history (target_user_id, created_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS match_diagnostic_logs (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL,
+          match_id TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          stage TEXT NOT NULL,
+          status TEXT NOT NULL,
+          detail TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS match_diag_user_idx ON match_diagnostic_logs (user_id, created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS match_diag_match_idx ON match_diagnostic_logs (match_id)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS friendships (
+          id TEXT PRIMARY KEY,
+          user_low_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          user_high_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          requested_by_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          status TEXT NOT NULL DEFAULT 'pending',
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          accepted_at TEXT
+        )
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS friendships_pair_uidx ON friendships (user_low_id, user_high_id)`;
+      await sql`CREATE INDEX IF NOT EXISTS friendships_low_status_idx ON friendships (user_low_id, status)`;
+      await sql`CREATE INDEX IF NOT EXISTS friendships_high_status_idx ON friendships (user_high_id, status)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS friend_messages (
+          id TEXT PRIMARY KEY,
+          friendship_id TEXT NOT NULL REFERENCES friendships(id) ON DELETE CASCADE,
+          sender_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          receiver_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          content TEXT NOT NULL,
+          read BOOLEAN NOT NULL DEFAULT FALSE,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS friend_msg_ship_created_idx ON friend_messages (friendship_id, created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS friend_msg_recv_read_idx ON friend_messages (receiver_user_id, read)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS player_capes (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          config_json JSONB NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS player_live_mode_configs (
+          user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+          config_json JSONB NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS player_skate_inventory (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          skate_id TEXT NOT NULL,
+          charges INTEGER NOT NULL DEFAULT 0,
+          unlocked_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE UNIQUE INDEX IF NOT EXISTS skate_inv_user_skate_uidx ON player_skate_inventory (user_id, skate_id)`;
+      await sql`CREATE INDEX IF NOT EXISTS skate_inv_user_idx ON player_skate_inventory (user_id)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS shop_transactions (
+          id TEXT PRIMARY KEY,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          item_type TEXT NOT NULL,
+          item_id TEXT NOT NULL,
+          quantity INTEGER NOT NULL DEFAULT 1,
+          unit_price INTEGER NOT NULL,
+          total_cost INTEGER NOT NULL,
+          balance_before INTEGER NOT NULL,
+          balance_after INTEGER NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS shop_tx_user_idx ON shop_transactions (user_id, created_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS match_skate_uses (
+          id TEXT PRIMARY KEY,
+          event_key TEXT NOT NULL UNIQUE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          match_id TEXT NOT NULL,
+          skate_id TEXT NOT NULL,
+          mode TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS match_skate_uses_user_idx ON match_skate_uses (user_id, created_at DESC)`;
+
+      // One-time safe backfill of best_single_match_coins from historical normal matches
+      await sql`
+        UPDATE users u
+        SET
+          best_single_match_coins = sub.max_coins,
+          best_single_match_coins_at = sub.created_at,
+          best_single_match_coins_skin = sub.skin_id,
+          best_single_match_coins_map = sub.map_id
+        FROM (
+          SELECT DISTINCT ON (user_id)
+            user_id,
+            coins AS max_coins,
+            created_at,
+            skin_id,
+            map_id
+          FROM matches
+          WHERE mode = 'normal' AND coins > 0
+          ORDER BY user_id, coins DESC, created_at ASC
+        ) sub
+        WHERE u.id = sub.user_id
+          AND u.best_single_match_coins = 0
+      `;
     })().catch((err) => {
       global._rataoNeonInitPromise = undefined;
       throw err;
