@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react';
 import * as THREE from 'three';
 import { CustomCharacterConfig, GraphicsQuality, MapId, SkinId } from '../shared/constants.ts';
-import { animateCharacterRig, createCharacterRig } from '../game/characters.ts';
+import { CharacterAnimState, animateCharacterRig, createCharacterRig } from '../game/characters.ts';
 import { MAP_THEMES, MapSceneryBuilder } from '../game/maps.ts';
 import { createStudioRenderer, scheduleSoftwareFrame } from '../game/rendererSetup.ts';
 
@@ -9,7 +9,7 @@ interface ScenePreview3DProps {
   skinId: SkinId;
   mapId: MapId;
   customConfig?: CustomCharacterConfig;
-  animState?: 'idle' | 'run';
+  animState?: CharacterAnimState;
   quality?: GraphicsQuality;
   mode?: 'showcase' | 'turntable' | 'scenic';
   interactiveRotate?: boolean;
@@ -30,7 +30,7 @@ export function ScenePreview3D({
   const skinRef = useRef<SkinId>(skinId);
   const mapRef = useRef<MapId>(mapId);
   const customRef = useRef<CustomCharacterConfig | undefined>(customConfig);
-  const animRef = useRef<'idle' | 'run' | undefined>(animState);
+  const animRef = useRef<CharacterAnimState | undefined>(animState);
 
   useEffect(() => {
     const container = mountRef.current;

@@ -156,6 +156,11 @@ export function DualResultModal({
                     mapId={room.mapId}
                     mode="turntable"
                     quality="low"
+                    animState={
+                      player.skinId === 'cristiano_ronaldo' || isWinner || longestCoop
+                        ? 'victory'
+                        : 'idle'
+                    }
                     customConfig={player.customConfig}
                   />
                   <div className="absolute top-2.5 left-2.5 flex items-center gap-1.5 pointer-events-none">

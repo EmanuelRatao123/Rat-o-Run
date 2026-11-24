@@ -47,8 +47,14 @@ async function runTests() {
       'hacker',
       'bandido',
       'ghost_face',
+      'shrek',
+      'herobrine',
+      'freddy_fazbear',
+      'sonic',
+      'tung_tung_sahur',
+      'cristiano_ronaldo',
     ];
-    assert.equal(LOCKED_EXCLUSIVE_SKINS.length, 10, 'Deve haver exatamente 10 novas skins');
+    assert.equal(LOCKED_EXCLUSIVE_SKINS.length, 16, 'Deve haver exatamente 16 skins exclusivas bloqueadas');
     for (const id of expectedIds) {
       assert.ok(LOCKED_EXCLUSIVE_SKIN_IDS.includes(id as SkinId & (typeof LOCKED_EXCLUSIVE_SKIN_IDS)[number]));
       assert.ok(!(COMMON_SKIN_IDS as string[]).includes(id), `${id} não pode ser comum`);
@@ -198,6 +204,64 @@ async function runTests() {
 
     const ghostOwners = await repoAdminListExclusiveSkinOwners('ghost_face');
     assert.ok(ghostOwners.some((o) => o.userId === p2.id && o.reason === 'promo_code'));
+
+    // 8. Verify all 6 famous new skins individually (locked by default, admin grant/equip/persist/revoke + promo code)
+    const sixFamousSkins: SkinId[] = [
+      'shrek',
+      'herobrine',
+      'freddy_fazbear',
+      'sonic',
+      'tung_tung_sahur',
+      'cristiano_ronaldo',
+    ];
+    for (const skinId of sixFamousSkins) {
+      assert.equal(await repoCanUserEquipSkin(p1, skinId), false, `${skinId} deve começar bloqueada`);
+      const grantSix = await repoAdminGrantLockedSkin({
+        adminNickname: 'AdminTest',
+        targetNickname: p1.nickname,
+        skinId,
+      });
+      assert.equal(grantSix.status, 'ok');
+      assert.equal(await repoCanUserEquipSkin(p1, skinId), true);
+      await repoUpdateUserEquippedSkin(p1.id, skinId);
+      const reloaded = await repoFindUserById(p1.id);
+      assert.equal(reloaded?.equippedSkin, skinId);
+      const allowedReloaded = await repoGetAllowedExclusiveSkinsForUser(reloaded!);
+      assert.ok(allowedReloaded.includes(skinId));
+
+      const revokeSix = await repoAdminRevokeLockedSkin({
+        adminNickname: 'AdminTest',
+        userId: p1.id,
+        skinId,
+      });
+      assert.equal(revokeSix.status, 'ok');
+      assert.equal(await repoCanUserEquipSkin(p1, skinId), false);
+    }
+
+    // Promo code redemption for cristiano_ronaldo
+    const cr7Promo = await repoCreatePromoCode({
+      adminNickname: 'AdminTest',
+      code: `CR7_${suffix.toUpperCase()}`,
+      description: 'Desbloqueia Cristiano Ronaldo',
+      rewardType: 'skin',
+      rewardSkinId: 'cristiano_ronaldo',
+      rewardAmount: 0,
+      rewardMetadata: {},
+      maxUses: 3,
+      isInfinite: false,
+      active: true,
+      expiresAt: null,
+    });
+    assert.equal(cr7Promo.status, 'ok');
+    const cr7Redeem = await repoRedeemPromoCode({
+      user: p2,
+      rawCode: `CR7_${suffix.toUpperCase()}`,
+    });
+    assert.equal(cr7Redeem.status, 'ok');
+    assert.equal(await repoCanUserEquipSkin(p2, 'cristiano_ronaldo'), true);
+    await repoUpdateUserEquippedSkin(p2.id, 'cristiano_ronaldo');
+    const p2Persisted = await repoFindUserById(p2.id);
+    assert.equal(p2Persisted?.equippedSkin, 'cristiano_ronaldo');
 
     console.log('ALL_LOCKED_SKINS_TESTS_PASSED');
   } finally {

@@ -7,7 +7,15 @@ import {
 } from '../shared/constants.ts';
 import { createRadialShadowTexture } from './materials.ts';
 
-export type CharacterAnimState = 'idle' | 'run' | 'jump' | 'slide' | 'stumble' | 'crash' | 'jetpack';
+export type CharacterAnimState =
+  | 'idle'
+  | 'run'
+  | 'jump'
+  | 'slide'
+  | 'stumble'
+  | 'crash'
+  | 'jetpack'
+  | 'victory';
 
 export interface FollowerMouseRig {
   group: THREE.Group;
@@ -33,6 +41,7 @@ export interface CustomMeshRefs {
 }
 
 export interface CharacterRig {
+  skinId: SkinId | 'police';
   root: THREE.Group;
   bodyPivot: THREE.Group;
   torsoPivot: THREE.Group;
@@ -45,6 +54,21 @@ export interface CharacterRig {
   capePivot?: THREE.Group;
   followerMice?: FollowerMouseRig[];
   auraParticles?: AuraParticleRig[];
+  blinkLids?: THREE.Mesh[];
+  speedTrailParticles?: {
+    mesh: THREE.Mesh;
+    baseX: number;
+    baseY: number;
+    baseZ: number;
+    phase: number;
+  }[];
+  eyeAuraParticles?: {
+    mesh: THREE.Mesh;
+    baseX: number;
+    baseY: number;
+    baseZ: number;
+    phase: number;
+  }[];
   customMeshRefs?: CustomMeshRefs;
   spawnTimer: number;
   hoverboardGroup: THREE.Group;
@@ -159,11 +183,60 @@ function buildCharacterBase(
   let policeBeaconRed: THREE.Mesh | undefined;
   let policeBeaconBlue: THREE.Mesh | undefined;
   let customMeshRefs: CustomMeshRefs | undefined;
+  let blinkLids: THREE.Mesh[] | undefined;
+  let speedTrailParticles:
+    | { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number }[]
+    | undefined;
+  let eyeAuraParticles:
+    | { mesh: THREE.Mesh; baseX: number; baseY: number; baseZ: number; phase: number }[]
+    | undefined;
 
   const v = (p: THREE.Object3D, s: BoxSpec) => {
     const m = addVoxel(p, s, geos, mats, flashMaterials);
     m.castShadow = castShadow;
     return m;
+  };
+
+  const addCyl = (
+    p: THREE.Object3D,
+    s: {
+      rt: number;
+      rb: number;
+      h: number;
+      seg?: number;
+      x: number;
+      y: number;
+      z: number;
+      color: number;
+      roughness?: number;
+      metalness?: number;
+      emissive?: number;
+      emissiveIntensity?: number;
+      rx?: number;
+      ry?: number;
+      rz?: number;
+    }
+  ) => {
+    const geo = new THREE.CylinderGeometry(s.rt, s.rb, s.h, s.seg ?? 12);
+    const mat = new THREE.MeshStandardMaterial({
+      color: s.color,
+      roughness: s.roughness ?? 0.68,
+      metalness: s.metalness ?? 0.05,
+      emissive: s.emissive ?? 0x000000,
+      emissiveIntensity: s.emissiveIntensity ?? 0,
+    });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.position.set(s.x, s.y, s.z);
+    if (s.rx) mesh.rotation.x = s.rx;
+    if (s.ry) mesh.rotation.y = s.ry;
+    if (s.rz) mesh.rotation.z = s.rz;
+    mesh.castShadow = castShadow;
+    mesh.receiveShadow = true;
+    p.add(mesh);
+    geos.push(geo);
+    mats.push(mat);
+    flashMaterials.push(mat);
+    return mesh;
   };
 
   // Helper for standard blocky eyes
@@ -901,6 +974,321 @@ function buildCharacterBase(
     torsoPivot.add(capePivot);
     v(capePivot, { w: 0.62, h: 0.92, d: 0.05, x: 0, y: -0.44, z: -0.04, color: 0x09090b, roughness: 0.92, rx: 0.18 });
     v(capePivot, { w: 0.48, h: 0.16, d: 0.05, x: 0, y: -0.92, z: -0.04, color: 0x18181b, roughness: 0.92, rx: 0.18 });
+  } else if (skin === 'shrek') {
+    // SHREK: Large green ogre, wide head, tubular side ears, brown vest, beige shirt, brown pants, dark boots
+    // Beige long-sleeve tunic base + open brown leather vest
+    v(torsoPivot, { w: 0.64, h: 0.6, d: 0.38, x: 0, y: 0.3, z: 0, color: 0xe7e5e4, roughness: 0.86 });
+    v(torsoPivot, { w: 0.22, h: 0.58, d: 0.4, x: -0.22, y: 0.3, z: 0, color: 0x5c3317, roughness: 0.72 }); // Left vest
+    v(torsoPivot, { w: 0.22, h: 0.58, d: 0.4, x: 0.22, y: 0.3, z: 0, color: 0x5c3317, roughness: 0.72 }); // Right vest
+    v(torsoPivot, { w: 0.66, h: 0.58, d: 0.14, x: 0, y: 0.3, z: -0.14, color: 0x5c3317, roughness: 0.72 }); // Vest back
+    v(torsoPivot, { w: 0.18, h: 0.05, d: 0.04, x: 0, y: 0.34, z: 0.195, color: 0x78350f }); // Vest lacing
+    v(torsoPivot, { w: 0.18, h: 0.05, d: 0.04, x: 0, y: 0.22, z: 0.195, color: 0x78350f });
+    v(torsoPivot, { w: 0.68, h: 0.09, d: 0.42, x: 0, y: 0.06, z: 0, color: 0x3f230e, roughness: 0.6 }); // Belt
+    v(torsoPivot, { w: 0.14, h: 0.11, d: 0.04, x: 0, y: 0.06, z: 0.215, color: 0xa16207, metalness: 0.65 }); // Brass buckle
+    // Wide Green Ogre Head & Confident Face
+    v(headPivot, { w: 0.56, h: 0.48, d: 0.52, x: 0, y: 0.25, z: 0, color: 0x84cc16, roughness: 0.72 });
+    v(headPivot, { w: 0.5, h: 0.16, d: 0.5, x: 0, y: 0.1, z: 0.02, color: 0x65a30d, roughness: 0.74 }); // Broad jaw
+    // Tubular Trumpet Side Ears
+    addCyl(headPivot, { rt: 0.05, rb: 0.04, h: 0.18, x: -0.34, y: 0.37, z: -0.02, color: 0x84cc16, roughness: 0.7, rz: 1.05 });
+    addCyl(headPivot, { rt: 0.08, rb: 0.045, h: 0.09, x: -0.43, y: 0.42, z: -0.02, color: 0x65a30d, roughness: 0.68, rz: 1.05 });
+    addCyl(headPivot, { rt: 0.038, rb: 0.03, h: 0.04, x: -0.46, y: 0.435, z: -0.02, color: 0x365314, roughness: 0.85, rz: 1.05 });
+    addCyl(headPivot, { rt: 0.05, rb: 0.04, h: 0.18, x: 0.34, y: 0.37, z: -0.02, color: 0x84cc16, roughness: 0.7, rz: -1.05 });
+    addCyl(headPivot, { rt: 0.08, rb: 0.045, h: 0.09, x: 0.43, y: 0.42, z: -0.02, color: 0x65a30d, roughness: 0.68, rz: -1.05 });
+    addCyl(headPivot, { rt: 0.038, rb: 0.03, h: 0.04, x: 0.46, y: 0.435, z: -0.02, color: 0x365314, roughness: 0.85, rz: -1.05 });
+    // Wide Ogre Nose & Thick Confident Eyebrows
+    v(headPivot, { w: 0.17, h: 0.12, d: 0.14, x: 0, y: 0.21, z: 0.29, color: 0x65a30d, roughness: 0.68 });
+    addEyes(0.3, 0.27, 0x78350f, 0xfefce8);
+    v(headPivot, { w: 0.16, h: 0.06, d: 0.05, x: -0.12, y: 0.39, z: 0.275, color: 0x365314, rz: -0.15 });
+    v(headPivot, { w: 0.16, h: 0.06, d: 0.05, x: 0.12, y: 0.41, z: 0.275, color: 0x365314, rz: 0.26 }); // Cocked brow
+    // Funny Confident Crooked Grin
+    v(headPivot, { w: 0.24, h: 0.04, d: 0.04, x: 0.02, y: 0.1, z: 0.275, color: 0x365314, rz: 0.08 });
+    v(headPivot, { w: 0.06, h: 0.05, d: 0.04, x: 0.11, y: 0.12, z: 0.278, color: 0xfef9c3 });
+    // Arms (slightly offset outward so wide vest doesn't clip sleeves)
+    v(leftArmPivot, { w: 0.2, h: 0.28, d: 0.2, x: -0.07, y: -0.11, z: 0, color: 0xe7e5e4, roughness: 0.86 });
+    v(leftArmPivot, { w: 0.19, h: 0.12, d: 0.19, x: -0.07, y: -0.3, z: 0, color: 0xd6d3d1, roughness: 0.86 });
+    v(leftArmPivot, { w: 0.18, h: 0.13, d: 0.18, x: -0.07, y: -0.42, z: 0, color: 0x84cc16, roughness: 0.72 });
+    v(rightArmPivot, { w: 0.2, h: 0.28, d: 0.2, x: 0.07, y: -0.11, z: 0, color: 0xe7e5e4, roughness: 0.86 });
+    v(rightArmPivot, { w: 0.19, h: 0.12, d: 0.19, x: 0.07, y: -0.3, z: 0, color: 0xd6d3d1, roughness: 0.86 });
+    v(rightArmPivot, { w: 0.18, h: 0.13, d: 0.18, x: 0.07, y: -0.42, z: 0, color: 0x84cc16, roughness: 0.72 });
+    // Brown Trousers & Large Dark Boots
+    v(leftLegPivot, { w: 0.23, h: 0.34, d: 0.23, x: -0.02, y: -0.2, z: 0, color: 0x5c3317, roughness: 0.8 });
+    v(leftLegPivot, { w: 0.26, h: 0.22, d: 0.34, x: -0.02, y: -0.52, z: 0.04, color: 0x292524, roughness: 0.65 });
+    v(leftLegPivot, { w: 0.27, h: 0.06, d: 0.27, x: -0.02, y: -0.39, z: 0, color: 0x451a03, roughness: 0.65 });
+    v(rightLegPivot, { w: 0.23, h: 0.34, d: 0.23, x: 0.02, y: -0.2, z: 0, color: 0x5c3317, roughness: 0.8 });
+    v(rightLegPivot, { w: 0.26, h: 0.22, d: 0.34, x: 0.02, y: -0.52, z: 0.04, color: 0x292524, roughness: 0.65 });
+    v(rightLegPivot, { w: 0.27, h: 0.06, d: 0.27, x: 0.02, y: -0.39, z: 0, color: 0x451a03, roughness: 0.65 });
+  } else if (skin === 'herobrine') {
+    // HEROBRINE: Classic Minecraft blocky proportions, light-blue shirt, dark-blue pants, glowing white eyes + eye aura
+    v(torsoPivot, { w: 0.52, h: 0.58, d: 0.28, x: 0, y: 0.3, z: 0, color: 0x06b6d4, roughness: 0.72 });
+    v(torsoPivot, { w: 0.2, h: 0.08, d: 0.29, x: 0, y: 0.56, z: 0.01, color: 0xe2b18d, roughness: 0.72 }); // Collar skin V
+    v(torsoPivot, { w: 0.14, h: 0.08, d: 0.03, x: 0.14, y: 0.04, z: 0.145, color: 0x0284c7 }); // Shirt tuck detail
+    // Blocky Minecraft Head + Brown Hair + Glowing Pure-White Eyes
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.25, z: 0, color: 0xe2b18d, roughness: 0.72 });
+    v(headPivot, { w: 0.5, h: 0.13, d: 0.5, x: 0, y: 0.46, z: 0, color: 0x4a2c18, roughness: 0.84 }); // Top hair
+    v(headPivot, { w: 0.5, h: 0.1, d: 0.12, x: 0, y: 0.38, z: 0.2, color: 0x4a2c18, roughness: 0.84 }); // Forehead fringe
+    v(headPivot, { w: 0.5, h: 0.3, d: 0.14, x: 0, y: 0.31, z: -0.18, color: 0x4a2c18, roughness: 0.84 }); // Back hair
+    v(headPivot, { w: 0.08, h: 0.14, d: 0.12, x: -0.23, y: 0.36, z: 0.06, color: 0x4a2c18 });
+    v(headPivot, { w: 0.08, h: 0.14, d: 0.12, x: 0.23, y: 0.36, z: 0.06, color: 0x4a2c18 });
+    // Nose & mysterious stern beard-line
+    v(headPivot, { w: 0.1, h: 0.06, d: 0.03, x: 0, y: 0.18, z: 0.245, color: 0xc89572 });
+    v(headPivot, { w: 0.22, h: 0.08, d: 0.03, x: 0, y: 0.09, z: 0.245, color: 0x7c4a2d });
+    // Pure White Glowing Herobrine Eyes (No Pupils!)
+    v(headPivot, {
+      w: 0.13,
+      h: 0.055,
+      d: 0.04,
+      x: -0.11,
+      y: 0.24,
+      z: 0.245,
+      color: 0xffffff,
+      emissive: 0xffffff,
+      emissiveIntensity: 2.6,
+      roughness: 0.08,
+    });
+    v(headPivot, {
+      w: 0.13,
+      h: 0.055,
+      d: 0.04,
+      x: 0.11,
+      y: 0.24,
+      z: 0.245,
+      color: 0xffffff,
+      emissive: 0xffffff,
+      emissiveIntensity: 2.6,
+      roughness: 0.08,
+    });
+    // Subtle white glowing particles near eyes/head
+    eyeAuraParticles = [];
+    const eyeParticleOffsets: [number, number, number][] = [
+      [-0.22, 0.26, 0.28],
+      [0.22, 0.26, 0.28],
+      [-0.14, 0.36, 0.3],
+      [0.14, 0.36, 0.3],
+      [0, 0.56, 0.16],
+    ];
+    eyeParticleOffsets.forEach(([px, py, pz], idx) => {
+      const m = v(headPivot, {
+        w: 0.045,
+        h: 0.045,
+        d: 0.045,
+        x: px,
+        y: py,
+        z: pz,
+        color: 0xffffff,
+        emissive: 0xe0f2fe,
+        emissiveIntensity: 2.2,
+        roughness: 0.1,
+      });
+      m.castShadow = false;
+      eyeAuraParticles!.push({ mesh: m, baseX: px, baseY: py, baseZ: pz, phase: idx * 1.3 });
+    });
+    // Blocky Minecraft Limbs (Light-blue short sleeves, light skin arms, dark blue pants)
+    v(leftArmPivot, { w: 0.2, h: 0.2, d: 0.2, x: 0, y: -0.07, z: 0, color: 0x06b6d4, roughness: 0.72 });
+    v(leftArmPivot, { w: 0.19, h: 0.34, d: 0.19, x: 0, y: -0.34, z: 0, color: 0xe2b18d, roughness: 0.72 });
+    v(rightArmPivot, { w: 0.2, h: 0.2, d: 0.2, x: 0, y: -0.07, z: 0, color: 0x06b6d4, roughness: 0.72 });
+    v(rightArmPivot, { w: 0.19, h: 0.34, d: 0.19, x: 0, y: -0.34, z: 0, color: 0xe2b18d, roughness: 0.72 });
+    v(leftLegPivot, { w: 0.22, h: 0.44, d: 0.24, x: 0, y: -0.24, z: 0, color: 0x1e3a8a, roughness: 0.76 });
+    v(leftLegPivot, { w: 0.225, h: 0.16, d: 0.26, x: 0, y: -0.55, z: 0.01, color: 0x475569, roughness: 0.55 });
+    v(rightLegPivot, { w: 0.22, h: 0.44, d: 0.24, x: 0, y: -0.24, z: 0, color: 0x1e3a8a, roughness: 0.76 });
+    v(rightLegPivot, { w: 0.225, h: 0.16, d: 0.26, x: 0, y: -0.55, z: 0.01, color: 0x475569, roughness: 0.55 });
+  } else if (skin === 'freddy_fazbear') {
+    // FREDDY FAZBEAR: Brown animatronic bear, black top hat, bow tie, beige snout, teeth, eyelids & microphone
+    v(torsoPivot, { w: 0.58, h: 0.58, d: 0.36, x: 0, y: 0.3, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(torsoPivot, { w: 0.4, h: 0.4, d: 0.05, x: 0, y: 0.27, z: 0.175, color: 0xd2a679, roughness: 0.58 }); // Tan belly
+    v(torsoPivot, { w: 0.52, h: 0.1, d: 0.32, x: 0, y: 0.04, z: 0, color: 0x334155, metalness: 0.75, roughness: 0.3 }); // Endo waist
+    // Black Bow Tie
+    v(torsoPivot, { w: 0.11, h: 0.09, d: 0.05, x: -0.08, y: 0.52, z: 0.195, color: 0x09090b, roughness: 0.3, rz: 0.15 });
+    v(torsoPivot, { w: 0.11, h: 0.09, d: 0.05, x: 0.08, y: 0.52, z: 0.195, color: 0x09090b, roughness: 0.3, rz: -0.15 });
+    v(torsoPivot, { w: 0.07, h: 0.06, d: 0.06, x: 0, y: 0.52, z: 0.2, color: 0x18181b, roughness: 0.25 });
+    // Animatronic Bear Head, Jaw, Subtle Teeth, Snout, Blinking Eyes & Top Hat
+    v(headPivot, { w: 0.52, h: 0.38, d: 0.48, x: 0, y: 0.32, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(headPivot, { w: 0.56, h: 0.16, d: 0.44, x: 0, y: 0.21, z: 0.01, color: 0x7c3f1c, roughness: 0.52 }); // Cheekplates
+    // Articulated Jaw + Subtle Teeth
+    v(headPivot, { w: 0.4, h: 0.09, d: 0.28, x: 0, y: 0.06, z: 0.12, color: 0x6b3416, roughness: 0.55 });
+    v(headPivot, { w: 0.28, h: 0.05, d: 0.04, x: 0, y: 0.12, z: 0.25, color: 0x09090b }); // Mouth interior
+    for (const tx of [-0.09, -0.03, 0.03, 0.09]) {
+      v(headPivot, { w: 0.04, h: 0.035, d: 0.03, x: tx, y: 0.105, z: 0.265, color: 0xf8fafc, roughness: 0.25 });
+    }
+    // Tan Snout + Shiny Black Nose
+    v(headPivot, { w: 0.36, h: 0.15, d: 0.16, x: 0, y: 0.18, z: 0.27, color: 0xd2a679, roughness: 0.55 });
+    v(headPivot, { w: 0.12, h: 0.07, d: 0.07, x: 0, y: 0.24, z: 0.35, color: 0x09090b, roughness: 0.15 });
+    // Eye Sockets, Blue Animatronic Eyes & Blinking Eyelids
+    v(headPivot, { w: 0.14, h: 0.12, d: 0.04, x: -0.12, y: 0.31, z: 0.238, color: 0x09090b });
+    v(headPivot, { w: 0.14, h: 0.12, d: 0.04, x: 0.12, y: 0.31, z: 0.238, color: 0x09090b });
+    addEyes(0.31, 0.245, 0x38bdf8, 0xf8fafc);
+    const lidL = v(headPivot, { w: 0.14, h: 0.12, d: 0.06, x: -0.12, y: 0.36, z: 0.25, color: 0x6b3416, roughness: 0.55 });
+    const lidR = v(headPivot, { w: 0.14, h: 0.12, d: 0.06, x: 0.12, y: 0.36, z: 0.25, color: 0x6b3416, roughness: 0.55 });
+    lidL.scale.y = 0.18;
+    lidR.scale.y = 0.18;
+    blinkLids = [lidL, lidR];
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.05, x: -0.12, y: 0.4, z: 0.255, color: 0x09090b, rz: 0.12 });
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.05, x: 0.12, y: 0.4, z: 0.255, color: 0x09090b, rz: -0.12 });
+    // Bear Ears on Metallic Endo Stems
+    v(headPivot, { w: 0.05, h: 0.08, d: 0.05, x: -0.23, y: 0.5, z: 0, color: 0x334155, metalness: 0.8 });
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.07, x: -0.26, y: 0.56, z: 0, color: 0x7c3f1c, roughness: 0.55 });
+    v(headPivot, { w: 0.09, h: 0.09, d: 0.08, x: -0.26, y: 0.56, z: 0.01, color: 0xd2a679, roughness: 0.6 });
+    v(headPivot, { w: 0.05, h: 0.08, d: 0.05, x: 0.23, y: 0.5, z: 0, color: 0x334155, metalness: 0.8 });
+    v(headPivot, { w: 0.16, h: 0.16, d: 0.07, x: 0.26, y: 0.56, z: 0, color: 0x7c3f1c, roughness: 0.55 });
+    v(headPivot, { w: 0.09, h: 0.09, d: 0.08, x: 0.26, y: 0.56, z: 0.01, color: 0xd2a679, roughness: 0.6 });
+    // Small Black Top Hat
+    addCyl(headPivot, { rt: 0.18, rb: 0.18, h: 0.03, x: 0, y: 0.525, z: 0, color: 0x18181b, roughness: 0.35 });
+    addCyl(headPivot, { rt: 0.125, rb: 0.115, h: 0.18, x: 0, y: 0.62, z: 0, color: 0x18181b, roughness: 0.35 });
+    addCyl(headPivot, { rt: 0.122, rb: 0.12, h: 0.035, x: 0, y: 0.555, z: 0, color: 0x3f3f46, roughness: 0.3 });
+    // Segmented Animatronic Arms & Legs + Endo Joints
+    v(leftArmPivot, { w: 0.19, h: 0.2, d: 0.19, x: -0.02, y: -0.09, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(leftArmPivot, { w: 0.11, h: 0.08, d: 0.11, x: -0.02, y: -0.22, z: 0, color: 0x334155, metalness: 0.78 });
+    v(leftArmPivot, { w: 0.18, h: 0.22, d: 0.18, x: -0.02, y: -0.35, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(rightArmPivot, { w: 0.19, h: 0.2, d: 0.19, x: 0.02, y: -0.09, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(rightArmPivot, { w: 0.11, h: 0.08, d: 0.11, x: 0.02, y: -0.22, z: 0, color: 0x334155, metalness: 0.78 });
+    v(rightArmPivot, { w: 0.18, h: 0.22, d: 0.18, x: 0.02, y: -0.35, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    // Classic Black & Silver Microphone in Right Hand
+    addCyl(rightArmPivot, { rt: 0.03, rb: 0.025, h: 0.24, x: 0.02, y: -0.43, z: 0.12, color: 0x09090b, roughness: 0.35, rx: 1.05 });
+    addCyl(rightArmPivot, { rt: 0.055, rb: 0.045, h: 0.08, x: 0.02, y: -0.38, z: 0.24, color: 0xcbd5e1, metalness: 0.85, roughness: 0.25, rx: 1.05 });
+    v(leftLegPivot, { w: 0.22, h: 0.22, d: 0.22, x: 0, y: -0.14, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(leftLegPivot, { w: 0.13, h: 0.08, d: 0.13, x: 0, y: -0.28, z: 0, color: 0x334155, metalness: 0.78 });
+    v(leftLegPivot, { w: 0.21, h: 0.16, d: 0.21, x: 0, y: -0.39, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(leftLegPivot, { w: 0.24, h: 0.16, d: 0.32, x: 0, y: -0.55, z: 0.04, color: 0x5c2e14, roughness: 0.58 });
+    v(rightLegPivot, { w: 0.22, h: 0.22, d: 0.22, x: 0, y: -0.14, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(rightLegPivot, { w: 0.13, h: 0.08, d: 0.13, x: 0, y: -0.28, z: 0, color: 0x334155, metalness: 0.78 });
+    v(rightLegPivot, { w: 0.21, h: 0.16, d: 0.21, x: 0, y: -0.39, z: 0, color: 0x7c3f1c, roughness: 0.52 });
+    v(rightLegPivot, { w: 0.24, h: 0.16, d: 0.32, x: 0, y: -0.55, z: 0.04, color: 0x5c2e14, roughness: 0.58 });
+  } else if (skin === 'sonic') {
+    // SONIC: Blue body, backward quills, beige muzzle & belly, connected eyes, white gloves, red sneakers w/ white stripe & speed aura
+    v(torsoPivot, { w: 0.48, h: 0.54, d: 0.3, x: 0, y: 0.28, z: 0, color: 0x2563eb, roughness: 0.4 });
+    v(torsoPivot, { w: 0.32, h: 0.38, d: 0.05, x: 0, y: 0.25, z: 0.145, color: 0xf3cfa4, roughness: 0.65 }); // Tan belly
+    // Back Quills & Tail Spike
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.34, x: 0, y: 0.42, z: -0.24, color: 0x1d4ed8, roughness: 0.38, rx: 0.45 });
+    v(torsoPivot, { w: 0.14, h: 0.14, d: 0.3, x: 0, y: 0.26, z: -0.22, color: 0x1d4ed8, roughness: 0.38, rx: 0.3 });
+    v(torsoPivot, { w: 0.1, h: 0.1, d: 0.22, x: 0, y: 0.09, z: -0.22, color: 0x2563eb, rx: 0.25 }); // Pointy tail
+    // Sonic Head + 5 Signature Backward-Swept Quills + Pointed Ears
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.46, x: 0, y: 0.25, z: 0, color: 0x2563eb, roughness: 0.4 });
+    v(headPivot, { w: 0.18, h: 0.2, d: 0.48, x: 0, y: 0.42, z: -0.26, color: 0x2563eb, roughness: 0.38, rx: -0.25 });
+    v(headPivot, { w: 0.15, h: 0.17, d: 0.44, x: -0.15, y: 0.35, z: -0.26, color: 0x1d4ed8, roughness: 0.38, rx: -0.35, ry: -0.2 });
+    v(headPivot, { w: 0.15, h: 0.17, d: 0.44, x: 0.15, y: 0.35, z: -0.26, color: 0x1d4ed8, roughness: 0.38, rx: -0.35, ry: 0.2 });
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.38, x: 0, y: 0.22, z: -0.28, color: 0x1d4ed8, roughness: 0.38, rx: -0.5 });
+    // Triangular Blue/Tan Ears
+    v(headPivot, { w: 0.12, h: 0.18, d: 0.08, x: -0.18, y: 0.54, z: 0.05, color: 0x2563eb, rz: 0.22 });
+    v(headPivot, { w: 0.06, h: 0.1, d: 0.04, x: -0.18, y: 0.52, z: 0.085, color: 0xf3cfa4, rz: 0.22 });
+    v(headPivot, { w: 0.12, h: 0.18, d: 0.08, x: 0.18, y: 0.54, z: 0.05, color: 0x2563eb, rz: -0.22 });
+    v(headPivot, { w: 0.06, h: 0.1, d: 0.04, x: 0.18, y: 0.52, z: 0.085, color: 0xf3cfa4, rz: -0.22 });
+    // Tan Muzzle + Pointy Black Nose + Large Connected Eyes
+    v(headPivot, { w: 0.38, h: 0.16, d: 0.16, x: 0, y: 0.14, z: 0.23, color: 0xf3cfa4, roughness: 0.62 });
+    v(headPivot, { w: 0.08, h: 0.07, d: 0.1, x: 0, y: 0.2, z: 0.33, color: 0x09090b, roughness: 0.18 });
+    v(headPivot, { w: 0.36, h: 0.19, d: 0.05, x: 0, y: 0.29, z: 0.23, color: 0xf8fafc, roughness: 0.2 }); // Connected white eyes
+    v(headPivot, { w: 0.08, h: 0.13, d: 0.05, x: -0.09, y: 0.29, z: 0.245, color: 0x16a34a, roughness: 0.18 });
+    v(headPivot, { w: 0.08, h: 0.13, d: 0.05, x: 0.09, y: 0.29, z: 0.245, color: 0x16a34a, roughness: 0.18 });
+    v(headPivot, { w: 0.045, h: 0.08, d: 0.05, x: -0.09, y: 0.29, z: 0.252, color: 0x09090b });
+    v(headPivot, { w: 0.045, h: 0.08, d: 0.05, x: 0.09, y: 0.29, z: 0.252, color: 0x09090b });
+    // Tan Slender Arms + Chunky White Gloves
+    v(leftArmPivot, { w: 0.14, h: 0.3, d: 0.14, x: 0.02, y: -0.14, z: 0, color: 0xf3cfa4, roughness: 0.65 });
+    v(leftArmPivot, { w: 0.21, h: 0.08, d: 0.21, x: 0.02, y: -0.32, z: 0, color: 0xf8fafc, roughness: 0.45 });
+    v(leftArmPivot, { w: 0.19, h: 0.15, d: 0.19, x: 0.02, y: -0.43, z: 0, color: 0xf8fafc, roughness: 0.45 });
+    v(rightArmPivot, { w: 0.14, h: 0.3, d: 0.14, x: -0.02, y: -0.14, z: 0, color: 0xf3cfa4, roughness: 0.65 });
+    v(rightArmPivot, { w: 0.21, h: 0.08, d: 0.21, x: -0.02, y: -0.32, z: 0, color: 0xf8fafc, roughness: 0.45 });
+    v(rightArmPivot, { w: 0.19, h: 0.15, d: 0.19, x: -0.02, y: -0.43, z: 0, color: 0xf8fafc, roughness: 0.45 });
+    // Slender Blue Legs, Sock Cuffs & Iconic Red Sneakers with White Stripe + Gold Buckle
+    for (const [legPivot] of [[leftLegPivot], [rightLegPivot]]) {
+      v(legPivot, { w: 0.15, h: 0.34, d: 0.15, x: 0, y: -0.2, z: 0, color: 0x2563eb, roughness: 0.42 });
+      v(legPivot, { w: 0.22, h: 0.08, d: 0.22, x: 0, y: -0.41, z: 0, color: 0xf8fafc, roughness: 0.5 });
+      v(legPivot, { w: 0.24, h: 0.16, d: 0.33, x: 0, y: -0.54, z: 0.04, color: 0xdc2626, roughness: 0.35 });
+      v(legPivot, { w: 0.25, h: 0.06, d: 0.1, x: 0, y: -0.53, z: 0.04, color: 0xf8fafc, roughness: 0.35 }); // White stripe
+      v(legPivot, { w: 0.04, h: 0.06, d: 0.06, x: 0.13, y: -0.53, z: 0.04, color: 0xfacc15, metalness: 0.85, roughness: 0.2 }); // Gold buckle
+      v(legPivot, { w: 0.25, h: 0.05, d: 0.34, x: 0, y: -0.63, z: 0.04, color: 0xf8fafc, roughness: 0.45 });
+    }
+    // Blue Speed Trail Particles
+    speedTrailParticles = [];
+    for (let i = 0; i < 6; i++) {
+      const side = i % 2 === 0 ? -1 : 1;
+      const bx = side * (0.28 + (i % 3) * 0.12);
+      const by = 0.35 + (i % 3) * 0.42;
+      const bz = -0.45 - i * 0.14;
+      const m = v(root, {
+        w: 0.08,
+        h: 0.08,
+        d: 0.26,
+        x: bx,
+        y: by,
+        z: bz,
+        color: 0x60a5fa,
+        emissive: 0x38bdf8,
+        emissiveIntensity: 2.0,
+        roughness: 0.1,
+      });
+      m.castShadow = false;
+      speedTrailParticles.push({ mesh: m, baseX: bx, baseY: by, baseZ: bz, phase: i * 1.05 });
+    }
+  } else if (skin === 'tung_tung_sahur') {
+    // TUNG TUNG TUNG SAHUR: Elongated cylindrical brown wood humanoid, goofy big eyes, funny mouth & wooden bat
+    addCyl(torsoPivot, { rt: 0.23, rb: 0.25, h: 0.64, x: 0, y: 0.32, z: 0, color: 0xb45309, roughness: 0.78 });
+    addCyl(torsoPivot, { rt: 0.24, rb: 0.24, h: 0.06, x: 0, y: 0.16, z: 0, color: 0x92400e, roughness: 0.82 }); // Wood ring
+    addCyl(torsoPivot, { rt: 0.235, rb: 0.235, h: 0.05, x: 0, y: 0.46, z: 0, color: 0x92400e, roughness: 0.82 });
+    // Elongated Cylindrical Wooden Head
+    addCyl(headPivot, { rt: 0.21, rb: 0.23, h: 0.56, x: 0, y: 0.28, z: 0, color: 0xb45309, roughness: 0.76 });
+    addCyl(headPivot, { rt: 0.19, rb: 0.21, h: 0.05, x: 0, y: 0.57, z: 0, color: 0x78350f, roughness: 0.84 });
+    // Funny Big Wide Eyes, Wood Nose & Expressive Open Mouth
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.05, x: -0.095, y: 0.35, z: 0.21, color: 0xf8fafc, roughness: 0.25 });
+    v(headPivot, { w: 0.14, h: 0.14, d: 0.05, x: 0.095, y: 0.35, z: 0.21, color: 0xf8fafc, roughness: 0.25 });
+    v(headPivot, { w: 0.06, h: 0.065, d: 0.05, x: -0.08, y: 0.35, z: 0.222, color: 0x09090b });
+    v(headPivot, { w: 0.06, h: 0.065, d: 0.05, x: 0.11, y: 0.36, z: 0.222, color: 0x09090b }); // Slight goofy asymmetry
+    v(headPivot, { w: 0.13, h: 0.035, d: 0.04, x: -0.095, y: 0.44, z: 0.21, color: 0x451a03, rz: 0.12 });
+    v(headPivot, { w: 0.13, h: 0.035, d: 0.04, x: 0.095, y: 0.44, z: 0.21, color: 0x451a03, rz: -0.12 });
+    v(headPivot, { w: 0.09, h: 0.08, d: 0.1, x: 0, y: 0.24, z: 0.25, color: 0x92400e, roughness: 0.78 }); // Wood nose
+    v(headPivot, { w: 0.22, h: 0.13, d: 0.05, x: 0, y: 0.12, z: 0.21, color: 0x451a03 }); // Open mouth
+    v(headPivot, { w: 0.18, h: 0.04, d: 0.05, x: 0, y: 0.16, z: 0.216, color: 0xfef9c3 }); // Upper teeth
+    v(headPivot, { w: 0.12, h: 0.04, d: 0.05, x: 0, y: 0.085, z: 0.216, color: 0xf43f5e }); // Tongue
+    // Slender Wooden Arms & Legs + Wooden Bat in Right Hand
+    addCyl(leftArmPivot, { rt: 0.065, rb: 0.06, h: 0.46, x: 0.04, y: -0.22, z: 0, color: 0x92400e, roughness: 0.78 });
+    v(leftArmPivot, { w: 0.13, h: 0.11, d: 0.13, x: 0.04, y: -0.47, z: 0, color: 0x78350f, roughness: 0.8 });
+    addCyl(rightArmPivot, { rt: 0.065, rb: 0.06, h: 0.46, x: -0.04, y: -0.22, z: 0, color: 0x92400e, roughness: 0.78 });
+    v(rightArmPivot, { w: 0.13, h: 0.11, d: 0.13, x: -0.04, y: -0.47, z: 0, color: 0x78350f, roughness: 0.8 });
+    // Wooden Sahur Bat held cleanly forward-upward
+    addCyl(rightArmPivot, { rt: 0.065, rb: 0.032, h: 0.62, x: -0.04, y: -0.38, z: 0.24, color: 0xd97706, roughness: 0.65, rx: 0.85 });
+    addCyl(rightArmPivot, { rt: 0.072, rb: 0.072, h: 0.06, x: -0.04, y: -0.2, z: 0.44, color: 0x78350f, roughness: 0.75, rx: 0.85 });
+    addCyl(leftLegPivot, { rt: 0.075, rb: 0.07, h: 0.48, x: 0, y: -0.25, z: 0, color: 0x92400e, roughness: 0.78 });
+    v(leftLegPivot, { w: 0.17, h: 0.12, d: 0.28, x: 0, y: -0.56, z: 0.04, color: 0x78350f, roughness: 0.8 });
+    addCyl(rightLegPivot, { rt: 0.075, rb: 0.07, h: 0.48, x: 0, y: -0.25, z: 0, color: 0x92400e, roughness: 0.78 });
+    v(rightLegPivot, { w: 0.17, h: 0.12, d: 0.28, x: 0, y: -0.56, z: 0.04, color: 0x78350f, roughness: 0.8 });
+  } else if (skin === 'cristiano_ronaldo') {
+    // CRISTIANO RONALDO: Athletic footballer, styled short dark hair, marked eyebrows, red #7 Portugal-inspired kit, socks & cleats
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xdc2626, roughness: 0.55 });
+    v(torsoPivot, { w: 0.42, h: 0.08, d: 0.34, x: 0, y: 0.56, z: 0, color: 0x16a34a, roughness: 0.55 }); // Green collar
+    v(torsoPivot, { w: 0.06, h: 0.56, d: 0.33, x: -0.26, y: 0.3, z: 0, color: 0x16a34a, roughness: 0.55 }); // Green side trim
+    v(torsoPivot, { w: 0.06, h: 0.56, d: 0.33, x: 0.26, y: 0.3, z: 0, color: 0x16a34a, roughness: 0.55 });
+    v(torsoPivot, { w: 0.09, h: 0.11, d: 0.03, x: 0.13, y: 0.42, z: 0.17, color: 0xfacc15, metalness: 0.75 }); // Gold chest crest
+    // Visible #7 on Back (and small #7 on Chest!)
+    v(torsoPivot, { w: 0.16, h: 0.05, d: 0.03, x: 0, y: 0.42, z: -0.175, color: 0xf8fafc });
+    v(torsoPivot, { w: 0.055, h: 0.24, d: 0.03, x: 0.01, y: 0.3, z: -0.175, color: 0xf8fafc, rz: -0.26 });
+    v(torsoPivot, { w: 0.1, h: 0.035, d: 0.03, x: -0.12, y: 0.39, z: 0.17, color: 0xfacc15 });
+    v(torsoPivot, { w: 0.035, h: 0.13, d: 0.03, x: -0.11, y: 0.33, z: 0.17, color: 0xfacc15, rz: -0.25 });
+    // Sculpted Athletic Head + Dark Styled Hair + Marked Eyebrows
+    v(headPivot, { w: 0.47, h: 0.46, d: 0.47, x: 0, y: 0.24, z: 0, color: 0xd99b66, roughness: 0.68 });
+    v(headPivot, { w: 0.5, h: 0.13, d: 0.5, x: 0, y: 0.48, z: -0.01, color: 0x18181b, roughness: 0.68 });
+    v(headPivot, { w: 0.34, h: 0.1, d: 0.22, x: 0, y: 0.54, z: 0.12, color: 0x18181b, roughness: 0.62, rx: -0.15 }); // Styled front quiff
+    v(headPivot, { w: 0.48, h: 0.22, d: 0.12, x: 0, y: 0.36, z: -0.2, color: 0x18181b, roughness: 0.72 });
+    addEyes(0.26, 0.245, 0x292524);
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.04, x: -0.11, y: 0.34, z: 0.25, color: 0x18181b, rz: -0.08 }); // Sharp eyebrows
+    v(headPivot, { w: 0.14, h: 0.04, d: 0.04, x: 0.11, y: 0.34, z: 0.25, color: 0x18181b, rz: 0.08 });
+    v(headPivot, { w: 0.14, h: 0.028, d: 0.03, x: 0, y: 0.11, z: 0.245, color: 0xf8fafc }); // Confident grin
+    // Athletic Arms
+    v(leftArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xdc2626, roughness: 0.55 });
+    v(leftArmPivot, { w: 0.195, h: 0.045, d: 0.195, x: 0, y: -0.21, z: 0, color: 0x16a34a });
+    v(leftArmPivot, { w: 0.16, h: 0.25, d: 0.16, x: 0, y: -0.35, z: 0, color: 0xd99b66, roughness: 0.68 });
+    v(rightArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xdc2626, roughness: 0.55 });
+    v(rightArmPivot, { w: 0.195, h: 0.045, d: 0.195, x: 0, y: -0.21, z: 0, color: 0x16a34a });
+    v(rightArmPivot, { w: 0.16, h: 0.25, d: 0.16, x: 0, y: -0.35, z: 0, color: 0xd99b66, roughness: 0.68 });
+    // Red Football Shorts, Tall Red/Green Socks & Sleek White/Gold Cleats
+    v(leftLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0xb91c1c, roughness: 0.6 });
+    v(leftLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xd99b66 });
+    v(leftLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.42, z: 0, color: 0xdc2626 });
+    v(leftLegPivot, { w: 0.195, h: 0.04, d: 0.195, x: 0, y: -0.37, z: 0, color: 0x16a34a });
+    v(leftLegPivot, { w: 0.22, h: 0.14, d: 0.31, x: 0, y: -0.55, z: 0.04, color: 0xf8fafc, roughness: 0.32 });
+    v(leftLegPivot, { w: 0.23, h: 0.04, d: 0.32, x: 0, y: -0.63, z: 0.04, color: 0xfacc15, metalness: 0.8 });
+    v(rightLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0xb91c1c, roughness: 0.6 });
+    v(rightLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xd99b66 });
+    v(rightLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.42, z: 0, color: 0xdc2626 });
+    v(rightLegPivot, { w: 0.195, h: 0.04, d: 0.195, x: 0, y: -0.37, z: 0, color: 0x16a34a });
+    v(rightLegPivot, { w: 0.22, h: 0.14, d: 0.31, x: 0, y: -0.55, z: 0.04, color: 0xf8fafc, roughness: 0.32 });
+    v(rightLegPivot, { w: 0.23, h: 0.04, d: 0.32, x: 0, y: -0.63, z: 0.04, color: 0xfacc15, metalness: 0.8 });
   } else if (skin === 'meu_ratao') {
     const cfg = customConfig || DEFAULT_CUSTOM_CHARACTER_CONFIG;
     const hex = (c: string) => new THREE.Color(c).getHex();
@@ -1211,6 +1599,7 @@ function buildCharacterBase(
   mats.push(shadowMat);
 
   return {
+    skinId: skin,
     root,
     bodyPivot,
     torsoPivot,
@@ -1223,6 +1612,9 @@ function buildCharacterBase(
     capePivot,
     followerMice,
     auraParticles,
+    blinkLids,
+    speedTrailParticles,
+    eyeAuraParticles,
     spawnTimer: 0,
     hoverboardGroup,
     jetpackGroup,
@@ -1416,6 +1808,46 @@ function animateExclusiveExtras(
       }
     }
   }
+
+  // Herobrine eye aura particles
+  if (rig.eyeAuraParticles) {
+    for (const pt of rig.eyeAuraParticles) {
+      const pulse = Math.sin(elapsed * 3.8 + pt.phase);
+      pt.mesh.position.set(
+        pt.baseX + Math.cos(elapsed * 2.4 + pt.phase) * 0.025,
+        pt.baseY + Math.abs(pulse) * 0.05,
+        pt.baseZ + Math.sin(elapsed * 2.1 + pt.phase) * 0.02
+      );
+      pt.mesh.scale.setScalar(0.75 + (pulse + 1) * 0.25);
+    }
+  }
+
+  // Freddy Fazbear blinking eyelids
+  if (rig.blinkLids) {
+    const cycle = elapsed % 2.8;
+    const isBlinking = cycle > 2.62;
+    const blinkScale = isBlinking ? 1.0 : 0.16;
+    for (const lid of rig.blinkLids) {
+      lid.scale.y = blinkScale;
+      lid.position.y = isBlinking ? 0.31 : 0.36;
+    }
+  }
+
+  // Sonic blue kinetic speed trail particles
+  if (rig.speedTrailParticles) {
+    const runningFast = state === 'run' || state === 'jump' || state === 'jetpack';
+    for (const pt of rig.speedTrailParticles) {
+      const cycle = (elapsed * (runningFast ? 6.5 : 2.2) + pt.phase) % 1;
+      pt.mesh.visible = runningFast || state === 'idle' || state === 'victory';
+      pt.mesh.position.set(
+        pt.baseX,
+        pt.baseY + Math.sin(elapsed * 7 + pt.phase) * 0.05,
+        runningFast ? pt.baseZ - cycle * 0.85 : pt.baseZ - cycle * 0.2
+      );
+      const scaleZ = runningFast ? 1.15 - cycle * 0.7 : 0.45 * (1 - cycle * 0.5);
+      pt.mesh.scale.set(runningFast ? 0.9 : 0.6, runningFast ? 0.9 : 0.6, Math.max(0.15, scaleZ));
+    }
+  }
 }
 
 export function animateCharacterRig(
@@ -1428,27 +1860,90 @@ export function animateCharacterRig(
   const k = Math.min(1, 1 - Math.exp(-16 * dt));
   animateExclusiveExtras(rig, state, elapsed, dt, speedFactor);
 
+  // Reset secondary axes cleanly unless overridden below
+  const resetSecondaryAxes = () => {
+    rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, 0, k);
+    rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0, k);
+    rig.leftLegPivot.rotation.z = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.z, 0, k);
+    rig.rightLegPivot.rotation.z = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.z, 0, k);
+    rig.headPivot.rotation.x = THREE.MathUtils.lerp(rig.headPivot.rotation.x, 0, k);
+    rig.headPivot.rotation.z = THREE.MathUtils.lerp(rig.headPivot.rotation.z, 0, k);
+  };
+
+  if (state === 'victory') {
+    // Signature open-arms victory celebration ("Siuuu!" stance for Cristiano Ronaldo & celebratory pose)
+    const pulse = Math.sin(elapsed * 4.5);
+    const hop = Math.max(0, Math.sin(elapsed * 3.0)) * 0.08;
+    rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, hop, k);
+    rig.bodyPivot.rotation.set(0, 0, 0);
+    rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, -0.18 + pulse * 0.03, k);
+    rig.torsoPivot.rotation.y = THREE.MathUtils.lerp(rig.torsoPivot.rotation.y, 0, k);
+    rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
+    rig.headPivot.rotation.x = THREE.MathUtils.lerp(rig.headPivot.rotation.x, -0.16, k);
+    rig.headPivot.rotation.y = THREE.MathUtils.lerp(rig.headPivot.rotation.y, Math.sin(elapsed * 2.0) * 0.12, k);
+    rig.headPivot.rotation.z = THREE.MathUtils.lerp(rig.headPivot.rotation.z, 0, k);
+    rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, 0.24, k);
+    rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, 0.24, k);
+    rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -1.28 - pulse * 0.08, k);
+    rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 1.28 + pulse * 0.08, k);
+    rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, -0.08, k);
+    rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0.08, k);
+    rig.leftLegPivot.rotation.z = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.z, -0.22, k);
+    rig.rightLegPivot.rotation.z = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.z, 0.22, k);
+    if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(elapsed * 5) * 0.3;
+    if (rig.capePivot) rig.capePivot.rotation.x = 0.25 + Math.sin(elapsed * 4) * 0.08;
+    return;
+  }
+
   if (state === 'idle') {
+    // Cristiano Ronaldo periodically breaks into his open-arms celebration during showcase/idle!
+    if (rig.skinId === 'cristiano_ronaldo' && elapsed % 5.0 > 3.35) {
+      animateCharacterRig(rig, 'victory', elapsed, dt, speedFactor);
+      return;
+    }
+
+    resetSecondaryAxes();
     const breath = Math.sin(elapsed * 3.0);
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, 0, k);
     rig.bodyPivot.rotation.set(0, 0, 0);
     rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, breath * 0.04, k);
+    rig.torsoPivot.rotation.y = THREE.MathUtils.lerp(rig.torsoPivot.rotation.y, 0, k);
     rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
     rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, Math.sin(elapsed * 2.5) * 0.08, k);
     rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -Math.sin(elapsed * 2.5) * 0.08, k);
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0, k);
-    rig.headPivot.rotation.y = Math.sin(elapsed * 1.4) * 0.14;
+
+    if (rig.skinId === 'freddy_fazbear') {
+      // Subtle eerie animatronic head twitch
+      const twitchCycle = elapsed % 3.2;
+      const twitchZ = twitchCycle > 2.95 ? Math.sin(elapsed * 42) * 0.16 : 0;
+      rig.headPivot.rotation.y = Math.sin(elapsed * 1.1) * 0.12 + (twitchCycle > 2.95 ? 0.12 : 0);
+      rig.headPivot.rotation.z = twitchZ;
+    } else {
+      rig.headPivot.rotation.y = Math.sin(elapsed * 1.4) * 0.14;
+    }
+
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(elapsed * 4.5) * 0.25;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.08 + Math.sin(elapsed * 3.5) * 0.06;
     return;
   }
 
+  resetSecondaryAxes();
+
   if (state === 'run' || state === 'stumble') {
-    const strideFreq = 13.5 * speedFactor;
+    const isTungTung = rig.skinId === 'tung_tung_sahur';
+    const isFreddy = rig.skinId === 'freddy_fazbear';
+    const isSonic = rig.skinId === 'sonic';
+    const isCR7 = rig.skinId === 'cristiano_ronaldo';
+
+    const freqMult = isSonic ? 1.25 : isTungTung ? 1.15 : isCR7 ? 1.1 : 1.0;
+    const strideFreq = 13.5 * speedFactor * freqMult;
     const phase = elapsed * strideFreq;
-    const swing = Math.sin(phase);
-    const bob = Math.abs(Math.sin(phase)) * 0.1;
+    const swing = isFreddy
+      ? Math.round(Math.sin(phase) * 4) / 4 // Mechanical stepped animatronic cadence
+      : Math.sin(phase);
+    const bob = Math.abs(Math.sin(phase)) * (isTungTung ? 0.17 : 0.1);
 
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(
       rig.bodyPivot.position.y,
@@ -1457,22 +1952,47 @@ export function animateCharacterRig(
     );
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(
       rig.bodyPivot.rotation.x,
-      state === 'stumble' ? 0.25 : 0.12,
+      state === 'stumble' ? 0.25 : isSonic ? 0.24 : isCR7 ? 0.18 : 0.12,
       k
     );
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(
       rig.bodyPivot.rotation.z,
-      state === 'stumble' ? Math.sin(elapsed * 28) * 0.25 : 0,
+      state === 'stumble'
+        ? Math.sin(elapsed * 28) * 0.25
+        : isTungTung
+          ? Math.cos(phase) * 0.11
+          : 0,
       k
     );
-    rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, 0.1, k);
-    rig.torsoPivot.rotation.y = Math.cos(phase) * 0.08;
+    rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, isSonic ? 0.18 : 0.1, k);
+    rig.torsoPivot.rotation.y = Math.cos(phase) * (isTungTung ? 0.18 : 0.08);
+    rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
 
     if (rig.hoverboardGroup.visible) {
       rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.15, k);
       rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.15, k);
       rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -0.35, k);
       rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.35, k);
+    } else if (isTungTung) {
+      // Hilarious exaggerated comedic running gait for Tung Tung Tung Sahur
+      rig.leftLegPivot.rotation.x = swing * 1.25;
+      rig.rightLegPivot.rotation.x = -swing * 1.25;
+      rig.leftArmPivot.rotation.x = -swing * 1.32;
+      rig.rightArmPivot.rotation.x = swing * 1.15;
+      rig.leftArmPivot.rotation.z = -0.22 - Math.abs(swing) * 0.2;
+      rig.rightArmPivot.rotation.z = 0.22 + Math.abs(swing) * 0.2;
+    } else if (isSonic) {
+      // Super-fast trailing arms sprint pose
+      rig.leftLegPivot.rotation.x = swing * 1.15;
+      rig.rightLegPivot.rotation.x = -swing * 1.15;
+      rig.leftArmPivot.rotation.x = 0.72 - swing * 0.28;
+      rig.rightArmPivot.rotation.x = 0.72 + swing * 0.28;
+    } else if (isCR7) {
+      // Athletic footballer sprint stride
+      rig.leftLegPivot.rotation.x = swing * 1.05;
+      rig.rightLegPivot.rotation.x = -swing * 1.05;
+      rig.leftArmPivot.rotation.x = -0.22 - swing * 0.92;
+      rig.rightArmPivot.rotation.x = -0.22 + swing * 0.92;
     } else {
       rig.leftLegPivot.rotation.x = swing * 0.95;
       rig.rightLegPivot.rotation.x = -swing * 0.95;
@@ -1480,7 +2000,19 @@ export function animateCharacterRig(
       rig.rightArmPivot.rotation.x = swing * 0.88;
     }
 
-    rig.headPivot.rotation.y = state === 'stumble' ? Math.sin(elapsed * 18) * 0.35 : 0;
+    if (state === 'stumble') {
+      rig.headPivot.rotation.y = Math.sin(elapsed * 18) * 0.35;
+    } else if (isFreddy) {
+      const twitch = elapsed % 2.9 > 2.72 ? Math.sin(elapsed * 44) * 0.14 : 0;
+      rig.headPivot.rotation.y = twitch;
+      rig.headPivot.rotation.z = twitch * 0.8;
+    } else if (isTungTung) {
+      rig.headPivot.rotation.y = Math.sin(phase) * 0.14;
+      rig.headPivot.rotation.z = Math.cos(phase) * 0.09;
+    } else {
+      rig.headPivot.rotation.y = 0;
+    }
+
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(phase) * 0.35;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.35 + Math.sin(phase * 1.4) * 0.18;
   } else if (state === 'jump') {

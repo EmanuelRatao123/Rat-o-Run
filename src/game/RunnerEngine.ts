@@ -1124,7 +1124,7 @@ export class RunnerEngine {
           this.scene.remove(coin.mesh);
           this.coins.splice(i, 1);
           this.ended = true;
-          this.endAnimState = 'crash';
+          this.endAnimState = this.skinId === 'cristiano_ronaldo' ? 'victory' : 'crash';
           this.emitHud(0);
           this.onGameOver({
             noCoinTimeMs: Math.round(this.noCoinTimeMs),

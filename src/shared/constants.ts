@@ -28,7 +28,13 @@ export type LockedExclusiveSkinId =
   | 'neymar_atual'
   | 'hacker'
   | 'bandido'
-  | 'ghost_face';
+  | 'ghost_face'
+  | 'shrek'
+  | 'herobrine'
+  | 'freddy_fazbear'
+  | 'sonic'
+  | 'tung_tung_sahur'
+  | 'cristiano_ronaldo';
 
 export type SkinId =
   | CommonSkinId
@@ -316,6 +322,72 @@ export const LOCKED_EXCLUSIVE_SKINS: SkinDefinition[] = [
     subtitle: 'Manto sombrio esvoaçante, capuz e máscara branca icônica',
     primaryColor: '#0f172a',
     accentColor: '#f8fafc',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'shrek',
+    name: 'Shrek',
+    subtitle: 'Ogro verde do pântano com orelhas tubulares, colete marrom e botas',
+    primaryColor: '#65a30d',
+    accentColor: '#78350f',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'herobrine',
+    name: 'Herobrine',
+    subtitle: 'Lenda clássica em blocos com camisa azul-clara e olhos brancos brilhantes',
+    primaryColor: '#38bdf8',
+    accentColor: '#f8fafc',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'freddy_fazbear',
+    name: 'Freddy Fazbear',
+    subtitle: 'Urso animatrônico com cartola preta, gravata borboleta e microfone',
+    primaryColor: '#7c3f1c',
+    accentColor: '#18181b',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'sonic',
+    name: 'Sonic',
+    subtitle: 'Ouriço azul supersônico com espinhos, luvas brancas e tênis vermelhos',
+    primaryColor: '#2563eb',
+    accentColor: '#ef4444',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'tung_tung_sahur',
+    name: 'Tung Tung Tung Sahur',
+    subtitle: 'Boneco cilíndrico de madeira com taco de sahur e corrida hilária',
+    primaryColor: '#b45309',
+    accentColor: '#fde68a',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'cristiano_ronaldo',
+    name: 'Cristiano Ronaldo',
+    subtitle: 'Atleta #7 com uniforme vermelho, chuteiras e comemoração de vitória',
+    primaryColor: '#dc2626',
+    accentColor: '#16a34a',
     badgeText: 'EXCLUSIVA',
     isExclusive: true,
     exclusiveRule: 'unlockable',

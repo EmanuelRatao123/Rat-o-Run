@@ -1,5 +1,11 @@
 import { Check, Crown, Gift, Lock, Paintbrush, Sparkles, X } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { CharacterAnimState } from '../game/characters.ts';
+import {
+  getCachedSkinThumbnail,
+  getSkinThumbnailCacheKey,
+  requestSkinThumbnails,
+} from '../game/skinThumbnails.ts';
 import { api } from '../services/api.ts';
 import { syncFirebaseUserProfile } from '../services/firestoreSync.ts';
 import {
@@ -71,8 +77,46 @@ export function SkinsModal({
     : 'ratao';
 
   const [previewSkin, setPreviewSkin] = useState<SkinId>(initialPreview);
+  const [previewAnim, setPreviewAnim] = useState<CharacterAnimState>('idle');
+  const [thumbUrls, setThumbUrls] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const requests = visibleSkins.map((skin) => {
+      const unlocked =
+        (!isExclusiveSkinId(skin.id) &&
+          !isSpecialUnlockableSkinId(skin.id) &&
+          !isLockedExclusiveSkinId(skin.id)) ||
+        allowedExclusive.includes(skin.id);
+      const customCfg =
+        skin.id === 'meu_ratao'
+          ? unlocked
+            ? user.customCharacterConfig
+            : DEFAULT_CUSTOM_CHARACTER_CONFIG
+          : undefined;
+      return {
+        skinId: skin.id,
+        customConfig: customCfg,
+        cacheKey: getSkinThumbnailCacheKey(skin.id, customCfg, unlocked),
+      };
+    });
+
+    const initialMap: Record<string, string> = {};
+    for (const r of requests) {
+      const cached = getCachedSkinThumbnail(r.cacheKey);
+      if (cached) initialMap[r.cacheKey] = cached;
+    }
+    if (Object.keys(initialMap).length > 0) {
+      setThumbUrls((prev) => ({ ...prev, ...initialMap }));
+    }
+
+    return requestSkinThumbnails(requests, (cacheKey, dataUrl) => {
+      setThumbUrls((prev) =>
+        prev[cacheKey] === dataUrl ? prev : { ...prev, [cacheKey]: dataUrl }
+      );
+    });
+  }, [visibleSkins, allowedExclusive, user.customCharacterConfig]);
 
   const selectedDef = getSkinDefinition(previewSkin);
   const isEquipped = user.equippedSkin === previewSkin;
@@ -130,6 +174,7 @@ export function SkinsModal({
                 mapId={selectedMap}
                 quality={quality}
                 mode="turntable"
+                animState={previewAnim}
                 interactiveRotate
                 customConfig={
                   previewSkin === 'meu_ratao'
@@ -167,6 +212,22 @@ export function SkinsModal({
                     <Gift className="w-3 h-3" /> PRESENTE ADMIN
                   </span>
                 )}
+              </div>
+              <div className="absolute bottom-2.5 right-2.5 flex items-center gap-1 bg-slate-950/90 border border-slate-700 rounded-lg p-1">
+                {(['idle', 'run', 'victory'] as const).map((anim) => (
+                  <button
+                    key={anim}
+                    type="button"
+                    onClick={() => setPreviewAnim(anim)}
+                    className={`px-2 py-1 rounded text-[10px] font-bold cursor-pointer transition ${
+                      previewAnim === anim
+                        ? 'bg-amber-500 text-slate-950'
+                        : 'text-slate-300 hover:bg-slate-800'
+                    }`}
+                  >
+                    {anim === 'idle' ? 'Parado' : anim === 'run' ? 'Correndo' : 'Vitória'}
+                  </button>
+                ))}
               </div>
             </div>
 
@@ -259,13 +320,19 @@ export function SkinsModal({
                 const isMeuRatao = skin.id === 'meu_ratao';
                 const isCatalogUnlockable =
                   isMeuRatao || isLockedExclusiveSkinId(skin.id);
+                const thumbKey = getSkinThumbnailCacheKey(
+                  skin.id,
+                  isMeuRatao && unlocked ? user.customCharacterConfig : DEFAULT_CUSTOM_CHARACTER_CONFIG,
+                  unlocked
+                );
+                const thumbUrl = thumbUrls[thumbKey];
 
                 return (
                   <button
                     key={skin.id}
                     type="button"
                     onClick={() => setPreviewSkin(skin.id)}
-                    className={`text-left p-3.5 rounded-xl border transition flex items-start gap-3 cursor-pointer ${
+                    className={`text-left p-3 rounded-xl border transition flex items-start gap-3 cursor-pointer ${
                       selected
                         ? 'bg-slate-800 border-amber-400 shadow-lg'
                         : isExclusiveBadge
@@ -276,15 +343,27 @@ export function SkinsModal({
                     }`}
                   >
                     <div
-                      className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center font-display font-bold border border-white/20 relative"
-                      style={{
-                        background: isMeuRatao
-                          ? '#ffffff'
-                          : `linear-gradient(135deg, ${skin.primaryColor}, ${skin.accentColor})`,
-                        color: isMeuRatao ? '#0f172a' : '#ffffff',
-                      }}
+                      className="w-14 h-14 rounded-lg shrink-0 flex items-center justify-center font-display font-bold border border-white/15 relative overflow-hidden bg-slate-900"
+                      style={
+                        thumbUrl
+                          ? undefined
+                          : {
+                              background: isMeuRatao
+                                ? '#ffffff'
+                                : `linear-gradient(135deg, ${skin.primaryColor}, ${skin.accentColor})`,
+                              color: isMeuRatao ? '#0f172a' : '#ffffff',
+                            }
+                      }
                     >
-                      {isCatalogUnlockable && !unlocked ? (
+                      {thumbUrl ? (
+                        <img
+                          src={thumbUrl}
+                          alt={skin.name}
+                          className={`w-full h-full object-contain transition ${
+                            isCatalogUnlockable && !unlocked ? 'opacity-80' : ''
+                          }`}
+                        />
+                      ) : isCatalogUnlockable && !unlocked ? (
                         <Lock className="w-4 h-4" />
                       ) : isExclusiveBadge ? (
                         <Crown className="w-4 h-4" />
@@ -292,6 +371,11 @@ export function SkinsModal({
                         <Paintbrush className="w-4 h-4" />
                       ) : (
                         index + 1
+                      )}
+                      {thumbUrl && isCatalogUnlockable && !unlocked && (
+                        <span className="absolute bottom-0.5 right-0.5 w-5 h-5 rounded bg-slate-950/90 border border-rose-500/70 flex items-center justify-center text-rose-300">
+                          <Lock className="w-3 h-3" />
+                        </span>
                       )}
                     </div>
                     <div className="min-w-0 flex-1">

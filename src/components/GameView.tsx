@@ -44,6 +44,7 @@ import {
   formatStopwatch,
 } from '../shared/constants.ts';
 import { DualResultModal } from './DualResultModal.tsx';
+import { ScenePreview3D } from './ScenePreview3D.tsx';
 
 export interface MultiplayerSessionConfig {
   room: MultiplayerRoom;
@@ -183,7 +184,7 @@ export function GameView({
 
         if (res.room.status === 'finished') {
           const iWon = res.room.winnerUserId === user.id;
-          eng.forceEndExternal(iWon ? 'idle' : 'crash');
+          eng.forceEndExternal(iWon ? 'victory' : 'crash');
         }
       } catch {
         // Transient sync error handled on next interval tick
@@ -977,6 +978,21 @@ export function GameView({
                 </div>
               )}
             </div>
+
+            {skinId === 'cristiano_ronaldo' && (
+              <div className="h-36 mb-4 rounded-xl overflow-hidden border border-amber-500/40 bg-slate-950 relative">
+                <ScenePreview3D
+                  skinId={skinId}
+                  mapId={effectiveMapId}
+                  mode="turntable"
+                  quality="low"
+                  animState="victory"
+                />
+                <div className="absolute bottom-2 left-2.5 px-2 py-0.5 rounded bg-slate-950/90 border border-amber-400/60 text-[10px] font-extrabold text-amber-300 pointer-events-none">
+                  COMEMORAÇÃO #7
+                </div>
+              </div>
+            )}
 
             {submitError && (
               <div className="mb-3 px-3 py-2 rounded-lg bg-red-950 border border-red-500/50 text-red-200 text-xs">
