@@ -411,6 +411,15 @@ export const SPECIAL_UNLOCKABLE_SKIN_IDS: SpecialUnlockableSkinId[] = SPECIAL_UN
 export const LOCKED_EXCLUSIVE_SKIN_IDS: LockedExclusiveSkinId[] = LOCKED_EXCLUSIVE_SKINS.map(
   (s) => s.id as LockedExclusiveSkinId
 );
+export const RESTRICTED_NON_BULK_SKIN_IDS: ExclusiveSkinId[] = [...EXCLUSIVE_SKIN_IDS];
+export const BULK_GRANTABLE_RESTRICTED_SKIN_IDS: (
+  | SpecialUnlockableSkinId
+  | LockedExclusiveSkinId
+)[] = [...SPECIAL_UNLOCKABLE_SKIN_IDS, ...LOCKED_EXCLUSIVE_SKIN_IDS];
+export const BULK_GRANTABLE_ALL_SKIN_IDS: SkinId[] = [
+  ...COMMON_SKIN_IDS,
+  ...BULK_GRANTABLE_RESTRICTED_SKIN_IDS,
+];
 export const ALL_SKIN_IDS: SkinId[] = ALL_SKINS.map((s) => s.id);
 
 export function isCommonSkinId(val: unknown): val is CommonSkinId {
@@ -820,6 +829,40 @@ export interface AdminExclusiveSkinOwner {
   equipped: boolean;
 }
 
+export interface SkinGrantHistoryRecord {
+  id: string;
+  action: 'grant_all' | 'revoke_bulk';
+  adminUserId: string;
+  adminNickname: string;
+  targetUserId: string;
+  targetNickname: string;
+  skinsAffected: SkinId[];
+  skinsCount: number;
+  alreadyOwnedCount: number;
+  totalSkinsAfter: number;
+  createdAt: string;
+}
+
+export interface AdminPlayerSkinsSummary {
+  userId: string;
+  nickname: string;
+  role: 'player' | 'admin';
+  equippedSkin: SkinId;
+  totalCatalogSkins: number;
+  totalGrantableSkins: number;
+  totalUnlockedCount: number;
+  commonUnlockedCount: number;
+  commonTotalCount: number;
+  specialUnlockedCount: number;
+  specialTotalCount: number;
+  bulkGrantedCount: number;
+  legitimateSpecialCount: number;
+  protectedExclusiveOwned: SkinId[];
+  unlockedSkinIds: SkinId[];
+  bulkGrantedSkinIds: SkinId[];
+  legitimateSpecialSkinIds: SkinId[];
+}
+
 export interface MatchSummary {
   matchId: string;
   mode: SoloGameMode;
@@ -972,7 +1015,15 @@ export interface ExclusiveSkinPermissionRecord {
   id: string;
   userId: string;
   skinId: ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId;
-  reason: 'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule';
+  reason:
+    | 'admin'
+    | 'top1'
+    | 'top2'
+    | 'top3'
+    | 'promo_code'
+    | 'admin_gift'
+    | 'admin_bulk_grant'
+    | 'special_rule';
   rankPosition: number | null;
   active: boolean;
   grantedAt: string;

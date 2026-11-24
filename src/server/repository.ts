@@ -14,6 +14,7 @@ import {
   polls,
   sessions,
   skinGifts,
+  skinGrantHistory,
   users,
   x1Results,
 } from '../db/schema.ts';
@@ -22,10 +23,15 @@ import {
   AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
+  AdminPlayerSkinsSummary,
   AdminStats,
+  BULK_GRANTABLE_ALL_SKIN_IDS,
+  BULK_GRANTABLE_RESTRICTED_SKIN_IDS,
   COMMON_SKIN_IDS,
   CoinsLeaderboardEntry,
+  EXCLUSIVE_SKIN_IDS,
   ExclusiveSkinId,
+  ExclusiveSkinPermissionRecord,
   GlobalMessage,
   LOCKED_EXCLUSIVE_SKIN_IDS,
   LeaderboardEntry,
@@ -36,6 +42,7 @@ import {
   PollItem,
   SKINS,
   SkinGiftItem,
+  SkinGrantHistoryRecord,
   SkinId,
   SoloGameMode,
   SpecialUnlockableSkinId,
@@ -1534,10 +1541,10 @@ export async function repoGiftSkinToPlayer(params: {
       u.unlockedSkins = nextUnlocked;
     }
     if (isSpecialUnlockableSkinId(skinId) || isLockedExclusiveSkinId(skinId)) {
-      const hasPerm = db.exclusiveSkinPermissions.some(
+      const existingPerm = db.exclusiveSkinPermissions.find(
         (p) => p.userId === target.id && p.skinId === skinId && p.active
       );
-      if (!hasPerm) {
+      if (!existingPerm) {
         db.exclusiveSkinPermissions.push({
           id: `eperm_${generateToken(8)}`,
           userId: target.id,
@@ -1549,6 +1556,9 @@ export async function repoGiftSkinToPlayer(params: {
           revokedAt: null,
           updatedAt: nowIso,
         });
+      } else if (existingPerm.reason === 'admin_bulk_grant') {
+        existingPerm.reason = 'admin_gift';
+        existingPerm.updatedAt = nowIso;
       }
     }
     db.gifts.unshift(gift);
@@ -1595,6 +1605,11 @@ export async function repoGiftSkinToPlayer(params: {
         revokedAt: null,
         updatedAt: nowIso,
       });
+    } else if (existingPerm[0].reason === 'admin_bulk_grant') {
+      await db
+        .update(exclusiveSkinPermissions)
+        .set({ reason: 'admin_gift', updatedAt: nowIso })
+        .where(eq(exclusiveSkinPermissions.id, existingPerm[0].id));
     }
   }
 
@@ -2360,6 +2375,655 @@ export async function repoAdminRevokeLockedSkin(params: {
     `Removeu permissão da skin "${skinName}" (${params.skinId}) de ${target.nickname}`
   );
   return { status: 'ok', targetNickname: target.nickname, resetEquipped };
+}
+
+function buildPlayerSkinsSummary(
+  target: StoredUser,
+  activePerms: Pick<ExclusiveSkinPermissionRecord, 'skinId' | 'reason'>[]
+): AdminPlayerSkinsSummary {
+  const permBySkin = new Map<SkinId, ExclusiveSkinPermissionRecord['reason']>();
+  for (const p of activePerms) {
+    if (p.skinId === 'ratao_rei' && target.role !== 'admin') continue;
+    permBySkin.set(p.skinId, p.reason);
+  }
+
+  const bulkGrantedSkinIds: SkinId[] = [];
+  const legitimateSpecialSkinIds: SkinId[] = [];
+  const specialUnlocked: SkinId[] = [];
+
+  for (const skinId of BULK_GRANTABLE_RESTRICTED_SKIN_IDS) {
+    const reason = permBySkin.get(skinId);
+    if (!reason) continue;
+    specialUnlocked.push(skinId);
+    if (reason === 'admin_bulk_grant') {
+      bulkGrantedSkinIds.push(skinId);
+    } else {
+      legitimateSpecialSkinIds.push(skinId);
+    }
+  }
+
+  const protectedExclusiveOwned: SkinId[] = EXCLUSIVE_SKIN_IDS.filter((skinId) =>
+    permBySkin.has(skinId)
+  );
+
+  const unlockedSkinIds: SkinId[] = Array.from(
+    new Set<SkinId>([...COMMON_SKIN_IDS, ...specialUnlocked, ...protectedExclusiveOwned])
+  );
+
+  return {
+    userId: target.id,
+    nickname: target.nickname,
+    role: target.role,
+    equippedSkin: target.equippedSkin,
+    totalCatalogSkins: ALL_SKINS.length,
+    totalGrantableSkins: BULK_GRANTABLE_ALL_SKIN_IDS.length,
+    totalUnlockedCount: unlockedSkinIds.length,
+    commonUnlockedCount: COMMON_SKIN_IDS.length,
+    commonTotalCount: COMMON_SKIN_IDS.length,
+    specialUnlockedCount: specialUnlocked.length,
+    specialTotalCount: BULK_GRANTABLE_RESTRICTED_SKIN_IDS.length,
+    bulkGrantedCount: bulkGrantedSkinIds.length,
+    legitimateSpecialCount: legitimateSpecialSkinIds.length,
+    protectedExclusiveOwned,
+    unlockedSkinIds,
+    bulkGrantedSkinIds,
+    legitimateSpecialSkinIds,
+  };
+}
+
+export async function repoAdminGetPlayerSkinsSummary(
+  nickname: string
+): Promise<AdminPlayerSkinsSummary | null> {
+  await repoSyncExclusiveSkinPermissions();
+  const target = await repoFindUserByNickname(nickname);
+  if (!target) return null;
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const activePerms = db.exclusiveSkinPermissions.filter(
+      (p) => p.userId === target.id && p.active
+    );
+    return buildPlayerSkinsSummary(target, activePerms);
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const activePerms = await db
+    .select({
+      skinId: exclusiveSkinPermissions.skinId,
+      reason: exclusiveSkinPermissions.reason,
+    })
+    .from(exclusiveSkinPermissions)
+    .where(
+      and(
+        eq(exclusiveSkinPermissions.userId, target.id),
+        eq(exclusiveSkinPermissions.active, true)
+      )
+    );
+  return buildPlayerSkinsSummary(target, activePerms);
+}
+
+export async function repoAdminGrantAllEligibleSkins(params: {
+  adminUser: StoredUser;
+  targetNickname: string;
+}): Promise<
+  | {
+      status: 'ok';
+      alreadyHadAll: boolean;
+      grantedSkins: SkinId[];
+      summary: AdminPlayerSkinsSummary;
+      historyEntry: SkinGrantHistoryRecord | null;
+    }
+  | { status: 'forbidden' | 'not_found' }
+> {
+  if (params.adminUser.role !== 'admin') {
+    return { status: 'forbidden' };
+  }
+
+  await repoSyncExclusiveSkinPermissions();
+  const cleanNick = params.targetNickname.trim().toLowerCase();
+  if (!cleanNick) return { status: 'not_found' };
+
+  const nowIso = new Date().toISOString();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const target = Object.values(db.users).find((u) => u.nicknameLower === cleanNick);
+    if (!target) return { status: 'not_found' };
+
+    const activePerms = db.exclusiveSkinPermissions.filter(
+      (p) => p.userId === target.id && p.active
+    );
+    const activeSkinSet = new Set<SkinId>(activePerms.map((p) => p.skinId));
+
+    const newlyGrantedRestricted: SkinId[] = [];
+    for (const skinId of BULK_GRANTABLE_RESTRICTED_SKIN_IDS) {
+      if (!activeSkinSet.has(skinId)) {
+        db.exclusiveSkinPermissions.push({
+          id: `eperm_${generateToken(8)}`,
+          userId: target.id,
+          skinId,
+          reason: 'admin_bulk_grant',
+          rankPosition: null,
+          active: true,
+          grantedAt: nowIso,
+          revokedAt: null,
+          updatedAt: nowIso,
+        });
+        newlyGrantedRestricted.push(skinId);
+      }
+    }
+
+    const missingCommon = COMMON_SKIN_IDS.filter((s) => !target.unlockedSkins.includes(s));
+    const freshPerms = db.exclusiveSkinPermissions.filter(
+      (p) => p.userId === target.id && p.active
+    );
+    const summary = buildPlayerSkinsSummary(target, freshPerms);
+    target.unlockedSkins = [...summary.unlockedSkinIds];
+
+    const alreadyHadAll = newlyGrantedRestricted.length === 0 && missingCommon.length === 0;
+    let historyEntry: SkinGrantHistoryRecord | null = null;
+
+    if (!alreadyHadAll) {
+      const affected = [...missingCommon, ...newlyGrantedRestricted];
+      historyEntry = {
+        id: `sgh_${generateToken(8)}`,
+        action: 'grant_all',
+        adminUserId: params.adminUser.id,
+        adminNickname: params.adminUser.nickname,
+        targetUserId: target.id,
+        targetNickname: target.nickname,
+        skinsAffected: affected,
+        skinsCount: affected.length,
+        alreadyOwnedCount: BULK_GRANTABLE_ALL_SKIN_IDS.length - affected.length,
+        totalSkinsAfter: summary.totalUnlockedCount,
+        createdAt: nowIso,
+      };
+      db.skinGrantHistory.unshift(historyEntry);
+      if (db.skinGrantHistory.length > 300) db.skinGrantHistory.length = 300;
+      await addLocalAdminLog(
+        params.adminUser.nickname,
+        'CONCEDER_TODAS_SKINS',
+        `Desbloqueou ${affected.length} skin(s) elegível(is) para ${target.nickname} (total: ${summary.totalUnlockedCount}/${summary.totalCatalogSkins})`
+      );
+    }
+
+    saveLocalDb();
+    return {
+      status: 'ok',
+      alreadyHadAll,
+      grantedSkins: newlyGrantedRestricted,
+      summary,
+      historyEntry,
+    };
+  }
+
+  await ensureNeonSchema();
+  const pool = getNeonPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const uRes = await client.query<{
+      id: string;
+      nickname: string;
+      nickname_lower: string;
+      password_hash: string;
+      recovery_hash: string | null;
+      google_uid: string | null;
+      role: 'player' | 'admin';
+      must_change_password: boolean;
+      equipped_skin: SkinId;
+      unlocked_skins: SkinId[];
+      gifted_skins: SkinId[];
+      best_no_coin_time_ms: number;
+      best_distance: number;
+      best_score: number;
+      total_matches: number;
+      total_coins: number;
+      favorite_skin: SkinId;
+      skin_usage: Record<string, number>;
+      created_at: string;
+      last_seen_at: string;
+    }>(
+      `SELECT * FROM users WHERE nickname_lower = $1 FOR UPDATE`,
+      [cleanNick]
+    );
+    const uRow = uRes.rows[0];
+    if (!uRow) {
+      await client.query('ROLLBACK');
+      return { status: 'not_found' };
+    }
+
+    const target: StoredUser = {
+      id: uRow.id,
+      nickname: uRow.nickname,
+      nicknameLower: uRow.nickname_lower,
+      passwordHash: uRow.password_hash,
+      recoveryHash: uRow.recovery_hash,
+      googleUid: uRow.google_uid ?? undefined,
+      role: uRow.role,
+      mustChangePassword: uRow.must_change_password,
+      equippedSkin: uRow.equipped_skin,
+      unlockedSkins: Array.isArray(uRow.unlocked_skins) ? uRow.unlocked_skins : [...COMMON_SKIN_IDS],
+      giftedSkins: Array.isArray(uRow.gifted_skins) ? uRow.gifted_skins : [],
+      bestNoCoinTimeMs: uRow.best_no_coin_time_ms,
+      bestDistance: uRow.best_distance,
+      bestScore: uRow.best_score,
+      totalMatches: uRow.total_matches,
+      totalCoins: uRow.total_coins,
+      favoriteSkin: uRow.favorite_skin,
+      skinUsage: uRow.skin_usage || {},
+      createdAt: uRow.created_at,
+      lastSeenAt: uRow.last_seen_at,
+    };
+
+    const permsRes = await client.query<{
+      skin_id: ExclusiveSkinPermissionRecord['skinId'];
+      reason: ExclusiveSkinPermissionRecord['reason'];
+    }>(
+      `SELECT skin_id, reason FROM exclusive_skin_permissions WHERE user_id = $1 AND active = TRUE`,
+      [target.id]
+    );
+    const activePerms = permsRes.rows.map((r) => ({
+      skinId: r.skin_id,
+      reason: r.reason,
+    }));
+    const activeSkinSet = new Set<SkinId>(activePerms.map((p) => p.skinId));
+
+    const newlyGrantedRestricted: SkinId[] = [];
+    for (const skinId of BULK_GRANTABLE_RESTRICTED_SKIN_IDS) {
+      if (!activeSkinSet.has(skinId)) {
+        await client.query(
+          `INSERT INTO exclusive_skin_permissions
+             (id, user_id, skin_id, reason, rank_position, active, granted_at, revoked_at, updated_at)
+           VALUES ($1, $2, $3, 'admin_bulk_grant', NULL, TRUE, $4, NULL, $4)`,
+          [`eperm_${generateToken(8)}`, target.id, skinId, nowIso]
+        );
+        newlyGrantedRestricted.push(skinId);
+        activePerms.push({ skinId, reason: 'admin_bulk_grant' });
+      }
+    }
+
+    const missingCommon = COMMON_SKIN_IDS.filter((s) => !target.unlockedSkins.includes(s));
+    const summary = buildPlayerSkinsSummary(target, activePerms);
+
+    await client.query(
+      `UPDATE users SET unlocked_skins = $1::jsonb WHERE id = $2`,
+      [JSON.stringify(summary.unlockedSkinIds), target.id]
+    );
+
+    const alreadyHadAll = newlyGrantedRestricted.length === 0 && missingCommon.length === 0;
+    let historyEntry: SkinGrantHistoryRecord | null = null;
+
+    if (!alreadyHadAll) {
+      const affected = [...missingCommon, ...newlyGrantedRestricted];
+      historyEntry = {
+        id: `sgh_${generateToken(8)}`,
+        action: 'grant_all',
+        adminUserId: params.adminUser.id,
+        adminNickname: params.adminUser.nickname,
+        targetUserId: target.id,
+        targetNickname: target.nickname,
+        skinsAffected: affected,
+        skinsCount: affected.length,
+        alreadyOwnedCount: BULK_GRANTABLE_ALL_SKIN_IDS.length - affected.length,
+        totalSkinsAfter: summary.totalUnlockedCount,
+        createdAt: nowIso,
+      };
+      await client.query(
+        `INSERT INTO skin_grant_history
+           (id, action, admin_user_id, admin_nickname, target_user_id, target_nickname, skins_affected, skins_count, already_owned_count, total_skins_after, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)`,
+        [
+          historyEntry.id,
+          historyEntry.action,
+          historyEntry.adminUserId,
+          historyEntry.adminNickname,
+          historyEntry.targetUserId,
+          historyEntry.targetNickname,
+          JSON.stringify(historyEntry.skinsAffected),
+          historyEntry.skinsCount,
+          historyEntry.alreadyOwnedCount,
+          historyEntry.totalSkinsAfter,
+          historyEntry.createdAt,
+        ]
+      );
+      await client.query(
+        `INSERT INTO admin_logs (id, admin_nickname, action, details, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          `log_${generateToken(6)}`,
+          params.adminUser.nickname,
+          'CONCEDER_TODAS_SKINS',
+          `Desbloqueou ${affected.length} skin(s) elegível(is) para ${target.nickname} (total: ${summary.totalUnlockedCount}/${summary.totalCatalogSkins})`,
+          nowIso,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    return {
+      status: 'ok',
+      alreadyHadAll,
+      grantedSkins: newlyGrantedRestricted,
+      summary,
+      historyEntry,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoAdminRevokeBulkGrantedSkins(params: {
+  adminUser: StoredUser;
+  targetNickname?: string;
+  targetUserId?: string;
+}): Promise<
+  | {
+      status: 'ok';
+      revokedSkins: SkinId[];
+      resetEquipped: boolean;
+      summary: AdminPlayerSkinsSummary;
+      historyEntry: SkinGrantHistoryRecord | null;
+    }
+  | { status: 'forbidden' | 'not_found' }
+> {
+  if (params.adminUser.role !== 'admin') {
+    return { status: 'forbidden' };
+  }
+
+  await repoSyncExclusiveSkinPermissions();
+  const cleanNick = params.targetNickname?.trim().toLowerCase() || '';
+  const cleanId = params.targetUserId?.trim() || '';
+  if (!cleanNick && !cleanId) return { status: 'not_found' };
+
+  const grantableRestrictedSet = new Set<SkinId>(BULK_GRANTABLE_RESTRICTED_SKIN_IDS);
+  const nowIso = new Date().toISOString();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const target = cleanId
+      ? db.users[cleanId]
+      : Object.values(db.users).find((u) => u.nicknameLower === cleanNick);
+    if (!target) return { status: 'not_found' };
+
+    const revokedSkins: SkinId[] = [];
+    for (const perm of db.exclusiveSkinPermissions) {
+      if (
+        perm.userId === target.id &&
+        perm.active &&
+        perm.reason === 'admin_bulk_grant' &&
+        grantableRestrictedSet.has(perm.skinId)
+      ) {
+        perm.active = false;
+        perm.revokedAt = nowIso;
+        perm.updatedAt = nowIso;
+        revokedSkins.push(perm.skinId);
+      }
+    }
+
+    const remainingPerms = db.exclusiveSkinPermissions.filter(
+      (p) => p.userId === target.id && p.active
+    );
+    const remainingAllowed = new Set<SkinId>(remainingPerms.map((p) => p.skinId));
+    if (target.role !== 'admin') remainingAllowed.delete('ratao_rei');
+
+    let resetEquipped = false;
+    if (!isCommonSkinId(target.equippedSkin) && !remainingAllowed.has(target.equippedSkin)) {
+      target.equippedSkin = 'ratao';
+      resetEquipped = true;
+    }
+
+    const summary = buildPlayerSkinsSummary(target, remainingPerms);
+    target.unlockedSkins = [...summary.unlockedSkinIds];
+
+    let historyEntry: SkinGrantHistoryRecord | null = null;
+    if (revokedSkins.length > 0) {
+      historyEntry = {
+        id: `sgh_${generateToken(8)}`,
+        action: 'revoke_bulk',
+        adminUserId: params.adminUser.id,
+        adminNickname: params.adminUser.nickname,
+        targetUserId: target.id,
+        targetNickname: target.nickname,
+        skinsAffected: revokedSkins,
+        skinsCount: revokedSkins.length,
+        alreadyOwnedCount: summary.legitimateSpecialCount,
+        totalSkinsAfter: summary.totalUnlockedCount,
+        createdAt: nowIso,
+      };
+      db.skinGrantHistory.unshift(historyEntry);
+      if (db.skinGrantHistory.length > 300) db.skinGrantHistory.length = 300;
+      await addLocalAdminLog(
+        params.adminUser.nickname,
+        'REVOGAR_SKINS_EM_MASSA',
+        `Removeu ${revokedSkins.length} skin(s) da concessão em massa de ${target.nickname} (preservadas ${summary.legitimateSpecialCount} especiais legítimas)`
+      );
+    }
+
+    saveLocalDb();
+    return {
+      status: 'ok',
+      revokedSkins,
+      resetEquipped,
+      summary,
+      historyEntry,
+    };
+  }
+
+  await ensureNeonSchema();
+  const pool = getNeonPool();
+  const client = await pool.connect();
+
+  try {
+    await client.query('BEGIN');
+
+    const uRes = await client.query<{
+      id: string;
+      nickname: string;
+      nickname_lower: string;
+      password_hash: string;
+      recovery_hash: string | null;
+      google_uid: string | null;
+      role: 'player' | 'admin';
+      must_change_password: boolean;
+      equipped_skin: SkinId;
+      unlocked_skins: SkinId[];
+      gifted_skins: SkinId[];
+      best_no_coin_time_ms: number;
+      best_distance: number;
+      best_score: number;
+      total_matches: number;
+      total_coins: number;
+      favorite_skin: SkinId;
+      skin_usage: Record<string, number>;
+      created_at: string;
+      last_seen_at: string;
+    }>(
+      cleanId
+        ? `SELECT * FROM users WHERE id = $1 FOR UPDATE`
+        : `SELECT * FROM users WHERE nickname_lower = $1 FOR UPDATE`,
+      [cleanId || cleanNick]
+    );
+
+    const uRow = uRes.rows[0];
+    if (!uRow) {
+      await client.query('ROLLBACK');
+      return { status: 'not_found' };
+    }
+
+    const revokedRes = await client.query<{ skin_id: SkinId }>(
+      `UPDATE exclusive_skin_permissions
+       SET active = FALSE, revoked_at = $1, updated_at = $1
+       WHERE user_id = $2
+         AND active = TRUE
+         AND reason = 'admin_bulk_grant'
+         AND skin_id = ANY($3::text[])
+       RETURNING skin_id`,
+      [nowIso, uRow.id, BULK_GRANTABLE_RESTRICTED_SKIN_IDS]
+    );
+    const revokedSkins = revokedRes.rows.map((r) => r.skin_id);
+
+    const remainingRes = await client.query<{
+      skin_id: ExclusiveSkinPermissionRecord['skinId'];
+      reason: ExclusiveSkinPermissionRecord['reason'];
+    }>(
+      `SELECT skin_id, reason FROM exclusive_skin_permissions WHERE user_id = $1 AND active = TRUE`,
+      [uRow.id]
+    );
+    const remainingPerms = remainingRes.rows.map((r) => ({
+      skinId: r.skin_id,
+      reason: r.reason,
+    }));
+
+    const remainingAllowed = new Set<SkinId>(remainingPerms.map((p) => p.skinId));
+    if (uRow.role !== 'admin') remainingAllowed.delete('ratao_rei');
+
+    let resetEquipped = false;
+    let nextEquipped = uRow.equipped_skin;
+    if (!isCommonSkinId(nextEquipped) && !remainingAllowed.has(nextEquipped)) {
+      nextEquipped = 'ratao';
+      resetEquipped = true;
+    }
+
+    const target: StoredUser = {
+      id: uRow.id,
+      nickname: uRow.nickname,
+      nicknameLower: uRow.nickname_lower,
+      passwordHash: uRow.password_hash,
+      recoveryHash: uRow.recovery_hash,
+      googleUid: uRow.google_uid ?? undefined,
+      role: uRow.role,
+      mustChangePassword: uRow.must_change_password,
+      equippedSkin: nextEquipped,
+      unlockedSkins: Array.isArray(uRow.unlocked_skins) ? uRow.unlocked_skins : [...COMMON_SKIN_IDS],
+      giftedSkins: Array.isArray(uRow.gifted_skins) ? uRow.gifted_skins : [],
+      bestNoCoinTimeMs: uRow.best_no_coin_time_ms,
+      bestDistance: uRow.best_distance,
+      bestScore: uRow.best_score,
+      totalMatches: uRow.total_matches,
+      totalCoins: uRow.total_coins,
+      favoriteSkin: uRow.favorite_skin,
+      skinUsage: uRow.skin_usage || {},
+      createdAt: uRow.created_at,
+      lastSeenAt: uRow.last_seen_at,
+    };
+
+    const summary = buildPlayerSkinsSummary(target, remainingPerms);
+
+    await client.query(
+      `UPDATE users SET unlocked_skins = $1::jsonb, equipped_skin = $2 WHERE id = $3`,
+      [JSON.stringify(summary.unlockedSkinIds), nextEquipped, target.id]
+    );
+
+    let historyEntry: SkinGrantHistoryRecord | null = null;
+    if (revokedSkins.length > 0) {
+      historyEntry = {
+        id: `sgh_${generateToken(8)}`,
+        action: 'revoke_bulk',
+        adminUserId: params.adminUser.id,
+        adminNickname: params.adminUser.nickname,
+        targetUserId: target.id,
+        targetNickname: target.nickname,
+        skinsAffected: revokedSkins,
+        skinsCount: revokedSkins.length,
+        alreadyOwnedCount: summary.legitimateSpecialCount,
+        totalSkinsAfter: summary.totalUnlockedCount,
+        createdAt: nowIso,
+      };
+      await client.query(
+        `INSERT INTO skin_grant_history
+           (id, action, admin_user_id, admin_nickname, target_user_id, target_nickname, skins_affected, skins_count, already_owned_count, total_skins_after, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11)`,
+        [
+          historyEntry.id,
+          historyEntry.action,
+          historyEntry.adminUserId,
+          historyEntry.adminNickname,
+          historyEntry.targetUserId,
+          historyEntry.targetNickname,
+          JSON.stringify(historyEntry.skinsAffected),
+          historyEntry.skinsCount,
+          historyEntry.alreadyOwnedCount,
+          historyEntry.totalSkinsAfter,
+          historyEntry.createdAt,
+        ]
+      );
+      await client.query(
+        `INSERT INTO admin_logs (id, admin_nickname, action, details, created_at)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [
+          `log_${generateToken(6)}`,
+          params.adminUser.nickname,
+          'REVOGAR_SKINS_EM_MASSA',
+          `Removeu ${revokedSkins.length} skin(s) da concessão em massa de ${target.nickname} (preservadas ${summary.legitimateSpecialCount} especiais legítimas)`,
+          nowIso,
+        ]
+      );
+    }
+
+    await client.query('COMMIT');
+    return {
+      status: 'ok',
+      revokedSkins,
+      resetEquipped,
+      summary,
+      historyEntry,
+    };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function repoAdminListSkinGrantHistory(
+  nicknameFilter?: string,
+  limit = 60
+): Promise<SkinGrantHistoryRecord[]> {
+  const clean = nicknameFilter?.trim().toLowerCase() || '';
+  const safeLimit = Math.max(1, Math.min(200, Math.floor(limit)));
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    return db.skinGrantHistory
+      .filter(
+        (h) =>
+          !clean ||
+          h.targetNickname.toLowerCase().includes(clean) ||
+          h.adminNickname.toLowerCase().includes(clean)
+      )
+      .slice(0, safeLimit);
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  if (clean) {
+    const escaped = clean.replace(/[\\%_]/g, '\\$&');
+    return db
+      .select()
+      .from(skinGrantHistory)
+      .where(
+        or(
+          ilike(skinGrantHistory.targetNickname, `%${escaped}%`),
+          ilike(skinGrantHistory.adminNickname, `%${escaped}%`)
+        )
+      )
+      .orderBy(desc(skinGrantHistory.createdAt))
+      .limit(safeLimit);
+  }
+
+  return db
+    .select()
+    .from(skinGrantHistory)
+    .orderBy(desc(skinGrantHistory.createdAt))
+    .limit(safeLimit);
 }
 
 export async function repoGetCompetitiveStatsForUser(userId: string): Promise<PlayerCompetitiveStats> {

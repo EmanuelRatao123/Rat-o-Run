@@ -1,10 +1,12 @@
 import {
+  AlertTriangle,
   BarChart3,
   CheckCircle2,
   Crown,
   Gift,
   History,
   KeyRound,
+  Layers,
   Lightbulb,
   Lock,
   LogOut,
@@ -27,7 +29,9 @@ import {
   AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
+  AdminPlayerSkinsSummary,
   AdminStats,
+  BULK_GRANTABLE_ALL_SKIN_IDS,
   GlobalMessage,
   LOCKED_EXCLUSIVE_SKINS,
   PlayerSuggestion,
@@ -38,6 +42,7 @@ import {
   SKINS,
   SPECIAL_UNLOCKABLE_SKINS,
   SkinGiftItem,
+  SkinGrantHistoryRecord,
   SkinId,
   SuggestionStatus,
   UserProfile,
@@ -56,6 +61,7 @@ interface AdminPortalModalProps {
 type AdminTab =
   | 'stats'
   | 'admin_skins'
+  | 'manage_skins'
   | 'messages'
   | 'polls'
   | 'gifts'
@@ -119,6 +125,26 @@ export function AdminPortalModal({
   const [grantBusy, setGrantBusy] = useState(false);
   const [revokeBusyKey, setRevokeBusyKey] = useState<string | null>(null);
   const [quickPlayerMatches, setQuickPlayerMatches] = useState<AdminPlayerRecord[]>([]);
+
+  // GERENCIAR SKINS (Bulk grant / revoke / player skin count / grant history)
+  const [skinsSearchNickname, setSkinsSearchNickname] = useState('');
+  const [manageQuickMatches, setManageQuickMatches] = useState<AdminPlayerRecord[]>([]);
+  const [playerSkinsSummary, setPlayerSkinsSummary] = useState<AdminPlayerSkinsSummary | null>(null);
+  const [summaryLoading, setSummaryLoading] = useState(false);
+  const [grantHistory, setGrantHistory] = useState<SkinGrantHistoryRecord[]>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyFilterNickname, setHistoryFilterNickname] = useState('');
+  const [showBulkGrantModal, setShowBulkGrantModal] = useState(false);
+  const [bulkModalNickname, setBulkModalNickname] = useState('');
+  const [bulkModalMatches, setBulkModalMatches] = useState<AdminPlayerRecord[]>([]);
+  const [bulkGrantBusy, setBulkGrantBusy] = useState(false);
+  const [pendingBulkRevokeTarget, setPendingBulkRevokeTarget] = useState<{
+    userId: string;
+    nickname: string;
+    bulkCount: number;
+    legitCount: number;
+  } | null>(null);
+  const [bulkRevokeBusy, setBulkRevokeBusy] = useState(false);
 
   // Message form
   const [msgTitle, setMsgTitle] = useState('');
@@ -262,6 +288,38 @@ export function AdminPortalModal({
     }
   }, []);
 
+  const loadGrantHistory = useCallback(async (nicknameFilter?: string) => {
+    setHistoryLoading(true);
+    try {
+      const res = await api.adminListSkinGrantHistory(nicknameFilter);
+      setGrantHistory(res.history);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao carregar histórico de concessões.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  const loadPlayerSkinsSummary = useCallback(async (nickname: string) => {
+    const trimmed = nickname.trim();
+    if (!trimmed) {
+      setActionErr('Informe o nickname do jogador para consultar as skins.');
+      return;
+    }
+    setSummaryLoading(true);
+    setActionErr(null);
+    try {
+      const res = await api.adminGetPlayerSkinsSummary(trimmed);
+      setPlayerSkinsSummary(res.summary);
+      setSkinsSearchNickname(res.summary.nickname);
+    } catch (err) {
+      setPlayerSkinsSummary(null);
+      setActionErr(err instanceof Error ? err.message : 'Erro ao consultar inventário de skins.');
+    } finally {
+      setSummaryLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -330,6 +388,44 @@ export function AdminPortalModal({
     }, 220);
     return () => window.clearTimeout(t);
   }, [isVerifiedAdmin, tab, grantSkinNickname]);
+
+  useEffect(() => {
+    if (isVerifiedAdmin && tab === 'manage_skins') {
+      void loadGrantHistory(historyFilterNickname);
+    }
+  }, [isVerifiedAdmin, tab, historyFilterNickname, loadGrantHistory]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin || tab !== 'manage_skins') return;
+    const q = skinsSearchNickname.trim();
+    if (q.length < 1) {
+      setManageQuickMatches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void api
+        .searchAdminPlayers(q)
+        .then((res) => setManageQuickMatches(res.players.slice(0, 6)))
+        .catch(() => {});
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [isVerifiedAdmin, tab, skinsSearchNickname]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin || !showBulkGrantModal) return;
+    const q = bulkModalNickname.trim();
+    if (q.length < 1) {
+      setBulkModalMatches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void api
+        .searchAdminPlayers(q)
+        .then((res) => setBulkModalMatches(res.players.slice(0, 6)))
+        .catch(() => {});
+    }, 200);
+    return () => window.clearTimeout(t);
+  }, [isVerifiedAdmin, showBulkGrantModal, bulkModalNickname]);
 
   const handleSecretF8Login = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -629,6 +725,111 @@ export function AdminPortalModal({
       setActionErr(err instanceof Error ? err.message : 'Erro ao remover permissão da skin.');
     } finally {
       setRevokeBusyKey(null);
+    }
+  };
+
+  const openBulkGrantModal = (prefillNickname?: string) => {
+    const initial =
+      (prefillNickname ?? playerSkinsSummary?.nickname ?? skinsSearchNickname ?? '').trim();
+    setBulkModalNickname(initial);
+    setActionErr(null);
+    setShowBulkGrantModal(true);
+  };
+
+  const handleConfirmBulkGrantAllSkins = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const targetNick = bulkModalNickname.trim();
+    if (!targetNick) {
+      setActionErr('Informe o nickname do jogador para conceder todas as skins.');
+      return;
+    }
+    setBulkGrantBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminGrantAllSkins(targetNick);
+      setPlayerSkinsSummary(res.summary);
+      setSkinsSearchNickname(res.summary.nickname);
+      setShowBulkGrantModal(false);
+
+      if (currentUser && currentUser.id === res.summary.userId) {
+        const nextAllowed = res.summary.unlockedSkinIds.filter(
+          (id) =>
+            !['ratao', 'capivara', 'macaco', 'tartaruga', 'cachorro', 'galo_doido', 'rato_craque', 'macaco_ninja', 'robo_dourado', 'galo_guerreiro'].includes(
+              id
+            )
+        );
+        onUserUpdated({
+          ...currentUser,
+          unlockedSkins: res.summary.unlockedSkinIds,
+          allowedExclusiveSkins: nextAllowed,
+        });
+      }
+
+      if (res.alreadyHadAll) {
+        setActionMsg(
+          `${res.summary.nickname} já possuía todas as ${res.summary.totalGrantableSkins} skins elegíveis desbloqueadas!`
+        );
+      } else {
+        setActionMsg(
+          `Concessão concluída: ${res.grantedSkins.length} nova(s) skin(s) desbloqueada(s) para ${res.summary.nickname} (total: ${res.summary.totalUnlockedCount}/${res.summary.totalCatalogSkins}). Skins Ratão Rei e Top 1/2/3 permanecem protegidas.`
+        );
+      }
+
+      await Promise.all([loadGrantHistory(historyFilterNickname), loadDashboard()]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao conceder todas as skins.');
+    } finally {
+      setBulkGrantBusy(false);
+    }
+  };
+
+  const handleConfirmBulkRevokeSkins = async () => {
+    if (!pendingBulkRevokeTarget) return;
+    setBulkRevokeBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminRevokeBulkSkins({
+        userId: pendingBulkRevokeTarget.userId,
+        nickname: pendingBulkRevokeTarget.nickname,
+      });
+      setPlayerSkinsSummary(res.summary);
+      setPendingBulkRevokeTarget(null);
+
+      if (currentUser && currentUser.id === res.summary.userId) {
+        const nextAllowed = res.summary.unlockedSkinIds.filter(
+          (id) =>
+            !['ratao', 'capivara', 'macaco', 'tartaruga', 'cachorro', 'galo_doido', 'rato_craque', 'macaco_ninja', 'robo_dourado', 'galo_guerreiro'].includes(
+              id
+            )
+        );
+        onUserUpdated({
+          ...currentUser,
+          unlockedSkins: res.summary.unlockedSkinIds,
+          allowedExclusiveSkins: nextAllowed,
+          equippedSkin: res.summary.equippedSkin,
+        });
+      }
+
+      if (res.revokedSkins.length === 0) {
+        setActionMsg(
+          `${res.summary.nickname} não possuía skins concedidas pelo recurso em massa para remover.`
+        );
+      } else {
+        setActionMsg(
+          `${res.revokedSkins.length} skin(s) concedida(s) em massa removida(s) de ${res.summary.nickname}. ${res.summary.legitimateSpecialCount} skin(s) obtida(s) por códigos/presentes foram preservadas.${
+            res.resetEquipped ? ' A skin equipada foi redefinida para Ratão.' : ''
+          }`
+        );
+      }
+
+      await Promise.all([loadGrantHistory(historyFilterNickname), loadDashboard()]);
+    } catch (err) {
+      setPendingBulkRevokeTarget(null);
+      setActionErr(err instanceof Error ? err.message : 'Erro ao remover concessão em massa.');
+    } finally {
+      setBulkRevokeBusy(false);
     }
   };
 
@@ -1034,6 +1235,7 @@ export function AdminPortalModal({
               {(
                 [
                   { id: 'stats', label: 'Estatísticas', icon: BarChart3 },
+                  { id: 'manage_skins', label: 'Gerenciar Skins', icon: Layers },
                   { id: 'admin_skins', label: 'Skins Admin', icon: Crown },
                   { id: 'messages', label: 'Mensagens Globais', icon: Megaphone },
                   { id: 'polls', label: 'Votações Globais', icon: Vote },
@@ -1139,6 +1341,347 @@ export function AdminPortalModal({
                         {stats.giftsSentCount}
                       </div>
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Tab: GERENCIAR SKINS (Conceder Todas / Consultar / Revogar em Massa / Histórico) */}
+              {tab === 'manage_skins' && (
+                <div className="space-y-5">
+                  {/* Destaque Principal: CONCEDER TODAS AS SKINS */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-br from-slate-950 via-slate-950 to-amber-950/30 border-2 border-amber-500/50 space-y-4 shadow-lg">
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div className="space-y-1.5 max-w-2xl">
+                        <span className="px-2.5 py-1 rounded bg-amber-500/20 border border-amber-400/60 text-amber-300 text-[10px] font-extrabold uppercase tracking-wider">
+                          GERENCIAR SKINS · CONCESSÃO COMPLETA
+                        </span>
+                        <h3 className="font-display text-xl font-bold text-white flex items-center gap-2">
+                          <Layers className="w-5 h-5 text-amber-400" />
+                          GERENCIAR SKINS DO CATÁLOGO
+                        </h3>
+                        <p className="text-xs text-slate-300 leading-relaxed">
+                          Desbloqueie de uma só vez todas as{' '}
+                          <strong className="text-white">
+                            {BULK_GRANTABLE_ALL_SKIN_IDS.length} skins elegíveis
+                          </strong>{' '}
+                          (skins comuns, Meu Ratão e todas as skins famosas/especiais) para um
+                          jogador específico no Neon PostgreSQL.
+                        </p>
+                        <p className="text-[11px] text-amber-200/80">
+                          Segurança ativa: <strong>Ratão Rei</strong>, <strong>Top 1</strong>,{' '}
+                          <strong>Top 2</strong>, <strong>Top 3</strong>, cargos administrativos e
+                          posições no ranking nunca são concedidos por este recurso.
+                        </p>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={() => openBulkGrantModal()}
+                        className="px-5 py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-orange-500 to-rose-600 hover:from-amber-400 hover:via-orange-400 hover:to-rose-500 text-white font-display font-extrabold text-sm tracking-wide flex items-center gap-2 shadow-xl shadow-amber-950/50 cursor-pointer shrink-0"
+                      >
+                        <Sparkles className="w-4 h-4" />
+                        CONCEDER TODAS AS SKINS
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Consultar Quantidade & Inventário de Skins de um Jogador */}
+                  <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-4">
+                    <div>
+                      <h4 className="font-display text-base font-bold text-white flex items-center gap-2">
+                        <Search className="w-4 h-4 text-sky-400" />
+                        CONSULTAR SKINS DE UM JOGADOR
+                      </h4>
+                      <p className="text-xs text-slate-400 mt-0.5">
+                        Pesquise um jogador pelo nickname para conferir quantas skins ele possui,
+                        conceder todas ou remover somente as skins concedidas em massa.
+                      </p>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void loadPlayerSkinsSummary(skinsSearchNickname);
+                      }}
+                      className="flex flex-wrap items-center gap-2.5"
+                    >
+                      <div className="relative flex-1 min-w-[220px]">
+                        <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                        <input
+                          type="text"
+                          value={skinsSearchNickname}
+                          onChange={(e) => setSkinsSearchNickname(e.target.value)}
+                          placeholder="Digite o nickname do jogador..."
+                          className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-white text-xs"
+                        />
+                      </div>
+                      <button
+                        type="submit"
+                        disabled={summaryLoading}
+                        className="px-4 py-2.5 rounded-xl bg-sky-600 hover:bg-sky-500 text-white font-display font-bold text-xs cursor-pointer disabled:opacity-60"
+                      >
+                        {summaryLoading ? 'CONSULTANDO...' : 'CONSULTAR INVENTÁRIO'}
+                      </button>
+                    </form>
+
+                    {manageQuickMatches.length > 0 && (
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">
+                          Sugestões:
+                        </span>
+                        {manageQuickMatches.map((mp) => (
+                          <button
+                            key={mp.id}
+                            type="button"
+                            onClick={() => void loadPlayerSkinsSummary(mp.nickname)}
+                            className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 hover:border-sky-400 text-[11px] font-bold text-slate-200 cursor-pointer"
+                          >
+                            {mp.nickname}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {playerSkinsSummary && (
+                      <div className="p-4 rounded-xl bg-slate-900/80 border border-slate-700/80 space-y-4">
+                        <div className="flex flex-wrap items-center justify-between gap-3">
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="font-display text-lg font-bold text-white">
+                                {playerSkinsSummary.nickname}
+                              </span>
+                              <span
+                                className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                                  playerSkinsSummary.role === 'admin'
+                                    ? 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                    : 'bg-slate-800 text-slate-300'
+                                }`}
+                              >
+                                {playerSkinsSummary.role === 'admin' ? 'Administrador' : 'Jogador'}
+                              </span>
+                              <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                Equipada: {getSkinDefinition(playerSkinsSummary.equippedSkin).name}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => openBulkGrantModal(playerSkinsSummary.nickname)}
+                              className="px-3.5 py-2 rounded-xl bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-display font-extrabold text-xs flex items-center gap-1.5 cursor-pointer"
+                            >
+                              <Sparkles className="w-3.5 h-3.5" />
+                              CONCEDER TODAS AS SKINS
+                            </button>
+
+                            <button
+                              type="button"
+                              disabled={playerSkinsSummary.bulkGrantedCount === 0}
+                              onClick={() =>
+                                setPendingBulkRevokeTarget({
+                                  userId: playerSkinsSummary.userId,
+                                  nickname: playerSkinsSummary.nickname,
+                                  bulkCount: playerSkinsSummary.bulkGrantedCount,
+                                  legitCount: playerSkinsSummary.legitimateSpecialCount,
+                                })
+                              }
+                              className="px-3.5 py-2 rounded-xl bg-rose-950 hover:bg-rose-900 border border-rose-700/60 text-rose-200 font-display font-bold text-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                              REMOVER SKINS CONCEDIDAS EM MASSA ({playerSkinsSummary.bulkGrantedCount})
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Contadores de Skins */}
+                        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2.5">
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Total Desbloqueadas
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-white mt-0.5">
+                              {playerSkinsSummary.totalUnlockedCount} / {playerSkinsSummary.totalCatalogSkins}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Skins Comuns
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-sky-300 mt-0.5">
+                              {playerSkinsSummary.commonUnlockedCount} / {playerSkinsSummary.commonTotalCount}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Especiais & Famosas
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-amber-300 mt-0.5">
+                              {playerSkinsSummary.specialUnlockedCount} / {playerSkinsSummary.specialTotalCount}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Via Concessão em Massa
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-orange-300 mt-0.5">
+                              {playerSkinsSummary.bulkGrantedCount}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Legítimas (Preservadas)
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-emerald-300 mt-0.5">
+                              {playerSkinsSummary.legitimateSpecialCount}
+                            </div>
+                          </div>
+                          <div className="p-3 rounded-xl bg-slate-950 border border-slate-800">
+                            <div className="text-[10px] font-bold uppercase text-slate-400">
+                              Protegidas (Rei / Top 1-3)
+                            </div>
+                            <div className="font-mono-num text-xl font-extrabold text-fuchsia-300 mt-0.5">
+                              {playerSkinsSummary.protectedExclusiveOwned.length}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Lista das Skins do Jogador */}
+                        <div>
+                          <div className="text-[11px] font-bold uppercase text-slate-400 mb-2">
+                            Inventário Atual ({playerSkinsSummary.unlockedSkinIds.length} skins)
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {playerSkinsSummary.unlockedSkinIds.map((skinId) => {
+                              const isProtected =
+                                playerSkinsSummary.protectedExclusiveOwned.includes(skinId);
+                              const isBulk =
+                                playerSkinsSummary.bulkGrantedSkinIds.includes(skinId);
+                              const isLegitSpecial =
+                                playerSkinsSummary.legitimateSpecialSkinIds.includes(skinId);
+                              return (
+                                <span
+                                  key={skinId}
+                                  className={`px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                    isProtected
+                                      ? 'bg-fuchsia-950/60 border-fuchsia-500/50 text-fuchsia-200'
+                                      : isLegitSpecial
+                                      ? 'bg-emerald-950/60 border-emerald-500/50 text-emerald-200'
+                                      : isBulk
+                                      ? 'bg-amber-950/60 border-amber-500/50 text-amber-200'
+                                      : 'bg-slate-950 border-slate-800 text-slate-300'
+                                  }`}
+                                >
+                                  {getSkinDefinition(skinId).name}
+                                  {isBulk ? ' · Massa' : isLegitSpecial ? ' · Legítima' : isProtected ? ' · Protegida' : ''}
+                                </span>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Histórico de Concessões */}
+                  <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <div>
+                        <h4 className="font-display text-base font-bold text-white flex items-center gap-2">
+                          <History className="w-4 h-4 text-amber-400" />
+                          HISTÓRICO DE CONCESSÕES ({grantHistory.length})
+                        </h4>
+                        <p className="text-xs text-slate-400">
+                          Registro persistente de concessões completas e remoções em massa.
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="text"
+                          value={historyFilterNickname}
+                          onChange={(e) => setHistoryFilterNickname(e.target.value)}
+                          placeholder="Filtrar por nickname..."
+                          className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => void loadGrantHistory(historyFilterNickname)}
+                          className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className={`w-3.5 h-3.5 ${historyLoading ? 'animate-spin' : ''}`} />
+                          Atualizar
+                        </button>
+                      </div>
+                    </div>
+
+                    {historyLoading ? (
+                      <div className="text-xs text-slate-400">Carregando histórico de concessões...</div>
+                    ) : grantHistory.length === 0 ? (
+                      <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400 text-center">
+                        Nenhuma concessão ou remoção em massa registrada ainda.
+                      </div>
+                    ) : (
+                      <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                        {grantHistory.map((h) => {
+                          const isGrant = h.action === 'grant_all';
+                          const previewNames = h.skinsAffected
+                            .slice(0, 6)
+                            .map((s) => getSkinDefinition(s).name)
+                            .join(', ');
+                          const remainingCount = Math.max(0, h.skinsAffected.length - 6);
+                          return (
+                            <div
+                              key={h.id}
+                              className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-col gap-1.5"
+                            >
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span
+                                    className={`px-2 py-0.5 rounded text-[10px] font-extrabold uppercase ${
+                                      isGrant
+                                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
+                                        : 'bg-rose-500/20 text-rose-300 border border-rose-500/40'
+                                    }`}
+                                  >
+                                    {isGrant ? 'CONCEDER TODAS' : 'REMOÇÃO EM MASSA'}
+                                  </span>
+                                  <span className="font-bold text-sm text-white">
+                                    {h.targetNickname}
+                                  </span>
+                                  <span className="text-[11px] text-slate-400">
+                                    por <strong className="text-slate-200">{h.adminNickname}</strong>
+                                  </span>
+                                </div>
+                                <span className="text-[10px] text-slate-500">
+                                  {new Date(h.createdAt).toLocaleString('pt-BR')}
+                                </span>
+                              </div>
+                              <div className="text-xs text-slate-300">
+                                {isGrant ? (
+                                  <>
+                                    <strong className="text-emerald-300">+{h.skinsCount}</strong>{' '}
+                                    skin(s) desbloqueada(s) ({h.alreadyOwnedCount} já possuía) · Total
+                                    após: <strong>{h.totalSkinsAfter}</strong>
+                                  </>
+                                ) : (
+                                  <>
+                                    <strong className="text-rose-300">-{h.skinsCount}</strong>{' '}
+                                    skin(s) removida(s) ({h.alreadyOwnedCount} especiais legítimas
+                                    preservadas) · Total após: <strong>{h.totalSkinsAfter}</strong>
+                                  </>
+                                )}
+                              </div>
+                              {h.skinsAffected.length > 0 && (
+                                <div className="text-[11px] text-slate-400 truncate">
+                                  Skins: {previewNames}
+                                  {remainingCount > 0 ? ` e +${remainingCount} outra(s)` : ''}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1353,6 +1896,8 @@ export function AdminPortalModal({
                                       <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-semibold">
                                         {owner.reason === 'promo_code'
                                           ? 'Código Promocional'
+                                          : owner.reason === 'admin_bulk_grant'
+                                          ? 'Concessão em Massa'
                                           : 'Liberada pelo Admin'}
                                       </span>
                                       {owner.equipped && (
@@ -2421,6 +2966,167 @@ export function AdminPortalModal({
                   </div>
                 </div>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Modal de Confirmação: CONCEDER TODAS AS SKINS */}
+        {showBulkGrantModal && (
+          <div className="fixed inset-0 z-[60] bg-slate-950/85 flex items-center justify-center p-4">
+            <form
+              onSubmit={handleConfirmBulkGrantAllSkins}
+              className="w-full max-w-md bg-slate-900 border-2 border-amber-500/70 rounded-2xl p-5 shadow-2xl space-y-4"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-amber-500/20 border border-amber-400/50 text-amber-300 flex items-center justify-center shrink-0">
+                    <Sparkles className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="font-display text-base font-bold text-white">
+                      CONCEDER TODAS AS SKINS
+                    </h3>
+                    <p className="text-[11px] text-amber-300 font-semibold">
+                      Desbloqueio em massa no Neon PostgreSQL
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowBulkGrantModal(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-sm font-semibold text-white">
+                Tem certeza de que deseja desbloquear todas as skins para um jogador?
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-[11px] font-bold uppercase text-slate-300">
+                  Escolher Jogador pelo Nickname
+                </label>
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                  <input
+                    type="text"
+                    required
+                    autoFocus
+                    value={bulkModalNickname}
+                    onChange={(e) => setBulkModalNickname(e.target.value)}
+                    placeholder="Digite o nickname exato do jogador..."
+                    className="w-full pl-9 pr-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm focus:outline-none focus:border-amber-400"
+                  />
+                </div>
+                {bulkModalMatches.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 pt-1">
+                    {bulkModalMatches.map((mp) => (
+                      <button
+                        key={mp.id}
+                        type="button"
+                        onClick={() => setBulkModalNickname(mp.nickname)}
+                        className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer ${
+                          bulkModalNickname.trim().toLowerCase() === mp.nickname.toLowerCase()
+                            ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                            : 'bg-slate-950 border-slate-700 text-slate-300 hover:border-sky-400'
+                        }`}
+                      >
+                        {mp.nickname}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-950/30 border border-amber-500/30 text-[11px] text-slate-300 space-y-1">
+                <div>
+                  <strong className="text-emerald-300">Desbloqueia:</strong>{' '}
+                  {BULK_GRANTABLE_ALL_SKIN_IDS.length} skins (comuns, Meu Ratão e todas as 16 skins
+                  famosas/especiais).
+                </div>
+                <div>
+                  <strong className="text-rose-300">NÃO concede:</strong> Ratão Rei, Top 1, Top 2,
+                  Top 3, privilégios administrativos ou posição no ranking.
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5 pt-1">
+                <button
+                  type="submit"
+                  disabled={bulkGrantBusy || !bulkModalNickname.trim()}
+                  className="py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 hover:from-amber-400 hover:to-rose-500 text-white font-display font-bold text-xs cursor-pointer disabled:opacity-50"
+                >
+                  {bulkGrantBusy ? 'CONCEDENDO...' : 'CONFIRMAR E CONCEDER'}
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkGrantBusy}
+                  onClick={() => setShowBulkGrantModal(false)}
+                  className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-display font-bold text-xs cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Modal de Confirmação: REMOVER SKINS CONCEDIDAS EM MASSA */}
+        {pendingBulkRevokeTarget && (
+          <div className="fixed inset-0 z-[60] bg-slate-950/85 flex items-center justify-center p-4">
+            <div className="w-full max-w-md bg-slate-900 border-2 border-rose-500/70 rounded-2xl p-5 shadow-2xl space-y-4">
+              <div className="flex items-center gap-2.5">
+                <div className="w-10 h-10 rounded-xl bg-rose-500/20 border border-rose-400/50 text-rose-300 flex items-center justify-center shrink-0">
+                  <AlertTriangle className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="font-display text-base font-bold text-white">
+                    REMOVER CONCESSÃO EM MASSA
+                  </h3>
+                  <p className="text-[11px] text-rose-300 font-semibold">
+                    Jogador: {pendingBulkRevokeTarget.nickname}
+                  </p>
+                </div>
+              </div>
+
+              <div className="p-3.5 rounded-xl bg-slate-950 border border-slate-800 text-xs text-slate-200 space-y-1.5 leading-relaxed">
+                <p>
+                  Serão removidas apenas as{' '}
+                  <strong className="text-rose-300">
+                    {pendingBulkRevokeTarget.bulkCount} skin(s)
+                  </strong>{' '}
+                  desbloqueadas por este recurso de concessão em massa.
+                </p>
+                <p>
+                  Skins obtidas legitimamente (
+                  <strong className="text-emerald-300">
+                    {pendingBulkRevokeTarget.legitCount} por códigos promocionais / presentes
+                  </strong>
+                  , além das comuns e conquistas de ranking) serão{' '}
+                  <strong className="text-emerald-300">totalmente preservadas</strong>.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  disabled={bulkRevokeBusy}
+                  onClick={() => void handleConfirmBulkRevokeSkins()}
+                  className="py-2.5 rounded-xl bg-rose-600 hover:bg-rose-500 text-white font-display font-bold text-xs cursor-pointer disabled:opacity-50"
+                >
+                  {bulkRevokeBusy ? 'REMOVENDO...' : 'CONFIRMAR REMOÇÃO'}
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkRevokeBusy}
+                  onClick={() => setPendingBulkRevokeTarget(null)}
+                  className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-display font-bold text-xs cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
             </div>
           </div>
         )}

@@ -14,8 +14,12 @@ import {
   repoGetUnreadNotificationsForUser,
 } from './featureRepository.ts';
 import {
+  repoAdminGetPlayerSkinsSummary,
+  repoAdminGrantAllEligibleSkins,
   repoAdminGrantLockedSkin,
   repoAdminListExclusiveSkinOwners,
+  repoAdminListSkinGrantHistory,
+  repoAdminRevokeBulkGrantedSkins,
   repoAdminRevokeLockedSkin,
   repoCanUserEquipSkin,
   repoCloseGlobalPoll,
@@ -587,3 +591,112 @@ export async function adminRevokeExclusiveSkinHandler(
     resetEquipped: result.resetEquipped,
   });
 }
+
+export async function adminGetPlayerSkinsSummaryHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Acesso restrito a administradores.' });
+    return;
+  }
+  const nickname = typeof req.query.nickname === 'string' ? req.query.nickname.trim() : '';
+  if (!nickname || nickname.length > 30) {
+    res.status(400).json({ error: 'Informe um nickname válido para consulta.' });
+    return;
+  }
+  const summary = await repoAdminGetPlayerSkinsSummary(nickname);
+  if (!summary) {
+    res.status(404).json({ error: `Jogador "${nickname}" não encontrado.` });
+    return;
+  }
+  res.json({ summary });
+}
+
+export async function adminGrantAllSkinsHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Apenas administradores podem conceder skins.' });
+    return;
+  }
+  const nickname = typeof req.body?.nickname === 'string' ? req.body.nickname.trim() : '';
+  if (!nickname || nickname.length > 30) {
+    res.status(400).json({ error: 'Informe o nickname do jogador.' });
+    return;
+  }
+  const result = await repoAdminGrantAllEligibleSkins({
+    adminUser: admin,
+    targetNickname: nickname,
+  });
+  if (result.status !== 'ok') {
+    if (result.status === 'forbidden') {
+      res.status(403).json({ error: 'Acesso restrito a administradores.' });
+      return;
+    }
+    res.status(404).json({ error: `Jogador "${nickname}" não encontrado.` });
+    return;
+  }
+  res.json({
+    alreadyHadAll: result.alreadyHadAll,
+    grantedSkins: result.grantedSkins,
+    summary: result.summary,
+    historyEntry: result.historyEntry,
+  });
+}
+
+export async function adminRevokeBulkSkinsHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Apenas administradores podem remover concessões.' });
+    return;
+  }
+  const nickname = typeof req.body?.nickname === 'string' ? req.body.nickname.trim() : '';
+  const userId = typeof req.body?.userId === 'string' ? req.body.userId.trim() : '';
+  if ((!nickname && !userId) || nickname.length > 30 || userId.length > 80) {
+    res.status(400).json({ error: 'Informe o jogador para remover a concessão em massa.' });
+    return;
+  }
+  const result = await repoAdminRevokeBulkGrantedSkins({
+    adminUser: admin,
+    targetNickname: nickname || undefined,
+    targetUserId: userId || undefined,
+  });
+  if (result.status !== 'ok') {
+    if (result.status === 'forbidden') {
+      res.status(403).json({ error: 'Acesso restrito a administradores.' });
+      return;
+    }
+    res.status(404).json({ error: 'Jogador não encontrado.' });
+    return;
+  }
+  res.json({
+    revokedSkins: result.revokedSkins,
+    resetEquipped: result.resetEquipped,
+    summary: result.summary,
+    historyEntry: result.historyEntry,
+  });
+}
+
+export async function adminListSkinGrantHistoryHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser;
+  if (!admin || admin.role !== 'admin') {
+    res.status(403).json({ error: 'Acesso restrito a administradores.' });
+    return;
+  }
+  const nickname = typeof req.query.nickname === 'string' ? req.query.nickname.trim() : undefined;
+  const rawLimit = Number(req.query.limit);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(200, Math.floor(rawLimit)) : 60;
+  const history = await repoAdminListSkinGrantHistory(nickname, limit);
+  res.json({ history });
+}
+

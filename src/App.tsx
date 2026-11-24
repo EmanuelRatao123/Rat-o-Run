@@ -247,6 +247,12 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, [user, playing, refreshMultiplayerOverview]);
 
+  useEffect(() => {
+    if (user && activeModal === 'skins') {
+      void refreshUser();
+    }
+  }, [user, activeModal, refreshUser]);
+
   const handleLogout = async () => {
     await api.logout().catch(() => {});
     setMemorySessionToken(null);
@@ -301,6 +307,9 @@ export default function App() {
 
   const closeAdminPortal = () => {
     setShowSecretAdmin(false);
+    if (user) {
+      void refreshUser();
+    }
     if (window.location.hash === '#admin') {
       window.history.replaceState(null, '', '/');
     }

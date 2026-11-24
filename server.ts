@@ -25,9 +25,13 @@ import {
   adminCreateMessageHandler,
   adminCreatePollHandler,
   adminDeleteMessageHandler,
+  adminGetPlayerSkinsSummaryHandler,
   adminGiftSkinHandler,
+  adminGrantAllSkinsHandler,
   adminGrantExclusiveSkinHandler,
   adminListExclusiveSkinOwnersHandler,
+  adminListSkinGrantHistoryHandler,
+  adminRevokeBulkSkinsHandler,
   adminRevokeExclusiveSkinHandler,
   adminSearchPlayersHandler,
   adminStatsHandler,
@@ -165,6 +169,10 @@ app.post(
   requireAdmin,
   wrap(adminRevokeExclusiveSkinHandler)
 );
+app.get('/api/admin/skins/player-summary', requireAdmin, wrap(adminGetPlayerSkinsSummaryHandler));
+app.post('/api/admin/skins/grant-all', requireAdmin, wrap(adminGrantAllSkinsHandler));
+app.post('/api/admin/skins/revoke-bulk', requireAdmin, wrap(adminRevokeBulkSkinsHandler));
+app.get('/api/admin/skins/grant-history', requireAdmin, wrap(adminListSkinGrantHistoryHandler));
 app.post('/api/admin/messages', requireAdmin, wrap(adminCreateMessageHandler));
 app.delete('/api/admin/messages/:id', requireAdmin, wrap(adminDeleteMessageHandler));
 app.post('/api/admin/polls', requireAdmin, wrap(adminCreatePollHandler));

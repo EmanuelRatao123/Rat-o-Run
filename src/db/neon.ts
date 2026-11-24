@@ -488,6 +488,24 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
       await sql`CREATE INDEX IF NOT EXISTS notif_user_seen_idx ON notification_history (user_id, seen, created_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS skin_grant_history (
+          id TEXT PRIMARY KEY,
+          action TEXT NOT NULL,
+          admin_user_id TEXT NOT NULL,
+          admin_nickname TEXT NOT NULL,
+          target_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          target_nickname TEXT NOT NULL,
+          skins_affected JSONB NOT NULL DEFAULT '[]'::jsonb,
+          skins_count INTEGER NOT NULL DEFAULT 0,
+          already_owned_count INTEGER NOT NULL DEFAULT 0,
+          total_skins_after INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS skin_grant_hist_created_idx ON skin_grant_history (created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS skin_grant_hist_target_idx ON skin_grant_history (target_user_id, created_at DESC)`;
     })().catch((err) => {
       global._rataoNeonInitPromise = undefined;
       throw err;

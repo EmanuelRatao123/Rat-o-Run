@@ -2,10 +2,14 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  ALL_SKINS,
+  BULK_GRANTABLE_ALL_SKIN_IDS,
+  BULK_GRANTABLE_RESTRICTED_SKIN_IDS,
   COMMON_SKIN_IDS,
   EXCLUSIVE_SKIN_IDS,
   LOCKED_EXCLUSIVE_SKINS,
   LOCKED_EXCLUSIVE_SKIN_IDS,
+  RESTRICTED_NON_BULK_SKIN_IDS,
   SkinId,
   isGiftableSkinId,
   isLockedExclusiveSkinId,
@@ -16,13 +20,18 @@ import {
   repoRedeemPromoCode,
 } from './featureRepository.ts';
 import {
+  repoAdminGetPlayerSkinsSummary,
+  repoAdminGrantAllEligibleSkins,
   repoAdminGrantLockedSkin,
   repoAdminListExclusiveSkinOwners,
+  repoAdminListSkinGrantHistory,
+  repoAdminRevokeBulkGrantedSkins,
   repoAdminRevokeLockedSkin,
   repoCanUserEquipSkin,
   repoCreateUser,
   repoFindUserById,
   repoGetAllowedExclusiveSkinsForUser,
+  repoGiftSkinToPlayer,
   repoSearchPlayersForAdmin,
   repoSyncExclusiveSkinPermissions,
   repoUpdateUserEquippedSkin,
@@ -262,6 +271,147 @@ async function runTests() {
     await repoUpdateUserEquippedSkin(p2.id, 'cristiano_ronaldo');
     const p2Persisted = await repoFindUserById(p2.id);
     assert.equal(p2Persisted?.equippedSkin, 'cristiano_ronaldo');
+
+    // 9. GERENCIAR SKINS: CONCEDER TODAS AS SKINS + REMOÇÃO SELETIVA + HISTÓRICO (com conta comum)
+    const adminActor = {
+      ...p1,
+      id: `test_admin_${suffix}`,
+      nickname: `AdminBulk_${suffix}`,
+      nicknameLower: `adminbulk_${suffix}`,
+      role: 'admin' as const,
+    };
+    const ordinaryPlayer = {
+      ...p1,
+      id: `test_ordinary_${suffix}`,
+      nickname: `ComumTeste_${suffix}`,
+      nicknameLower: `comumteste_${suffix}`,
+      role: 'player' as const,
+      bestNoCoinTimeMs: 0,
+      bestDistance: 0,
+      bestScore: 0,
+      unlockedSkins: [...COMMON_SKIN_IDS] as SkinId[],
+      giftedSkins: [] as SkinId[],
+      equippedSkin: 'ratao' as SkinId,
+      skinUsage: {},
+    };
+    await repoCreateUser(adminActor);
+    await repoCreateUser(ordinaryPlayer);
+
+    // Non-admin CANNOT invoke bulk grant or bulk revoke
+    const deniedBulk = await repoAdminGrantAllEligibleSkins({
+      adminUser: ordinaryPlayer,
+      targetNickname: p2.nickname,
+    });
+    assert.equal(deniedBulk.status, 'forbidden');
+
+    // Give ordinaryPlayer 1 legitimate promo-code skin ('cristiano_ronaldo') & 1 individual gift ('homem_aranha') BEFORE bulk grant
+    const cr7ForOrdinary = await repoRedeemPromoCode({
+      user: ordinaryPlayer,
+      rawCode: `CR7_${suffix.toUpperCase()}`,
+    });
+    assert.equal(cr7ForOrdinary.status, 'ok');
+
+    const giftSpider = await repoGiftSkinToPlayer({
+      adminNickname: adminActor.nickname,
+      targetNickname: ordinaryPlayer.nickname,
+      skinId: 'homem_aranha',
+    });
+    assert.equal(giftSpider.status, 'ok');
+
+    // Check summary before bulk grant
+    const summaryBefore = await repoAdminGetPlayerSkinsSummary(ordinaryPlayer.nickname);
+    assert.ok(summaryBefore);
+    assert.equal(summaryBefore.totalUnlockedCount, COMMON_SKIN_IDS.length + 2);
+    assert.equal(summaryBefore.legitimateSpecialCount, 2);
+    assert.equal(summaryBefore.bulkGrantedCount, 0);
+
+    // Execute CONCEDER TODAS AS SKINS for ordinary account
+    const bulkRes = await repoAdminGrantAllEligibleSkins({
+      adminUser: adminActor,
+      targetNickname: ordinaryPlayer.nickname,
+    });
+    assert.equal(bulkRes.status, 'ok');
+    if (bulkRes.status === 'ok') {
+      assert.equal(bulkRes.alreadyHadAll, false);
+      assert.equal(bulkRes.grantedSkins.length, BULK_GRANTABLE_RESTRICTED_SKIN_IDS.length - 2);
+      assert.equal(bulkRes.summary.totalUnlockedCount, BULK_GRANTABLE_ALL_SKIN_IDS.length);
+      assert.equal(bulkRes.summary.totalCatalogSkins, ALL_SKINS.length);
+      assert.equal(bulkRes.summary.legitimateSpecialCount, 2);
+      assert.equal(bulkRes.summary.bulkGrantedCount, BULK_GRANTABLE_RESTRICTED_SKIN_IDS.length - 2);
+      assert.equal(bulkRes.summary.protectedExclusiveOwned.length, 0);
+      assert.ok(bulkRes.historyEntry);
+    }
+
+    // Verify ordinary player can equip common + Meu Ratão + famous/special, and CANNOT equip Ratão Rei or Top 1/2/3
+    const ordinaryReloaded = (await repoFindUserById(ordinaryPlayer.id))!;
+    assert.equal(ordinaryReloaded.role, 'player', 'Conta comum não pode virar admin');
+    assert.equal(ordinaryReloaded.bestNoCoinTimeMs, 0, 'Ranking não pode ser alterado');
+
+    for (const allowedId of BULK_GRANTABLE_ALL_SKIN_IDS) {
+      assert.equal(
+        await repoCanUserEquipSkin(ordinaryReloaded, allowedId),
+        true,
+        `Conta comum deve poder equipar ${allowedId}`
+      );
+    }
+    for (const forbiddenId of RESTRICTED_NON_BULK_SKIN_IDS) {
+      assert.equal(
+        await repoCanUserEquipSkin(ordinaryReloaded, forbiddenId),
+        false,
+        `Conta comum NÃO pode receber ${forbiddenId}`
+      );
+      assert.ok(
+        !ordinaryReloaded.unlockedSkins.includes(forbiddenId),
+        `${forbiddenId} não pode estar em unlockedSkins`
+      );
+    }
+
+    // Idempotency check: running CONCEDER TODAS again must not duplicate permissions
+    const bulkAgain = await repoAdminGrantAllEligibleSkins({
+      adminUser: adminActor,
+      targetNickname: ordinaryPlayer.nickname,
+    });
+    assert.equal(bulkAgain.status, 'ok');
+    if (bulkAgain.status === 'ok') {
+      assert.equal(bulkAgain.alreadyHadAll, true);
+      assert.equal(bulkAgain.grantedSkins.length, 0);
+    }
+    const localAfterBulk = getLocalDb();
+    const activePermRows = localAfterBulk.exclusiveSkinPermissions.filter(
+      (p) => p.userId === ordinaryPlayer.id && p.active
+    );
+    const uniquePermSkins = new Set(activePermRows.map((p) => p.skinId));
+    assert.equal(activePermRows.length, uniquePermSkins.size, 'Sem linhas duplicadas no banco');
+
+    // Equip a bulk-granted skin ('shrek'), then test selective revocation
+    await repoUpdateUserEquippedSkin(ordinaryPlayer.id, 'shrek');
+    const revokeBulkRes = await repoAdminRevokeBulkGrantedSkins({
+      adminUser: adminActor,
+      targetNickname: ordinaryPlayer.nickname,
+    });
+    assert.equal(revokeBulkRes.status, 'ok');
+    if (revokeBulkRes.status === 'ok') {
+      assert.equal(revokeBulkRes.resetEquipped, true, 'Skin equipada em massa volta para Ratão');
+      assert.equal(revokeBulkRes.revokedSkins.length, BULK_GRANTABLE_RESTRICTED_SKIN_IDS.length - 2);
+      assert.equal(revokeBulkRes.summary.legitimateSpecialCount, 2);
+      assert.equal(revokeBulkRes.summary.bulkGrantedCount, 0);
+      assert.equal(revokeBulkRes.summary.totalUnlockedCount, COMMON_SKIN_IDS.length + 2);
+    }
+
+    const ordinaryAfterRevoke = (await repoFindUserById(ordinaryPlayer.id))!;
+    assert.equal(ordinaryAfterRevoke.equippedSkin, 'ratao');
+    assert.equal(await repoCanUserEquipSkin(ordinaryAfterRevoke, 'shrek'), false);
+    assert.equal(await repoCanUserEquipSkin(ordinaryAfterRevoke, 'meu_ratao'), false);
+    // Legitimate promo & gift skins MUST survive bulk revocation!
+    assert.equal(await repoCanUserEquipSkin(ordinaryAfterRevoke, 'cristiano_ronaldo'), true);
+    assert.equal(await repoCanUserEquipSkin(ordinaryAfterRevoke, 'homem_aranha'), true);
+
+    // Grant history recorded both operations
+    const grantHist = await repoAdminListSkinGrantHistory(ordinaryPlayer.nickname);
+    assert.equal(grantHist.length, 2);
+    assert.equal(grantHist[0].action, 'revoke_bulk');
+    assert.equal(grantHist[1].action, 'grant_all');
+    assert.equal(grantHist[1].adminNickname, adminActor.nickname);
 
     console.log('ALL_LOCKED_SKINS_TESTS_PASSED');
   } finally {

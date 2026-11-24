@@ -2,6 +2,7 @@ import {
   AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
+  AdminPlayerSkinsSummary,
   AdminStats,
   CoinsLeaderboardEntry,
   CustomCharacterConfig,
@@ -26,6 +27,7 @@ import {
   PromoRewardType,
   PublicPlayerLookup,
   SkinGiftItem,
+  SkinGrantHistoryRecord,
   SkinId,
   SoloGameMode,
   SuggestionStatus,
@@ -369,6 +371,40 @@ export const api = {
         method: 'POST',
         body: JSON.stringify(payload),
       }
+    ),
+
+  adminGetPlayerSkinsSummary: (nickname: string) =>
+    apiFetch<{ summary: AdminPlayerSkinsSummary }>(
+      `/api/admin/skins/player-summary?nickname=${encodeURIComponent(nickname)}`
+    ),
+
+  adminGrantAllSkins: (nickname: string) =>
+    apiFetch<{
+      alreadyHadAll: boolean;
+      grantedSkins: SkinId[];
+      summary: AdminPlayerSkinsSummary;
+      historyEntry: SkinGrantHistoryRecord | null;
+    }>('/api/admin/skins/grant-all', {
+      method: 'POST',
+      body: JSON.stringify({ nickname }),
+    }),
+
+  adminRevokeBulkSkins: (payload: { nickname?: string; userId?: string }) =>
+    apiFetch<{
+      revokedSkins: SkinId[];
+      resetEquipped: boolean;
+      summary: AdminPlayerSkinsSummary;
+      historyEntry: SkinGrantHistoryRecord | null;
+    }>('/api/admin/skins/revoke-bulk', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  adminListSkinGrantHistory: (nickname?: string) =>
+    apiFetch<{ history: SkinGrantHistoryRecord[] }>(
+      nickname?.trim()
+        ? `/api/admin/skins/grant-history?nickname=${encodeURIComponent(nickname.trim())}`
+        : '/api/admin/skins/grant-history'
     ),
 
   adminListSuggestions: (params?: { search?: string; type?: string; status?: string }) => {

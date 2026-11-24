@@ -20,6 +20,7 @@ import {
   PromoCodeRecord,
   PromoCodeRedemptionRecord,
   SkinGiftItem,
+  SkinGrantHistoryRecord,
   SkinId,
   SoloGameMode,
   X1ResultRecord,
@@ -162,6 +163,7 @@ export interface DatabaseState {
   customCharacterConfigs: Record<string, CustomCharacterConfig>;
   customCharacterTextures: StoredCustomTexture[];
   notificationHistory: PlayerNotificationItem[];
+  skinGrantHistory: SkinGrantHistoryRecord[];
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -200,6 +202,7 @@ function createInitialState(): DatabaseState {
     customCharacterConfigs: {},
     customCharacterTextures: [],
     notificationHistory: [],
+    skinGrantHistory: [],
   };
 }
 

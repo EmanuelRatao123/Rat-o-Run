@@ -770,10 +770,10 @@ export async function repoRedeemPromoCode(params: {
         isSpecialUnlockableSkinId(promo.rewardSkinId) ||
         isLockedExclusiveSkinId(promo.rewardSkinId)
       ) {
-        const hasPerm = db.exclusiveSkinPermissions.some(
+        const existingPerm = db.exclusiveSkinPermissions.find(
           (p) => p.userId === params.user.id && p.skinId === promo.rewardSkinId && p.active
         );
-        if (!hasPerm) {
+        if (!existingPerm) {
           db.exclusiveSkinPermissions.push({
             id: `eperm_${generateToken(8)}`,
             userId: params.user.id,
@@ -785,6 +785,9 @@ export async function repoRedeemPromoCode(params: {
             revokedAt: null,
             updatedAt: nowIso,
           });
+        } else if (existingPerm.reason === 'admin_bulk_grant') {
+          existingPerm.reason = 'promo_code';
+          existingPerm.updatedAt = nowIso;
         }
       }
     }
@@ -923,8 +926,8 @@ export async function repoRedeemPromoCode(params: {
         isSpecialUnlockableSkinId(row.reward_skin_id) ||
         isLockedExclusiveSkinId(row.reward_skin_id)
       ) {
-        const permRes = await client.query(
-          `SELECT id FROM exclusive_skin_permissions WHERE user_id = $1 AND skin_id = $2 AND active = TRUE LIMIT 1`,
+        const permRes = await client.query<{ id: string; reason: string }>(
+          `SELECT id, reason FROM exclusive_skin_permissions WHERE user_id = $1 AND skin_id = $2 AND active = TRUE LIMIT 1`,
           [params.user.id, row.reward_skin_id]
         );
         if (permRes.rows.length === 0) {
@@ -932,6 +935,11 @@ export async function repoRedeemPromoCode(params: {
             `INSERT INTO exclusive_skin_permissions (id, user_id, skin_id, reason, rank_position, active, granted_at, revoked_at, updated_at)
              VALUES ($1, $2, $3, 'promo_code', NULL, TRUE, $4, NULL, $4)`,
             [`eperm_${generateToken(8)}`, params.user.id, row.reward_skin_id, nowIso]
+          );
+        } else if (permRes.rows[0].reason === 'admin_bulk_grant') {
+          await client.query(
+            `UPDATE exclusive_skin_permissions SET reason = 'promo_code', updated_at = $1 WHERE id = $2`,
+            [nowIso, permRes.rows[0].id]
           );
         }
       }

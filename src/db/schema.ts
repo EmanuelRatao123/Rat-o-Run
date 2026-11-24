@@ -386,7 +386,16 @@ export const exclusiveSkinPermissions = pgTable(
       .$type<ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId>()
       .notNull(),
     reason: text('reason')
-      .$type<'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule'>()
+      .$type<
+        | 'admin'
+        | 'top1'
+        | 'top2'
+        | 'top3'
+        | 'promo_code'
+        | 'admin_gift'
+        | 'admin_bulk_grant'
+        | 'special_rule'
+      >()
       .notNull(),
     rankPosition: integer('rank_position'),
     active: boolean('active').notNull().default(true),
@@ -540,4 +549,27 @@ export const notificationHistory = pgTable(
     createdAt: text('created_at').notNull(),
   },
   (table) => [index('notif_user_seen_idx').on(table.userId, table.seen, table.createdAt)]
+);
+
+export const skinGrantHistory = pgTable(
+  'skin_grant_history',
+  {
+    id: text('id').primaryKey(),
+    action: text('action').$type<'grant_all' | 'revoke_bulk'>().notNull(),
+    adminUserId: text('admin_user_id').notNull(),
+    adminNickname: text('admin_nickname').notNull(),
+    targetUserId: text('target_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    targetNickname: text('target_nickname').notNull(),
+    skinsAffected: jsonb('skins_affected').$type<SkinId[]>().notNull(),
+    skinsCount: integer('skins_count').notNull().default(0),
+    alreadyOwnedCount: integer('already_owned_count').notNull().default(0),
+    totalSkinsAfter: integer('total_skins_after').notNull().default(0),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('skin_grant_hist_created_idx').on(table.createdAt),
+    index('skin_grant_hist_target_idx').on(table.targetUserId, table.createdAt),
+  ]
 );
