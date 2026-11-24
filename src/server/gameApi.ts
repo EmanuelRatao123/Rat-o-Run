@@ -14,6 +14,9 @@ import {
   repoGetUnreadNotificationsForUser,
 } from './featureRepository.ts';
 import {
+  repoAdminGrantLockedSkin,
+  repoAdminListExclusiveSkinOwners,
+  repoAdminRevokeLockedSkin,
   repoCanUserEquipSkin,
   repoCloseGlobalPoll,
   repoCompleteMatchAndRecord,
@@ -497,4 +500,90 @@ export async function adminGiftSkinHandler(req: AuthedRequest, res: Response): P
   }
 
   res.status(201).json({ gift: result.gift });
+}
+
+export async function adminListExclusiveSkinOwnersHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const rawSkin = typeof req.query.skinId === 'string' ? req.query.skinId : undefined;
+  if (rawSkin && !isValidSkinId(rawSkin)) {
+    res.status(400).json({ error: 'Skin selecionada inválida.' });
+    return;
+  }
+  const owners = await repoAdminListExclusiveSkinOwners(rawSkin as SkinId | undefined);
+  res.json({ owners });
+}
+
+export async function adminGrantExclusiveSkinHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser!;
+  const { nickname, skinId } = req.body ?? {};
+  if (typeof nickname !== 'string' || !nickname.trim()) {
+    res.status(400).json({ error: 'Informe o nickname do jogador.' });
+    return;
+  }
+  if (!isValidSkinId(skinId)) {
+    res.status(400).json({ error: 'Skin selecionada inválida.' });
+    return;
+  }
+  const result = await repoAdminGrantLockedSkin({
+    adminNickname: admin.nickname,
+    targetNickname: nickname,
+    skinId,
+  });
+  switch (result.status) {
+    case 'invalid_skin':
+      res.status(403).json({
+        error: 'Esta seção gerencia apenas as skins exclusivas bloqueadas e Meu Ratão.',
+      });
+      return;
+    case 'not_found':
+      res.status(404).json({ error: `Jogador "${nickname.trim()}" não encontrado.` });
+      return;
+    case 'already_unlocked':
+      res.status(409).json({
+        error: `${result.targetNickname} já possui permissão ativa para "${result.skinName}".`,
+      });
+      return;
+    case 'ok':
+      res.status(201).json({ owner: result.owner });
+      return;
+  }
+}
+
+export async function adminRevokeExclusiveSkinHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const admin = req.adminUser || req.authUser!;
+  const { userId, skinId } = req.body ?? {};
+  if (typeof userId !== 'string' || !userId.trim()) {
+    res.status(400).json({ error: 'Jogador inválido.' });
+    return;
+  }
+  if (!isValidSkinId(skinId)) {
+    res.status(400).json({ error: 'Skin inválida.' });
+    return;
+  }
+  const result = await repoAdminRevokeLockedSkin({
+    adminNickname: admin.nickname,
+    userId: userId.trim(),
+    skinId,
+  });
+  if (result.status !== 'ok') {
+    if (result.status === 'invalid_skin') {
+      res.status(403).json({ error: 'Apenas skins exclusivas desbloqueáveis podem ser revogadas aqui.' });
+      return;
+    }
+    res.status(404).json({ error: 'Permissão ou jogador não encontrado.' });
+    return;
+  }
+  res.json({
+    ok: true,
+    targetNickname: result.targetNickname,
+    resetEquipped: result.resetEquipped,
+  });
 }

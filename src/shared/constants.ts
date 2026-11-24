@@ -18,7 +18,23 @@ export type ExclusiveSkinId =
 
 export type SpecialUnlockableSkinId = 'meu_ratao';
 
-export type SkinId = CommonSkinId | ExclusiveSkinId | SpecialUnlockableSkinId;
+export type LockedExclusiveSkinId =
+  | 'homem_aranha'
+  | 'jegue'
+  | 'capitao_america'
+  | 'pele'
+  | 'maradona'
+  | 'messi'
+  | 'neymar_atual'
+  | 'hacker'
+  | 'bandido'
+  | 'ghost_face';
+
+export type SkinId =
+  | CommonSkinId
+  | ExclusiveSkinId
+  | SpecialUnlockableSkinId
+  | LockedExclusiveSkinId;
 
 export type MapId = 'brasil' | 'tokyo' | 'futebol' | 'capivara';
 
@@ -194,10 +210,124 @@ export const SPECIAL_UNLOCKABLE_SKINS: SkinDefinition[] = [
   },
 ];
 
+export const LOCKED_EXCLUSIVE_SKINS: SkinDefinition[] = [
+  {
+    id: 'homem_aranha',
+    name: 'Homem-Aranha',
+    subtitle: 'Traje vermelho e azul com teias e olhos brancos',
+    primaryColor: '#dc2626',
+    accentColor: '#1d4ed8',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'jegue',
+    name: 'Jegue',
+    subtitle: 'Orelhas compridas, crina rústica e sela nordestina',
+    primaryColor: '#78716c',
+    accentColor: '#d97706',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'capitao_america',
+    name: 'Capitão América',
+    subtitle: 'Uniforme tático azul com estrela e escudo vibranium',
+    primaryColor: '#1e3a8a',
+    accentColor: '#dc2626',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'pele',
+    name: 'Pelé',
+    subtitle: 'Camisa amarela #10 clássica, meião alto e coroa do Rei',
+    primaryColor: '#facc15',
+    accentColor: '#16a34a',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'maradona',
+    name: 'Maradona',
+    subtitle: 'Camisa albiceleste listrada #10, cachos e faixa de capitão',
+    primaryColor: '#38bdf8',
+    accentColor: '#f8fafc',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'messi',
+    name: 'Messi',
+    subtitle: 'Uniforme albiceleste moderno #10 com chuteiras douradas',
+    primaryColor: '#0ea5e9',
+    accentColor: '#facc15',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'neymar_atual',
+    name: 'Neymar Atual',
+    subtitle: 'Visual atual com faixa, tatuagens nos braços e camisa #10',
+    primaryColor: '#f8fafc',
+    accentColor: '#0284c7',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'hacker',
+    name: 'Hacker',
+    subtitle: 'Capuz escuro, máscara neon verde e mochila cyber',
+    primaryColor: '#09090b',
+    accentColor: '#22c55e',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'bandido',
+    name: 'Bandido',
+    subtitle: 'Balaclava preta, camisa listrada e saco de loot nas costas',
+    primaryColor: '#1e293b',
+    accentColor: '#f59e0b',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+  {
+    id: 'ghost_face',
+    name: 'Ghost Face',
+    subtitle: 'Manto sombrio esvoaçante, capuz e máscara branca icônica',
+    primaryColor: '#0f172a',
+    accentColor: '#f8fafc',
+    badgeText: 'EXCLUSIVA',
+    isExclusive: true,
+    exclusiveRule: 'unlockable',
+    unlockConditionText: 'Bloqueada por padrão · Libere pelo Painel Admin ou Código Promocional',
+  },
+];
+
 export const ALL_SKINS: SkinDefinition[] = [
   ...SKINS,
   ...EXCLUSIVE_SKINS,
   ...SPECIAL_UNLOCKABLE_SKINS,
+  ...LOCKED_EXCLUSIVE_SKINS,
 ];
 export const COMMON_SKIN_IDS: CommonSkinId[] = SKINS.map((s) => s.id as CommonSkinId);
 export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map(
@@ -205,6 +335,9 @@ export const EXCLUSIVE_SKIN_IDS: ExclusiveSkinId[] = EXCLUSIVE_SKINS.map(
 );
 export const SPECIAL_UNLOCKABLE_SKIN_IDS: SpecialUnlockableSkinId[] = SPECIAL_UNLOCKABLE_SKINS.map(
   (s) => s.id as SpecialUnlockableSkinId
+);
+export const LOCKED_EXCLUSIVE_SKIN_IDS: LockedExclusiveSkinId[] = LOCKED_EXCLUSIVE_SKINS.map(
+  (s) => s.id as LockedExclusiveSkinId
 );
 export const ALL_SKIN_IDS: SkinId[] = ALL_SKINS.map((s) => s.id);
 
@@ -220,8 +353,16 @@ export function isSpecialUnlockableSkinId(val: unknown): val is SpecialUnlockabl
   return typeof val === 'string' && (SPECIAL_UNLOCKABLE_SKIN_IDS as string[]).includes(val);
 }
 
-export function isGiftableSkinId(val: unknown): val is CommonSkinId | SpecialUnlockableSkinId {
-  return isCommonSkinId(val) || isSpecialUnlockableSkinId(val);
+export function isLockedExclusiveSkinId(val: unknown): val is LockedExclusiveSkinId {
+  return typeof val === 'string' && (LOCKED_EXCLUSIVE_SKIN_IDS as string[]).includes(val);
+}
+
+export function isGiftableSkinId(
+  val: unknown
+): val is CommonSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId {
+  return (
+    isCommonSkinId(val) || isSpecialUnlockableSkinId(val) || isLockedExclusiveSkinId(val)
+  );
 }
 
 export function isValidAnySkinId(val: unknown): val is SkinId {
@@ -585,6 +726,7 @@ export interface AdminPlayerRecord {
   equippedSkin: SkinId;
   unlockedSkins: SkinId[];
   giftedSkins: SkinId[];
+  activeExclusivePermissions?: SkinId[];
   bestNoCoinTimeMs: number;
   bestDistance: number;
   bestScore: number;
@@ -594,6 +736,16 @@ export interface AdminPlayerRecord {
   createdAt: string;
   lastSeenAt: string;
   giftsHistory: SkinGiftItem[];
+}
+
+export interface AdminExclusiveSkinOwner {
+  id: string;
+  userId: string;
+  nickname: string;
+  skinId: SkinId;
+  reason: ExclusiveSkinPermissionRecord['reason'];
+  grantedAt: string;
+  equipped: boolean;
 }
 
 export interface MatchSummary {
@@ -747,7 +899,7 @@ export interface MultiplayerMatchRecord {
 export interface ExclusiveSkinPermissionRecord {
   id: string;
   userId: string;
-  skinId: ExclusiveSkinId | SpecialUnlockableSkinId;
+  skinId: ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId;
   reason: 'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule';
   rankPosition: number | null;
   active: boolean;

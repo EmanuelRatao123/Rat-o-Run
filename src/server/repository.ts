@@ -19,7 +19,7 @@ import {
 } from '../db/schema.ts';
 import {
   ALL_SKINS,
-  ALL_SKIN_IDS,
+  AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
   AdminStats,
@@ -27,7 +27,9 @@ import {
   CoinsLeaderboardEntry,
   ExclusiveSkinId,
   GlobalMessage,
+  LOCKED_EXCLUSIVE_SKIN_IDS,
   LeaderboardEntry,
+  LockedExclusiveSkinId,
   MapId,
   PlayerCompetitiveStats,
   PlayerWalletStats,
@@ -41,6 +43,7 @@ import {
   isCommonSkinId,
   isExclusiveSkinId,
   isGiftableSkinId,
+  isLockedExclusiveSkinId,
   isSpecialUnlockableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
@@ -71,7 +74,7 @@ function mapNeonUserRow(row: typeof users.$inferSelect): StoredUser {
     role: row.role,
     mustChangePassword: row.mustChangePassword,
     equippedSkin: row.equippedSkin,
-    unlockedSkins: Array.isArray(row.unlockedSkins) ? row.unlockedSkins : [...ALL_SKIN_IDS],
+    unlockedSkins: Array.isArray(row.unlockedSkins) ? row.unlockedSkins : [...COMMON_SKIN_IDS],
     giftedSkins: Array.isArray(row.giftedSkins) ? row.giftedSkins : [],
     bestNoCoinTimeMs: row.bestNoCoinTimeMs,
     bestDistance: row.bestDistance,
@@ -1530,7 +1533,7 @@ export async function repoGiftSkinToPlayer(params: {
       u.giftedSkins = nextGifted;
       u.unlockedSkins = nextUnlocked;
     }
-    if (isSpecialUnlockableSkinId(skinId)) {
+    if (isSpecialUnlockableSkinId(skinId) || isLockedExclusiveSkinId(skinId)) {
       const hasPerm = db.exclusiveSkinPermissions.some(
         (p) => p.userId === target.id && p.skinId === skinId && p.active
       );
@@ -1568,7 +1571,7 @@ export async function repoGiftSkinToPlayer(params: {
     })
     .where(eq(users.id, target.id));
 
-  if (isSpecialUnlockableSkinId(skinId)) {
+  if (isSpecialUnlockableSkinId(skinId) || isLockedExclusiveSkinId(skinId)) {
     const existingPerm = await db
       .select()
       .from(exclusiveSkinPermissions)
@@ -1650,6 +1653,9 @@ export async function repoSearchPlayersForAdmin(query: string): Promise<AdminPla
       equippedSkin: u.equippedSkin,
       unlockedSkins: u.unlockedSkins,
       giftedSkins: u.giftedSkins,
+      activeExclusivePermissions: db.exclusiveSkinPermissions
+        .filter((p) => p.userId === u.id && p.active)
+        .map((p) => p.skinId),
       bestNoCoinTimeMs: u.bestNoCoinTimeMs,
       bestDistance: u.bestDistance,
       bestScore: u.bestScore,
@@ -1682,12 +1688,32 @@ export async function repoSearchPlayersForAdmin(query: string): Promise<AdminPla
       .limit(25);
   }
 
-  const allGifts = await db.select().from(skinGifts).orderBy(desc(skinGifts.createdAt));
+  const matchedIds = matchedRows.map((r) => r.id);
+  const [allGifts, activePerms] = await Promise.all([
+    db.select().from(skinGifts).orderBy(desc(skinGifts.createdAt)),
+    matchedIds.length > 0
+      ? db
+          .select()
+          .from(exclusiveSkinPermissions)
+          .where(
+            and(
+              inArray(exclusiveSkinPermissions.userId, matchedIds),
+              eq(exclusiveSkinPermissions.active, true)
+            )
+          )
+      : Promise.resolve([]),
+  ]);
   const giftsByUser = new Map<string, SkinGiftItem[]>();
   for (const g of allGifts) {
     const list = giftsByUser.get(g.targetUserId);
     if (list) list.push(g);
     else giftsByUser.set(g.targetUserId, [g]);
+  }
+  const permsByUser = new Map<string, SkinId[]>();
+  for (const p of activePerms) {
+    const list = permsByUser.get(p.userId);
+    if (list) list.push(p.skinId);
+    else permsByUser.set(p.userId, [p.skinId]);
   }
 
   return matchedRows.map((row) => {
@@ -1699,6 +1725,7 @@ export async function repoSearchPlayersForAdmin(query: string): Promise<AdminPla
       equippedSkin: u.equippedSkin,
       unlockedSkins: u.unlockedSkins,
       giftedSkins: u.giftedSkins,
+      activeExclusivePermissions: permsByUser.get(u.id) || [],
       bestNoCoinTimeMs: u.bestNoCoinTimeMs,
       bestDistance: u.bestDistance,
       bestScore: u.bestScore,
@@ -1793,7 +1820,11 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
 
     // Revert equipped skin if a user holds an exclusive/unlockable skin without active permission
     for (const u of Object.values(db.users)) {
-      if (isExclusiveSkinId(u.equippedSkin) || isSpecialUnlockableSkinId(u.equippedSkin)) {
+      if (
+        isExclusiveSkinId(u.equippedSkin) ||
+        isSpecialUnlockableSkinId(u.equippedSkin) ||
+        isLockedExclusiveSkinId(u.equippedSkin)
+      ) {
         const hasPerm = db.exclusiveSkinPermissions.some(
           (p) => p.userId === u.id && p.skinId === u.equippedSkin && p.active
         );
@@ -1890,6 +1921,7 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
         'campeao_prata',
         'guerreiro_bronze',
         'meu_ratao',
+        ...LOCKED_EXCLUSIVE_SKIN_IDS,
       ])
     );
   const freshActivePerms = await db
@@ -2035,6 +2067,299 @@ export async function repoCanUserEquipSkin(user: StoredUser, skinId: SkinId): Pr
   if (skinId === 'ratao_rei' && user.role !== 'admin') return false;
   const allowed = await repoGetAllowedExclusiveSkinsForUser(user);
   return allowed.includes(skinId);
+}
+
+function isAdminManageableLockedSkin(
+  skinId: SkinId
+): skinId is LockedExclusiveSkinId | SpecialUnlockableSkinId {
+  return isLockedExclusiveSkinId(skinId) || isSpecialUnlockableSkinId(skinId);
+}
+
+export async function repoAdminListExclusiveSkinOwners(
+  skinId?: SkinId
+): Promise<AdminExclusiveSkinOwner[]> {
+  const filterSkin =
+    skinId && isAdminManageableLockedSkin(skinId) ? skinId : undefined;
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    return db.exclusiveSkinPermissions
+      .filter(
+        (p) =>
+          p.active &&
+          isAdminManageableLockedSkin(p.skinId) &&
+          (!filterSkin || p.skinId === filterSkin)
+      )
+      .map((p) => {
+        const u = db.users[p.userId];
+        return {
+          id: p.id,
+          userId: p.userId,
+          nickname: u?.nickname || 'Jogador removido',
+          skinId: p.skinId,
+          reason: p.reason,
+          grantedAt: p.grantedAt,
+          equipped: u?.equippedSkin === p.skinId,
+        };
+      })
+      .sort((a, b) => new Date(b.grantedAt).getTime() - new Date(a.grantedAt).getTime());
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const perms = await db
+    .select()
+    .from(exclusiveSkinPermissions)
+    .where(
+      filterSkin
+        ? and(
+            eq(exclusiveSkinPermissions.active, true),
+            eq(exclusiveSkinPermissions.skinId, filterSkin)
+          )
+        : eq(exclusiveSkinPermissions.active, true)
+    )
+    .orderBy(desc(exclusiveSkinPermissions.grantedAt));
+
+  const filtered = perms.filter((p) => isAdminManageableLockedSkin(p.skinId));
+  if (filtered.length === 0) return [];
+
+  const userIds = Array.from(new Set(filtered.map((p) => p.userId)));
+  const userRows = await db
+    .select({
+      id: users.id,
+      nickname: users.nickname,
+      equippedSkin: users.equippedSkin,
+    })
+    .from(users)
+    .where(inArray(users.id, userIds));
+  const userMap = new Map(userRows.map((u) => [u.id, u]));
+
+  return filtered.map((p) => {
+    const u = userMap.get(p.userId);
+    return {
+      id: p.id,
+      userId: p.userId,
+      nickname: u?.nickname || 'Jogador removido',
+      skinId: p.skinId,
+      reason: p.reason,
+      grantedAt: p.grantedAt,
+      equipped: u?.equippedSkin === p.skinId,
+    };
+  });
+}
+
+export async function repoAdminGrantLockedSkin(params: {
+  adminNickname: string;
+  targetNickname: string;
+  skinId: SkinId;
+}): Promise<
+  | { status: 'ok'; owner: AdminExclusiveSkinOwner }
+  | { status: 'invalid_skin' | 'not_found' }
+  | { status: 'already_unlocked'; targetNickname: string; skinName: string }
+> {
+  if (!isAdminManageableLockedSkin(params.skinId)) {
+    return { status: 'invalid_skin' };
+  }
+  const target = await repoFindUserByNickname(params.targetNickname);
+  if (!target) {
+    return { status: 'not_found' };
+  }
+
+  const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
+  const nowIso = new Date().toISOString();
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    const already = db.exclusiveSkinPermissions.some(
+      (p) => p.userId === target.id && p.skinId === params.skinId && p.active
+    );
+    if (already) {
+      return { status: 'already_unlocked', targetNickname: target.nickname, skinName };
+    }
+    const permId = `eperm_${generateToken(8)}`;
+    db.exclusiveSkinPermissions.push({
+      id: permId,
+      userId: target.id,
+      skinId: params.skinId,
+      reason: 'admin_gift',
+      rankPosition: null,
+      active: true,
+      grantedAt: nowIso,
+      revokedAt: null,
+      updatedAt: nowIso,
+    });
+    const u = db.users[target.id];
+    if (u && !u.unlockedSkins.includes(params.skinId)) {
+      u.unlockedSkins.push(params.skinId);
+    }
+    await addLocalAdminLog(
+      params.adminNickname,
+      'LIBERAR_SKIN_EXCLUSIVA',
+      `Liberou "${skinName}" (${params.skinId}) para ${target.nickname}`
+    );
+    saveLocalDb();
+    return {
+      status: 'ok',
+      owner: {
+        id: permId,
+        userId: target.id,
+        nickname: target.nickname,
+        skinId: params.skinId,
+        reason: 'admin_gift',
+        grantedAt: nowIso,
+        equipped: target.equippedSkin === params.skinId,
+      },
+    };
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const existing = await db
+    .select()
+    .from(exclusiveSkinPermissions)
+    .where(
+      and(
+        eq(exclusiveSkinPermissions.userId, target.id),
+        eq(exclusiveSkinPermissions.skinId, params.skinId),
+        eq(exclusiveSkinPermissions.active, true)
+      )
+    )
+    .limit(1);
+
+  if (existing.length > 0) {
+    return { status: 'already_unlocked', targetNickname: target.nickname, skinName };
+  }
+
+  const permId = `eperm_${generateToken(8)}`;
+  await db.insert(exclusiveSkinPermissions).values({
+    id: permId,
+    userId: target.id,
+    skinId: params.skinId,
+    reason: 'admin_gift',
+    rankPosition: null,
+    active: true,
+    grantedAt: nowIso,
+    revokedAt: null,
+    updatedAt: nowIso,
+  });
+
+  if (!target.unlockedSkins.includes(params.skinId)) {
+    await db
+      .update(users)
+      .set({ unlockedSkins: [...target.unlockedSkins, params.skinId] })
+      .where(eq(users.id, target.id));
+  }
+
+  await addNeonAdminLog(
+    params.adminNickname,
+    'LIBERAR_SKIN_EXCLUSIVA',
+    `Liberou "${skinName}" (${params.skinId}) para ${target.nickname}`
+  );
+
+  return {
+    status: 'ok',
+    owner: {
+      id: permId,
+      userId: target.id,
+      nickname: target.nickname,
+      skinId: params.skinId,
+      reason: 'admin_gift',
+      grantedAt: nowIso,
+      equipped: target.equippedSkin === params.skinId,
+    },
+  };
+}
+
+export async function repoAdminRevokeLockedSkin(params: {
+  adminNickname: string;
+  userId: string;
+  skinId: SkinId;
+}): Promise<
+  | { status: 'ok'; targetNickname: string; resetEquipped: boolean }
+  | { status: 'invalid_skin' | 'not_found' }
+> {
+  if (!isAdminManageableLockedSkin(params.skinId)) {
+    return { status: 'invalid_skin' };
+  }
+  const target = await repoFindUserById(params.userId);
+  if (!target) {
+    return { status: 'not_found' };
+  }
+
+  const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
+  const nowIso = new Date().toISOString();
+  const resetEquipped = target.equippedSkin === params.skinId;
+
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    let revokedAny = false;
+    for (const perm of db.exclusiveSkinPermissions) {
+      if (perm.userId === target.id && perm.skinId === params.skinId && perm.active) {
+        perm.active = false;
+        perm.revokedAt = nowIso;
+        perm.updatedAt = nowIso;
+        revokedAny = true;
+      }
+    }
+    const u = db.users[target.id];
+    if (u) {
+      u.unlockedSkins = u.unlockedSkins.filter((s) => s !== params.skinId);
+      u.giftedSkins = u.giftedSkins.filter((s) => s !== params.skinId);
+      if (u.equippedSkin === params.skinId) {
+        u.equippedSkin = 'ratao';
+      }
+    }
+    if (!revokedAny && !target.unlockedSkins.includes(params.skinId) && !resetEquipped) {
+      return { status: 'not_found' };
+    }
+    await addLocalAdminLog(
+      params.adminNickname,
+      'REVOGAR_SKIN_EXCLUSIVA',
+      `Removeu permissão da skin "${skinName}" (${params.skinId}) de ${target.nickname}`
+    );
+    saveLocalDb();
+    return { status: 'ok', targetNickname: target.nickname, resetEquipped };
+  }
+
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const updatedPerms = await db
+    .update(exclusiveSkinPermissions)
+    .set({ active: false, revokedAt: nowIso, updatedAt: nowIso })
+    .where(
+      and(
+        eq(exclusiveSkinPermissions.userId, target.id),
+        eq(exclusiveSkinPermissions.skinId, params.skinId),
+        eq(exclusiveSkinPermissions.active, true)
+      )
+    )
+    .returning({ id: exclusiveSkinPermissions.id });
+
+  const nextUnlocked = target.unlockedSkins.filter((s) => s !== params.skinId);
+  const nextGifted = target.giftedSkins.filter((s) => s !== params.skinId);
+  await db
+    .update(users)
+    .set({
+      unlockedSkins: nextUnlocked,
+      giftedSkins: nextGifted,
+      ...(resetEquipped ? { equippedSkin: 'ratao' } : {}),
+    })
+    .where(eq(users.id, target.id));
+
+  if (
+    updatedPerms.length === 0 &&
+    !target.unlockedSkins.includes(params.skinId) &&
+    !resetEquipped
+  ) {
+    return { status: 'not_found' };
+  }
+
+  await addNeonAdminLog(
+    params.adminNickname,
+    'REVOGAR_SKIN_EXCLUSIVA',
+    `Removeu permissão da skin "${skinName}" (${params.skinId}) de ${target.nickname}`
+  );
+  return { status: 'ok', targetNickname: target.nickname, resetEquipped };
 }
 
 export async function repoGetCompetitiveStatsForUser(userId: string): Promise<PlayerCompetitiveStats> {

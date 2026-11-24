@@ -1,4 +1,5 @@
 import {
+  AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
   AdminStats,
@@ -346,6 +347,28 @@ export const api = {
     apiFetch<{ alreadyUnlocked: boolean; allowedExclusiveSkins: SkinId[] }>(
       '/api/admin/unlock-king-skin',
       { method: 'POST' }
+    ),
+
+  adminListExclusiveSkinOwners: (skinId?: SkinId) =>
+    apiFetch<{ owners: AdminExclusiveSkinOwner[] }>(
+      skinId
+        ? `/api/admin/exclusive-skins/owners?skinId=${encodeURIComponent(skinId)}`
+        : '/api/admin/exclusive-skins/owners'
+    ),
+
+  adminGrantExclusiveSkin: (payload: { nickname: string; skinId: SkinId }) =>
+    apiFetch<{ owner: AdminExclusiveSkinOwner }>('/api/admin/exclusive-skins/grant', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
+  adminRevokeExclusiveSkin: (payload: { userId: string; skinId: SkinId }) =>
+    apiFetch<{ ok: boolean; targetNickname: string; resetEquipped: boolean }>(
+      '/api/admin/exclusive-skins/revoke',
+      {
+        method: 'POST',
+        body: JSON.stringify(payload),
+      }
     ),
 
   adminListSuggestions: (params?: { search?: string; type?: string; status?: string }) => {

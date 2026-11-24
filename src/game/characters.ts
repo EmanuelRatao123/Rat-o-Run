@@ -596,6 +596,311 @@ function buildCharacterBase(
       m.castShadow = false;
       auraParticles.push({ mesh: m, radius: 0.72, heightOffset: 0.45 + (i % 3) * 0.42, speed: 2.1, angle: (i / 5) * Math.PI * 2 });
     }
+  } else if (skin === 'homem_aranha') {
+    // Homem-Aranha: Red & Navy Suit with Web Accents, Chest Spider Emblem & White Lenses
+    v(torsoPivot, { w: 0.56, h: 0.34, d: 0.34, x: 0, y: 0.42, z: 0, color: 0xdc2626, roughness: 0.45 });
+    v(torsoPivot, { w: 0.54, h: 0.26, d: 0.33, x: 0, y: 0.14, z: 0, color: 0x1d4ed8, roughness: 0.52 });
+    v(torsoPivot, { w: 0.24, h: 0.26, d: 0.35, x: 0, y: 0.18, z: 0, color: 0xdc2626, roughness: 0.45 });
+    // Black Spider Chest & Back Emblems
+    v(torsoPivot, { w: 0.12, h: 0.16, d: 0.04, x: 0, y: 0.39, z: 0.18, color: 0x09090b, roughness: 0.3 });
+    v(torsoPivot, { w: 0.26, h: 0.04, d: 0.04, x: 0, y: 0.44, z: 0.18, color: 0x09090b, rz: 0.2 });
+    v(torsoPivot, { w: 0.26, h: 0.04, d: 0.04, x: 0, y: 0.34, z: 0.18, color: 0x09090b, rz: -0.2 });
+    v(torsoPivot, { w: 0.14, h: 0.16, d: 0.04, x: 0, y: 0.38, z: -0.18, color: 0xdc2626, roughness: 0.35 });
+    v(torsoPivot, { w: 0.58, h: 0.06, d: 0.36, x: 0, y: 0.04, z: 0, color: 0x0f172a, roughness: 0.4 });
+    // Red Masked Head & Signature White Triangular Spider Eyes
+    v(headPivot, { w: 0.48, h: 0.48, d: 0.48, x: 0, y: 0.25, z: 0, color: 0xdc2626, roughness: 0.45 });
+    v(headPivot, { w: 0.5, h: 0.03, d: 0.5, x: 0, y: 0.38, z: 0, color: 0x450a0a, roughness: 0.6 });
+    v(headPivot, { w: 0.03, h: 0.2, d: 0.5, x: 0, y: 0.39, z: 0, color: 0x450a0a, roughness: 0.6 });
+    v(headPivot, { w: 0.16, h: 0.14, d: 0.05, x: -0.12, y: 0.27, z: 0.245, color: 0x020617, rz: -0.22 });
+    v(headPivot, { w: 0.16, h: 0.14, d: 0.05, x: 0.12, y: 0.27, z: 0.245, color: 0x020617, rz: 0.22 });
+    v(headPivot, { w: 0.11, h: 0.09, d: 0.05, x: -0.12, y: 0.27, z: 0.255, color: 0xf8fafc, emissive: 0xe0f2fe, emissiveIntensity: 0.2, rz: -0.22 });
+    v(headPivot, { w: 0.11, h: 0.09, d: 0.05, x: 0.12, y: 0.27, z: 0.255, color: 0xf8fafc, emissive: 0xe0f2fe, emissiveIntensity: 0.2, rz: 0.22 });
+    // Arms (Red shoulders/gloves + Blue forearms + Web Shooters)
+    v(leftArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xdc2626, roughness: 0.45 });
+    v(leftArmPivot, { w: 0.17, h: 0.18, d: 0.17, x: 0, y: -0.27, z: 0, color: 0x1d4ed8, roughness: 0.52 });
+    v(leftArmPivot, { w: 0.19, h: 0.06, d: 0.19, x: 0, y: -0.36, z: 0, color: 0x09090b, metalness: 0.6 });
+    v(leftArmPivot, { w: 0.17, h: 0.11, d: 0.17, x: 0, y: -0.44, z: 0, color: 0xdc2626, roughness: 0.45 });
+    v(rightArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xdc2626, roughness: 0.45 });
+    v(rightArmPivot, { w: 0.17, h: 0.18, d: 0.17, x: 0, y: -0.27, z: 0, color: 0x1d4ed8, roughness: 0.52 });
+    v(rightArmPivot, { w: 0.19, h: 0.06, d: 0.19, x: 0, y: -0.36, z: 0, color: 0x09090b, metalness: 0.6 });
+    v(rightArmPivot, { w: 0.17, h: 0.11, d: 0.17, x: 0, y: -0.44, z: 0, color: 0xdc2626, roughness: 0.45 });
+    // Legs (Blue pants + Red boots)
+    v(leftLegPivot, { w: 0.2, h: 0.36, d: 0.2, x: 0, y: -0.22, z: 0, color: 0x1d4ed8, roughness: 0.55 });
+    v(leftLegPivot, { w: 0.22, h: 0.18, d: 0.3, x: 0, y: -0.53, z: 0.04, color: 0xdc2626, roughness: 0.42 });
+    v(leftLegPivot, { w: 0.23, h: 0.05, d: 0.31, x: 0, y: -0.63, z: 0.04, color: 0x0f172a, roughness: 0.4 });
+    v(rightLegPivot, { w: 0.2, h: 0.36, d: 0.2, x: 0, y: -0.22, z: 0, color: 0x1d4ed8, roughness: 0.55 });
+    v(rightLegPivot, { w: 0.22, h: 0.18, d: 0.3, x: 0, y: -0.53, z: 0.04, color: 0xdc2626, roughness: 0.42 });
+    v(rightLegPivot, { w: 0.23, h: 0.05, d: 0.31, x: 0, y: -0.63, z: 0.04, color: 0x0f172a, roughness: 0.4 });
+  } else if (skin === 'jegue') {
+    // Jegue: Burro Cinza-Marrom com Orelhas Longas, Crina Escura, Sela Nordestina e Cascos
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x78716c, roughness: 0.85 });
+    v(torsoPivot, { w: 0.36, h: 0.38, d: 0.04, x: 0, y: 0.28, z: 0.17, color: 0xd6d3d1, roughness: 0.85 });
+    // Colorful Saddle Poncho & Leather Strap
+    v(torsoPivot, { w: 0.62, h: 0.26, d: 0.4, x: 0, y: 0.42, z: -0.02, color: 0xd97706, roughness: 0.78 });
+    v(torsoPivot, { w: 0.63, h: 0.06, d: 0.41, x: 0, y: 0.32, z: -0.02, color: 0x16a34a, roughness: 0.78 });
+    v(torsoPivot, { w: 0.63, h: 0.05, d: 0.41, x: 0, y: 0.48, z: -0.02, color: 0xfacc15, roughness: 0.78 });
+    v(torsoPivot, { w: 0.58, h: 0.08, d: 0.36, x: 0, y: 0.1, z: 0, color: 0x451a03, roughness: 0.6 });
+    // Head, Long Muzzle, Teeth, Dark Mane & Long Donkey Ears
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.5, x: 0, y: 0.25, z: 0, color: 0x78716c, roughness: 0.84 });
+    v(headPivot, { w: 0.34, h: 0.24, d: 0.28, x: 0, y: 0.16, z: 0.32, color: 0xa8a29e, roughness: 0.8 });
+    v(headPivot, { w: 0.07, h: 0.06, d: 0.04, x: -0.09, y: 0.22, z: 0.46, color: 0x292524 });
+    v(headPivot, { w: 0.07, h: 0.06, d: 0.04, x: 0.09, y: 0.22, z: 0.46, color: 0x292524 });
+    v(headPivot, { w: 0.16, h: 0.07, d: 0.04, x: 0, y: 0.08, z: 0.45, color: 0xf8fafc, roughness: 0.25 });
+    // Dark spiky mane
+    v(headPivot, { w: 0.14, h: 0.16, d: 0.38, x: 0, y: 0.52, z: -0.08, color: 0x292524, roughness: 0.9 });
+    v(headPivot, { w: 0.12, h: 0.26, d: 0.14, x: 0, y: 0.3, z: -0.28, color: 0x292524, roughness: 0.9 });
+    // Tall upright donkey ears
+    v(headPivot, { w: 0.14, h: 0.44, d: 0.1, x: -0.18, y: 0.66, z: -0.02, color: 0x78716c, roughness: 0.82, rz: 0.16 });
+    v(headPivot, { w: 0.08, h: 0.34, d: 0.04, x: -0.18, y: 0.65, z: 0.03, color: 0xfda4af, roughness: 0.7, rz: 0.16 });
+    v(headPivot, { w: 0.14, h: 0.44, d: 0.1, x: 0.18, y: 0.66, z: -0.02, color: 0x78716c, roughness: 0.82, rz: -0.16 });
+    v(headPivot, { w: 0.08, h: 0.34, d: 0.04, x: 0.18, y: 0.65, z: 0.03, color: 0xfda4af, roughness: 0.7, rz: -0.16 });
+    addEyes(0.32, 0.26, 0x1c1917);
+    buildLimbs(0x78716c, 0x78716c, 0x78716c, 0x1c1917, 0x44403c, 0.84);
+    tailPivot = new THREE.Group();
+    tailPivot.position.set(0, 0.14, -0.19);
+    torsoPivot.add(tailPivot);
+    v(tailPivot, { w: 0.07, h: 0.07, d: 0.38, x: 0, y: -0.04, z: -0.18, color: 0x78716c, roughness: 0.85, rx: -0.35 });
+    v(tailPivot, { w: 0.12, h: 0.12, d: 0.16, x: 0, y: -0.16, z: -0.4, color: 0x292524, roughness: 0.9, rx: -0.45 });
+  } else if (skin === 'capitao_america') {
+    // Capitão América: Tactical Navy Armor, Chest Star, Red/White Stripes, Winged Helmet & Shield
+    v(torsoPivot, { w: 0.58, h: 0.34, d: 0.35, x: 0, y: 0.43, z: 0, color: 0x1e3a8a, roughness: 0.5 });
+    v(torsoPivot, { w: 0.56, h: 0.22, d: 0.34, x: 0, y: 0.17, z: 0, color: 0xf8fafc, roughness: 0.55 });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.35, x: -0.16, y: 0.17, z: 0, color: 0xdc2626, roughness: 0.55 });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.35, x: 0.16, y: 0.17, z: 0, color: 0xdc2626, roughness: 0.55 });
+    // White Chest Star Emblem
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.04, x: 0, y: 0.42, z: 0.185, color: 0xf8fafc, emissive: 0x94a3b8, emissiveIntensity: 0.15, rz: 0.78 });
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.04, x: 0, y: 0.42, z: 0.185, color: 0xf8fafc, emissive: 0x94a3b8, emissiveIntensity: 0.15 });
+    // Tactical Belt
+    v(torsoPivot, { w: 0.6, h: 0.08, d: 0.37, x: 0, y: 0.05, z: 0, color: 0x78350f, roughness: 0.55 });
+    v(torsoPivot, { w: 0.12, h: 0.09, d: 0.04, x: 0, y: 0.05, z: 0.19, color: 0xfacc15, metalness: 0.85 });
+    // Head + Winged Blue Helmet + Exposed Jaw
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xf3cfb6, roughness: 0.7 });
+    v(headPivot, { w: 0.5, h: 0.3, d: 0.5, x: 0, y: 0.35, z: 0, color: 0x1e3a8a, roughness: 0.42 });
+    v(headPivot, { w: 0.5, h: 0.26, d: 0.16, x: 0, y: 0.14, z: -0.17, color: 0x1e3a8a, roughness: 0.42 });
+    v(headPivot, { w: 0.1, h: 0.11, d: 0.04, x: 0, y: 0.4, z: 0.255, color: 0xf8fafc }); // 'A' Crest
+    v(headPivot, { w: 0.05, h: 0.14, d: 0.1, x: -0.27, y: 0.36, z: -0.02, color: 0xf8fafc, rx: -0.3 });
+    v(headPivot, { w: 0.05, h: 0.14, d: 0.1, x: 0.27, y: 0.36, z: -0.02, color: 0xf8fafc, rx: -0.3 });
+    addEyes(0.26, 0.25, 0x2563eb);
+    buildLimbs(0xf3cfb6, 0x1e3a8a, 0x1e3a8a, 0xb91c1c, 0x0f172a, 0.48);
+    // Red Tactical Gloves
+    v(leftArmPivot, { w: 0.17, h: 0.14, d: 0.17, x: 0, y: -0.4, z: 0, color: 0xb91c1c, roughness: 0.45 });
+    v(rightArmPivot, { w: 0.17, h: 0.14, d: 0.17, x: 0, y: -0.4, z: 0, color: 0xb91c1c, roughness: 0.45 });
+    // Iconic Vibranium Shield on Left Arm
+    v(leftArmPivot, { w: 0.06, h: 0.62, d: 0.62, x: -0.14, y: -0.28, z: 0.04, color: 0xdc2626, metalness: 0.7, roughness: 0.22 });
+    v(leftArmPivot, { w: 0.07, h: 0.48, d: 0.48, x: -0.145, y: -0.28, z: 0.04, color: 0xf8fafc, metalness: 0.72, roughness: 0.2 });
+    v(leftArmPivot, { w: 0.08, h: 0.34, d: 0.34, x: -0.15, y: -0.28, z: 0.04, color: 0xdc2626, metalness: 0.7, roughness: 0.22 });
+    v(leftArmPivot, { w: 0.09, h: 0.2, d: 0.2, x: -0.155, y: -0.28, z: 0.04, color: 0x1d4ed8, metalness: 0.75, roughness: 0.2 });
+    v(leftArmPivot, { w: 0.1, h: 0.11, d: 0.11, x: -0.16, y: -0.28, z: 0.04, color: 0xf8fafc, metalness: 0.6, roughness: 0.2 });
+  } else if (skin === 'pele') {
+    // Pelé: Camisa Amarela Clássica #10, Gola Verde, Calção Azul, Meião Branco & Coroa do Rei do Futebol
+    v(torsoPivot, { w: 0.55, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xfacc15, roughness: 0.65 });
+    v(torsoPivot, { w: 0.4, h: 0.09, d: 0.34, x: 0, y: 0.56, z: 0, color: 0x16a34a, roughness: 0.6 }); // Green collar
+    // Green #10 Front & Back
+    v(torsoPivot, { w: 0.05, h: 0.22, d: 0.03, x: -0.09, y: 0.3, z: 0.17, color: 0x15803d });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.03, x: 0.07, y: 0.3, z: 0.17, color: 0x15803d });
+    v(torsoPivot, { w: 0.05, h: 0.12, d: 0.04, x: 0.07, y: 0.3, z: 0.175, color: 0xfacc15 });
+    v(torsoPivot, { w: 0.05, h: 0.24, d: 0.03, x: -0.09, y: 0.3, z: -0.17, color: 0x15803d });
+    v(torsoPivot, { w: 0.13, h: 0.24, d: 0.03, x: 0.07, y: 0.3, z: -0.17, color: 0x15803d });
+    v(torsoPivot, { w: 0.05, h: 0.13, d: 0.04, x: 0.07, y: 0.3, z: -0.175, color: 0xfacc15 });
+    // Head + Classic Curly Hair + King of Football Mini Gold Crown
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0x7c4a2d, roughness: 0.72 });
+    v(headPivot, { w: 0.52, h: 0.14, d: 0.52, x: 0, y: 0.49, z: -0.01, color: 0x111827, roughness: 0.88 });
+    v(headPivot, { w: 0.5, h: 0.22, d: 0.14, x: 0, y: 0.36, z: -0.2, color: 0x111827, roughness: 0.88 });
+    // Subtle Golden King Crown
+    v(headPivot, { w: 0.32, h: 0.07, d: 0.32, x: 0, y: 0.59, z: 0.02, color: 0xfacc15, metalness: 0.9, roughness: 0.18 });
+    v(headPivot, { w: 0.08, h: 0.09, d: 0.08, x: 0, y: 0.66, z: 0.13, color: 0xfde047, metalness: 0.92 });
+    v(headPivot, { w: 0.07, h: 0.07, d: 0.07, x: -0.11, y: 0.65, z: 0.12, color: 0xfacc15, metalness: 0.9 });
+    v(headPivot, { w: 0.07, h: 0.07, d: 0.07, x: 0.11, y: 0.65, z: 0.12, color: 0xfacc15, metalness: 0.9 });
+    addEyes(0.27, 0.25, 0x1c1917);
+    // Arms (Yellow jersey sleeves + green cuffs + warm dark brown arms)
+    v(leftArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xfacc15, roughness: 0.65 });
+    v(leftArmPivot, { w: 0.195, h: 0.05, d: 0.195, x: 0, y: -0.21, z: 0, color: 0x16a34a });
+    v(leftArmPivot, { w: 0.16, h: 0.25, d: 0.16, x: 0, y: -0.35, z: 0, color: 0x7c4a2d, roughness: 0.72 });
+    v(rightArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xfacc15, roughness: 0.65 });
+    v(rightArmPivot, { w: 0.195, h: 0.05, d: 0.195, x: 0, y: -0.21, z: 0, color: 0x16a34a });
+    v(rightArmPivot, { w: 0.16, h: 0.25, d: 0.16, x: 0, y: -0.35, z: 0, color: 0x7c4a2d, roughness: 0.72 });
+    // Legs (Royal blue shorts + brown knee + tall white socks + classic black cleats)
+    v(leftLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x1d4ed8, roughness: 0.7 });
+    v(leftLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0x7c4a2d });
+    v(leftLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(leftLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x0f172a, roughness: 0.4 });
+    v(rightLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x1d4ed8, roughness: 0.7 });
+    v(rightLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0x7c4a2d });
+    v(rightLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(rightLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x0f172a, roughness: 0.4 });
+  } else if (skin === 'maradona') {
+    // Maradona: Camisa Listrada Albiceleste #10, Cabelo Cacheado Volumoso e Faixa de Capitão
+    v(torsoPivot, { w: 0.56, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xf8fafc, roughness: 0.62 });
+    v(torsoPivot, { w: 0.14, h: 0.58, d: 0.335, x: -0.17, y: 0.3, z: 0, color: 0x38bdf8, roughness: 0.6 });
+    v(torsoPivot, { w: 0.14, h: 0.58, d: 0.335, x: 0.17, y: 0.3, z: 0, color: 0x38bdf8, roughness: 0.6 });
+    v(torsoPivot, { w: 0.12, h: 0.58, d: 0.335, x: 0, y: 0.3, z: 0, color: 0x38bdf8, roughness: 0.6 });
+    // Navy #10
+    v(torsoPivot, { w: 0.05, h: 0.22, d: 0.03, x: -0.09, y: 0.3, z: -0.175, color: 0x0f172a });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.03, x: 0.07, y: 0.3, z: -0.175, color: 0x0f172a });
+    v(torsoPivot, { w: 0.05, h: 0.12, d: 0.04, x: 0.07, y: 0.3, z: -0.18, color: 0xf8fafc });
+    v(torsoPivot, { w: 0.08, h: 0.14, d: 0.03, x: 0.16, y: 0.44, z: 0.175, color: 0xfacc15, metalness: 0.6 });
+    // Head + Signature Voluminous 80s Curly Hair
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xdba885, roughness: 0.72 });
+    const curls = [
+      [-0.18, 0.52, 0.06], [0, 0.54, 0.08], [0.18, 0.52, 0.06],
+      [-0.22, 0.46, -0.1], [0.22, 0.46, -0.1], [0, 0.52, -0.14],
+      [-0.25, 0.28, -0.14], [0.25, 0.28, -0.14], [0, 0.3, -0.24],
+    ];
+    for (const [cx, cy, cz] of curls) {
+      v(headPivot, { w: 0.22, h: 0.2, d: 0.22, x: cx, y: cy, z: cz, color: 0x18181b, roughness: 0.9 });
+    }
+    addEyes(0.27, 0.25, 0x292524);
+    // Arms (White sleeves + Captain Armband on Left Arm)
+    v(leftArmPivot, { w: 0.19, h: 0.24, d: 0.19, x: 0, y: -0.1, z: 0, color: 0xf8fafc, roughness: 0.62 });
+    v(leftArmPivot, { w: 0.2, h: 0.08, d: 0.2, x: 0, y: -0.14, z: 0, color: 0xfacc15, roughness: 0.4 });
+    v(leftArmPivot, { w: 0.16, h: 0.24, d: 0.16, x: 0, y: -0.34, z: 0, color: 0xdba885, roughness: 0.72 });
+    v(rightArmPivot, { w: 0.19, h: 0.24, d: 0.19, x: 0, y: -0.1, z: 0, color: 0x38bdf8, roughness: 0.62 });
+    v(rightArmPivot, { w: 0.16, h: 0.24, d: 0.16, x: 0, y: -0.34, z: 0, color: 0xdba885, roughness: 0.72 });
+    // Legs (Black shorts + White socks + Black classic cleats)
+    v(leftLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x0f172a, roughness: 0.72 });
+    v(leftLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xdba885 });
+    v(leftLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(leftLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x020617, roughness: 0.4 });
+    v(rightLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x0f172a, roughness: 0.72 });
+    v(rightLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xdba885 });
+    v(rightLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(rightLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x020617, roughness: 0.4 });
+  } else if (skin === 'messi') {
+    // Messi: Uniforme Albiceleste Moderno #10 Dourado, Barba Aparada & Chuteiras Douradas
+    v(torsoPivot, { w: 0.55, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xf8fafc, roughness: 0.58 });
+    v(torsoPivot, { w: 0.15, h: 0.58, d: 0.335, x: -0.17, y: 0.3, z: 0, color: 0x0ea5e9, roughness: 0.55 });
+    v(torsoPivot, { w: 0.15, h: 0.58, d: 0.335, x: 0.17, y: 0.3, z: 0, color: 0x0ea5e9, roughness: 0.55 });
+    v(torsoPivot, { w: 0.12, h: 0.58, d: 0.335, x: 0, y: 0.3, z: 0, color: 0x0ea5e9, roughness: 0.55 });
+    // Gold Champion Patch & #10
+    v(torsoPivot, { w: 0.1, h: 0.12, d: 0.03, x: 0, y: 0.44, z: 0.175, color: 0xfacc15, metalness: 0.82, roughness: 0.2 });
+    v(torsoPivot, { w: 0.05, h: 0.22, d: 0.03, x: -0.09, y: 0.28, z: -0.175, color: 0xfacc15, metalness: 0.7 });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.03, x: 0.07, y: 0.28, z: -0.175, color: 0xfacc15, metalness: 0.7 });
+    v(torsoPivot, { w: 0.05, h: 0.12, d: 0.04, x: 0.07, y: 0.28, z: -0.18, color: 0x0ea5e9 });
+    // Head + Styled Brown Hair + Trimmed Beard
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xebc09e, roughness: 0.7 });
+    v(headPivot, { w: 0.5, h: 0.13, d: 0.5, x: 0, y: 0.49, z: 0, color: 0x451a03, roughness: 0.65 });
+    v(headPivot, { w: 0.32, h: 0.09, d: 0.16, x: 0.04, y: 0.54, z: 0.12, color: 0x572408, rz: -0.12 });
+    v(headPivot, { w: 0.49, h: 0.22, d: 0.12, x: 0, y: 0.36, z: -0.2, color: 0x451a03, roughness: 0.7 });
+    // Trimmed Beard & Mustache
+    v(headPivot, { w: 0.46, h: 0.13, d: 0.14, x: 0, y: 0.08, z: 0.2, color: 0x451a03, roughness: 0.78 });
+    v(headPivot, { w: 0.22, h: 0.05, d: 0.04, x: 0, y: 0.16, z: 0.245, color: 0x451a03 });
+    addEyes(0.28, 0.25, 0x3f2e21);
+    buildLimbs(0xebc09e, 0x0ea5e9, 0x0f172a, 0xfacc15, 0xf8fafc, 0.58);
+    // Gold Metallic Boots Upgrade
+    v(leftLegPivot, { w: 0.23, h: 0.16, d: 0.31, x: 0, y: -0.54, z: 0.04, color: 0xfacc15, metalness: 0.88, roughness: 0.2 });
+    v(rightLegPivot, { w: 0.23, h: 0.16, d: 0.31, x: 0, y: -0.54, z: 0.04, color: 0xfacc15, metalness: 0.88, roughness: 0.2 });
+  } else if (skin === 'neymar_atual') {
+    // Neymar Atual: Camisa Branca/Azul #10 Moderna, Faixa na Testa, Cabelo Descolorido e Tatuagens
+    v(torsoPivot, { w: 0.54, h: 0.58, d: 0.32, x: 0, y: 0.3, z: 0, color: 0xf8fafc, roughness: 0.56 });
+    v(torsoPivot, { w: 0.55, h: 0.16, d: 0.33, x: 0, y: 0.5, z: 0, color: 0x0284c7, roughness: 0.52 });
+    v(torsoPivot, { w: 0.18, h: 0.06, d: 0.34, x: 0, y: 0.38, z: 0, color: 0xfacc15, metalness: 0.5 });
+    // #10 on back
+    v(torsoPivot, { w: 0.05, h: 0.22, d: 0.03, x: -0.09, y: 0.26, z: -0.175, color: 0x0284c7 });
+    v(torsoPivot, { w: 0.12, h: 0.22, d: 0.03, x: 0.07, y: 0.26, z: -0.175, color: 0x0284c7 });
+    v(torsoPivot, { w: 0.05, h: 0.12, d: 0.04, x: 0.07, y: 0.26, z: -0.18, color: 0xf8fafc });
+    // Head + White/Gold Headband + Bleached Hair + Goatee
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0xd8a47f, roughness: 0.68 });
+    v(headPivot, { w: 0.51, h: 0.09, d: 0.51, x: 0, y: 0.42, z: 0, color: 0xf8fafc, roughness: 0.45 }); // Headband
+    v(headPivot, { w: 0.1, h: 0.06, d: 0.04, x: 0, y: 0.42, z: 0.255, color: 0xfacc15, metalness: 0.7 });
+    v(headPivot, { w: 0.46, h: 0.12, d: 0.46, x: 0, y: 0.51, z: 0, color: 0xfde047, roughness: 0.72 }); // Bleached top
+    v(headPivot, { w: 0.49, h: 0.16, d: 0.12, x: 0, y: 0.32, z: -0.2, color: 0x18181b, roughness: 0.75 });
+    v(headPivot, { w: 0.16, h: 0.09, d: 0.05, x: 0, y: 0.07, z: 0.23, color: 0x18181b }); // Goatee
+    addEyes(0.28, 0.25, 0x3b2f2f);
+    // Arms with Tattooed Sleeves & Wrist Tape
+    v(leftArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xf8fafc, roughness: 0.55 });
+    v(leftArmPivot, { w: 0.165, h: 0.2, d: 0.165, x: 0, y: -0.29, z: 0, color: 0x334155, roughness: 0.7 }); // Tattoo sleeve
+    v(leftArmPivot, { w: 0.175, h: 0.06, d: 0.175, x: 0, y: -0.4, z: 0, color: 0xf8fafc });
+    v(leftArmPivot, { w: 0.16, h: 0.08, d: 0.16, x: 0, y: -0.46, z: 0, color: 0xd8a47f });
+    v(rightArmPivot, { w: 0.19, h: 0.22, d: 0.19, x: 0, y: -0.09, z: 0, color: 0xf8fafc, roughness: 0.55 });
+    v(rightArmPivot, { w: 0.165, h: 0.2, d: 0.165, x: 0, y: -0.29, z: 0, color: 0x334155, roughness: 0.7 });
+    v(rightArmPivot, { w: 0.175, h: 0.06, d: 0.175, x: 0, y: -0.4, z: 0, color: 0xf8fafc });
+    v(rightArmPivot, { w: 0.16, h: 0.08, d: 0.16, x: 0, y: -0.46, z: 0, color: 0xd8a47f });
+    // Legs (Dark shorts + White socks + Neon Lime/Gold Boots)
+    v(leftLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x0f172a, roughness: 0.7 });
+    v(leftLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xd8a47f });
+    v(leftLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(leftLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x84cc16, roughness: 0.35 });
+    v(rightLegPivot, { w: 0.22, h: 0.24, d: 0.22, x: 0, y: -0.15, z: 0, color: 0x0f172a, roughness: 0.7 });
+    v(rightLegPivot, { w: 0.18, h: 0.08, d: 0.18, x: 0, y: -0.31, z: 0, color: 0xd8a47f });
+    v(rightLegPivot, { w: 0.19, h: 0.14, d: 0.19, x: 0, y: -0.41, z: 0, color: 0xf8fafc });
+    v(rightLegPivot, { w: 0.22, h: 0.14, d: 0.3, x: 0, y: -0.55, z: 0.04, color: 0x84cc16, roughness: 0.35 });
+  } else if (skin === 'hacker') {
+    // Hacker: Capuz Sombrio, Máscara Matrix Neon Verde, Mochila Cyber e Cubos de Dados Orbitando
+    v(torsoPivot, { w: 0.58, h: 0.6, d: 0.36, x: 0, y: 0.3, z: 0, color: 0x09090b, roughness: 0.78 });
+    v(torsoPivot, { w: 0.6, h: 0.12, d: 0.38, x: 0, y: 0.56, z: -0.02, color: 0x18181b, roughness: 0.8 }); // Hood collar
+    // Neon green matrix chest circuit + hoodie strings
+    v(torsoPivot, { w: 0.26, h: 0.06, d: 0.04, x: 0, y: 0.34, z: 0.19, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.6 });
+    v(torsoPivot, { w: 0.04, h: 0.22, d: 0.04, x: -0.09, y: 0.44, z: 0.19, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.1 });
+    v(torsoPivot, { w: 0.04, h: 0.22, d: 0.04, x: 0.09, y: 0.44, z: 0.19, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.1 });
+    // Cyber Laptop Backpack
+    v(torsoPivot, { w: 0.42, h: 0.46, d: 0.18, x: 0, y: 0.31, z: -0.25, color: 0x18181b, roughness: 0.55 });
+    v(torsoPivot, { w: 0.32, h: 0.06, d: 0.04, x: 0, y: 0.42, z: -0.35, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.8 });
+    // Deep Dark Hood + Glowing Neon Hacker Mask
+    v(headPivot, { w: 0.56, h: 0.54, d: 0.54, x: 0, y: 0.27, z: -0.02, color: 0x09090b, roughness: 0.82 });
+    v(headPivot, { w: 0.44, h: 0.42, d: 0.08, x: 0, y: 0.25, z: 0.24, color: 0x18181b, roughness: 0.35 });
+    v(headPivot, { w: 0.14, h: 0.06, d: 0.04, x: -0.11, y: 0.31, z: 0.28, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 2.0, rz: -0.18 });
+    v(headPivot, { w: 0.14, h: 0.06, d: 0.04, x: 0.11, y: 0.31, z: 0.28, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 2.0, rz: 0.18 });
+    v(headPivot, { w: 0.22, h: 0.04, d: 0.04, x: 0, y: 0.14, z: 0.28, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.7 });
+    buildLimbs(0x18181b, 0x09090b, 0x18181b, 0x09090b, 0x22c55e, 0.78);
+    // Orbiting Neon Data Bits
+    auraParticles = [];
+    for (let i = 0; i < 4; i++) {
+      const m = v(root, { w: 0.08, h: 0.08, d: 0.08, x: 0, y: 1.0, z: 0, color: 0x22c55e, emissive: 0x22c55e, emissiveIntensity: 1.9 });
+      m.castShadow = false;
+      auraParticles.push({ mesh: m, radius: 0.72, heightOffset: 0.5 + (i % 2) * 0.55, speed: 2.4, angle: (i / 4) * Math.PI * 2 });
+    }
+  } else if (skin === 'bandido') {
+    // Bandido: Camisa Listrada P&B, Balaclava Preta, Gorro & Saco de Dinheiro nas Costas
+    v(torsoPivot, { w: 0.55, h: 0.58, d: 0.33, x: 0, y: 0.3, z: 0, color: 0xf8fafc, roughness: 0.72 });
+    v(torsoPivot, { w: 0.56, h: 0.1, d: 0.34, x: 0, y: 0.5, z: 0, color: 0x0f172a, roughness: 0.75 });
+    v(torsoPivot, { w: 0.56, h: 0.1, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x0f172a, roughness: 0.75 });
+    v(torsoPivot, { w: 0.56, h: 0.1, d: 0.34, x: 0, y: 0.1, z: 0, color: 0x0f172a, roughness: 0.75 });
+    // Brown Heist Belt
+    v(torsoPivot, { w: 0.58, h: 0.08, d: 0.36, x: 0, y: 0.04, z: 0, color: 0x78350f, roughness: 0.6 });
+    v(torsoPivot, { w: 0.1, h: 0.09, d: 0.04, x: 0, y: 0.04, z: 0.185, color: 0xfacc15, metalness: 0.8 });
+    // Loot Sack on Back with Dollar Sign & Gold Coins Peeking Out
+    v(torsoPivot, { w: 0.44, h: 0.46, d: 0.28, x: 0, y: 0.31, z: -0.29, color: 0xd6d3d1, roughness: 0.88 });
+    v(torsoPivot, { w: 0.16, h: 0.16, d: 0.04, x: 0, y: 0.3, z: -0.44, color: 0x16a34a }); // $ badge
+    v(torsoPivot, { w: 0.2, h: 0.09, d: 0.16, x: 0, y: 0.56, z: -0.28, color: 0xfacc15, metalness: 0.85 }); // Gold loot top
+    // Head + Black Knit Beanie + Balaclava Mask
+    v(headPivot, { w: 0.48, h: 0.46, d: 0.48, x: 0, y: 0.24, z: 0, color: 0x09090b, roughness: 0.84 });
+    v(headPivot, { w: 0.38, h: 0.14, d: 0.06, x: 0, y: 0.27, z: 0.23, color: 0xe8be9e, roughness: 0.7 }); // Eye slit
+    v(headPivot, { w: 0.52, h: 0.16, d: 0.52, x: 0, y: 0.49, z: 0, color: 0x1e293b, roughness: 0.85 }); // Knit beanie
+    v(headPivot, { w: 0.53, h: 0.08, d: 0.53, x: 0, y: 0.42, z: 0, color: 0x0f172a, roughness: 0.85 });
+    addEyes(0.28, 0.26, 0x0f172a);
+    buildLimbs(0x09090b, 0x0f172a, 0x1e293b, 0x020617, 0x475569, 0.78);
+  } else if (skin === 'ghost_face') {
+    // Ghost Face: Manto Sombrio, Capuz Longo, Máscara Branca Icônica & Lâmina Metálica
+    v(torsoPivot, { w: 0.6, h: 0.64, d: 0.38, x: 0, y: 0.29, z: 0, color: 0x09090b, roughness: 0.9 });
+    v(torsoPivot, { w: 0.56, h: 0.24, d: 0.36, x: 0, y: -0.02, z: 0, color: 0x18181b, roughness: 0.9 }); // Draped robe skirt
+    // Deep Black Reaper Hood + Elongated White Mask
+    v(headPivot, { w: 0.58, h: 0.56, d: 0.56, x: 0, y: 0.28, z: -0.02, color: 0x020617, roughness: 0.92 });
+    v(headPivot, { w: 0.4, h: 0.48, d: 0.1, x: 0, y: 0.23, z: 0.24, color: 0xf8fafc, roughness: 0.3 });
+    v(headPivot, { w: 0.28, h: 0.12, d: 0.1, x: 0, y: 0.04, z: 0.24, color: 0xf8fafc, roughness: 0.3 }); // Elongated chin
+    // Hollow Ghost Eyes & Iconic Screaming Mouth
+    v(headPivot, { w: 0.12, h: 0.12, d: 0.05, x: -0.1, y: 0.3, z: 0.285, color: 0x020617, rz: 0.35 });
+    v(headPivot, { w: 0.12, h: 0.12, d: 0.05, x: 0.1, y: 0.3, z: 0.285, color: 0x020617, rz: -0.35 });
+    v(headPivot, { w: 0.06, h: 0.06, d: 0.05, x: 0, y: 0.2, z: 0.285, color: 0x020617 }); // Nose
+    v(headPivot, { w: 0.12, h: 0.2, d: 0.05, x: 0, y: 0.06, z: 0.285, color: 0x020617 }); // Screaming oval mouth
+    // Wide Draped Robe Sleeves & Black Gloves
+    v(leftArmPivot, { w: 0.22, h: 0.38, d: 0.24, x: 0, y: -0.18, z: 0, color: 0x09090b, roughness: 0.9 });
+    v(leftArmPivot, { w: 0.14, h: 0.12, d: 0.14, x: 0, y: -0.43, z: 0, color: 0x020617, roughness: 0.7 });
+    v(rightArmPivot, { w: 0.22, h: 0.38, d: 0.24, x: 0, y: -0.18, z: 0, color: 0x09090b, roughness: 0.9 });
+    v(rightArmPivot, { w: 0.14, h: 0.12, d: 0.14, x: 0, y: -0.43, z: 0, color: 0x020617, roughness: 0.7 });
+    // Shiny Silver Prop Blade in Right Hand
+    v(rightArmPivot, { w: 0.06, h: 0.08, d: 0.14, x: 0, y: -0.46, z: 0.08, color: 0x18181b, roughness: 0.6 });
+    v(rightArmPivot, { w: 0.04, h: 0.09, d: 0.36, x: 0, y: -0.44, z: 0.31, color: 0xe2e8f0, metalness: 0.92, roughness: 0.15 });
+    // Dark Robe Lower Legs & Boots
+    v(leftLegPivot, { w: 0.21, h: 0.4, d: 0.21, x: 0, y: -0.22, z: 0, color: 0x09090b, roughness: 0.9 });
+    v(leftLegPivot, { w: 0.22, h: 0.16, d: 0.3, x: 0, y: -0.54, z: 0.04, color: 0x020617, roughness: 0.5 });
+    v(rightLegPivot, { w: 0.21, h: 0.4, d: 0.21, x: 0, y: -0.22, z: 0, color: 0x09090b, roughness: 0.9 });
+    v(rightLegPivot, { w: 0.22, h: 0.16, d: 0.3, x: 0, y: -0.54, z: 0.04, color: 0x020617, roughness: 0.5 });
+    // Flowing Tattered Reaper Cape
+    capePivot = new THREE.Group();
+    capePivot.position.set(0, 0.58, -0.2);
+    torsoPivot.add(capePivot);
+    v(capePivot, { w: 0.62, h: 0.92, d: 0.05, x: 0, y: -0.44, z: -0.04, color: 0x09090b, roughness: 0.92, rx: 0.18 });
+    v(capePivot, { w: 0.48, h: 0.16, d: 0.05, x: 0, y: -0.92, z: -0.04, color: 0x18181b, roughness: 0.92, rx: 0.18 });
   } else if (skin === 'meu_ratao') {
     const cfg = customConfig || DEFAULT_CUSTOM_CHARACTER_CONFIG;
     const hex = (c: string) => new THREE.Color(c).getHex();

@@ -32,7 +32,8 @@ import {
   SuggestionStatus,
   SuggestionType,
   TopClothingId,
-  isCommonSkinId,
+  isGiftableSkinId,
+  isLockedExclusiveSkinId,
   isSpecialUnlockableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
@@ -483,7 +484,7 @@ export async function repoCreatePromoCode(params: {
     if (
       !params.rewardSkinId ||
       !isValidAnySkinId(params.rewardSkinId) ||
-      (!isCommonSkinId(params.rewardSkinId) && !isSpecialUnlockableSkinId(params.rewardSkinId))
+      !isGiftableSkinId(params.rewardSkinId)
     ) {
       return { status: 'invalid_skin' };
     }
@@ -583,9 +584,7 @@ export async function repoUpdatePromoCode(params: {
         : null;
     if (
       nextType === 'skin' &&
-      (!nextSkin ||
-        !isValidAnySkinId(nextSkin) ||
-        (!isCommonSkinId(nextSkin) && !isSpecialUnlockableSkinId(nextSkin)))
+      (!nextSkin || !isValidAnySkinId(nextSkin) || !isGiftableSkinId(nextSkin))
     ) {
       return { status: 'invalid_skin' };
     }
@@ -629,9 +628,7 @@ export async function repoUpdatePromoCode(params: {
       : null;
   if (
     nextType === 'skin' &&
-    (!nextSkin ||
-      !isValidAnySkinId(nextSkin) ||
-      (!isCommonSkinId(nextSkin) && !isSpecialUnlockableSkinId(nextSkin)))
+    (!nextSkin || !isValidAnySkinId(nextSkin) || !isGiftableSkinId(nextSkin))
   ) {
     return { status: 'invalid_skin' };
   }
@@ -769,7 +766,10 @@ export async function repoRedeemPromoCode(params: {
       if (targetUser && !targetUser.unlockedSkins.includes(promo.rewardSkinId)) {
         targetUser.unlockedSkins.push(promo.rewardSkinId);
       }
-      if (isSpecialUnlockableSkinId(promo.rewardSkinId)) {
+      if (
+        isSpecialUnlockableSkinId(promo.rewardSkinId) ||
+        isLockedExclusiveSkinId(promo.rewardSkinId)
+      ) {
         const hasPerm = db.exclusiveSkinPermissions.some(
           (p) => p.userId === params.user.id && p.skinId === promo.rewardSkinId && p.active
         );
@@ -919,7 +919,10 @@ export async function repoRedeemPromoCode(params: {
         ]);
       }
 
-      if (isSpecialUnlockableSkinId(row.reward_skin_id)) {
+      if (
+        isSpecialUnlockableSkinId(row.reward_skin_id) ||
+        isLockedExclusiveSkinId(row.reward_skin_id)
+      ) {
         const permRes = await client.query(
           `SELECT id FROM exclusive_skin_permissions WHERE user_id = $1 AND skin_id = $2 AND active = TRUE LIMIT 1`,
           [params.user.id, row.reward_skin_id]

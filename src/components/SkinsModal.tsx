@@ -6,6 +6,7 @@ import {
   DEFAULT_CUSTOM_CHARACTER_CONFIG,
   EXCLUSIVE_SKINS,
   GraphicsQuality,
+  LOCKED_EXCLUSIVE_SKINS,
   MapId,
   SKINS,
   SPECIAL_UNLOCKABLE_SKINS,
@@ -14,6 +15,7 @@ import {
   UserProfile,
   getSkinDefinition,
   isExclusiveSkinId,
+  isLockedExclusiveSkinId,
   isSpecialUnlockableSkinId,
 } from '../shared/constants.ts';
 import { ScenePreview3D } from './ScenePreview3D.tsx';
@@ -38,22 +40,31 @@ export function SkinsModal({
   const allowedExclusive = user.allowedExclusiveSkins || [];
 
   const isSkinUnlocked = (skinId: SkinId): boolean => {
-    if (!isExclusiveSkinId(skinId) && !isSpecialUnlockableSkinId(skinId)) {
+    if (
+      !isExclusiveSkinId(skinId) &&
+      !isSpecialUnlockableSkinId(skinId) &&
+      !isLockedExclusiveSkinId(skinId)
+    ) {
       return true;
     }
-    return allowedExclusive.includes(skinId) || user.unlockedSkins.includes(skinId);
+    return allowedExclusive.includes(skinId);
   };
 
   // Single unified SKINS list:
   // - All common skins
-  // - Meu Ratão (always shown, even while locked)
+  // - Meu Ratão & the 10 Locked Exclusive Skins (always shown, with lock while locked)
   // - Hidden exclusive skins (Top 1/2/3 & Ratão Rei) ONLY when actually unlocked
   const visibleSkins = useMemo<SkinDefinition[]>(() => {
     const unlockedExclusives = EXCLUSIVE_SKINS.filter(
-      (skin) => allowedExclusive.includes(skin.id) || user.unlockedSkins.includes(skin.id)
+      (skin) => allowedExclusive.includes(skin.id)
     );
-    return [...SKINS, ...SPECIAL_UNLOCKABLE_SKINS, ...unlockedExclusives];
-  }, [allowedExclusive, user.unlockedSkins]);
+    return [
+      ...SKINS,
+      ...SPECIAL_UNLOCKABLE_SKINS,
+      ...LOCKED_EXCLUSIVE_SKINS,
+      ...unlockedExclusives,
+    ];
+  }, [allowedExclusive]);
 
   const initialPreview: SkinId = visibleSkins.some((s) => s.id === user.equippedSkin)
     ? user.equippedSkin
@@ -68,7 +79,8 @@ export function SkinsModal({
   const isGifted = user.giftedSkins.includes(previewSkin);
   const isExclusive = isExclusiveSkinId(previewSkin);
   const isSpecialUnlockable = isSpecialUnlockableSkinId(previewSkin);
-  const isRestrictedCategory = isExclusive || isSpecialUnlockable;
+  const isLockedCatalogSkin = isLockedExclusiveSkinId(previewSkin);
+  const isRestrictedCategory = isExclusive || isSpecialUnlockable || isLockedCatalogSkin;
   const isAllowed = isSkinUnlocked(previewSkin);
 
   const handleEquip = async () => {
@@ -245,6 +257,8 @@ export function SkinsModal({
                 const gifted = user.giftedSkins.includes(skin.id);
                 const isExclusiveBadge = isExclusiveSkinId(skin.id);
                 const isMeuRatao = skin.id === 'meu_ratao';
+                const isCatalogUnlockable =
+                  isMeuRatao || isLockedExclusiveSkinId(skin.id);
 
                 return (
                   <button
@@ -256,11 +270,13 @@ export function SkinsModal({
                         ? 'bg-slate-800 border-amber-400 shadow-lg'
                         : isExclusiveBadge
                           ? 'bg-amber-950/20 border-amber-500/40 hover:border-amber-400'
-                          : 'bg-slate-950/70 border-slate-800 hover:border-slate-600'
+                          : isCatalogUnlockable && !unlocked
+                            ? 'bg-slate-950/85 border-slate-800/90 hover:border-rose-500/50'
+                            : 'bg-slate-950/70 border-slate-800 hover:border-slate-600'
                     }`}
                   >
                     <div
-                      className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center font-display font-bold border border-white/20"
+                      className="w-10 h-10 rounded-lg shrink-0 flex items-center justify-center font-display font-bold border border-white/20 relative"
                       style={{
                         background: isMeuRatao
                           ? '#ffffff'
@@ -268,7 +284,9 @@ export function SkinsModal({
                         color: isMeuRatao ? '#0f172a' : '#ffffff',
                       }}
                     >
-                      {isExclusiveBadge ? (
+                      {isCatalogUnlockable && !unlocked ? (
+                        <Lock className="w-4 h-4" />
+                      ) : isExclusiveBadge ? (
                         <Crown className="w-4 h-4" />
                       ) : isMeuRatao ? (
                         <Paintbrush className="w-4 h-4" />
@@ -287,12 +305,12 @@ export function SkinsModal({
                               USO
                             </span>
                           )}
-                          {isMeuRatao && !unlocked && (
+                          {isCatalogUnlockable && !unlocked && (
                             <span className="px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 text-[10px] font-extrabold inline-flex items-center gap-0.5">
                               <Lock className="w-2.5 h-2.5" /> BLOQUEADA
                             </span>
                           )}
-                          {isMeuRatao && unlocked && !equipped && (
+                          {isCatalogUnlockable && unlocked && !equipped && (
                             <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-extrabold">
                               LIBERADA
                             </span>
@@ -307,7 +325,7 @@ export function SkinsModal({
                       <p className="text-[11px] text-slate-400 line-clamp-2 mt-0.5">
                         {skin.subtitle}
                       </p>
-                      {gifted && (
+                      {gifted && unlocked && (
                         <span className="mt-1 inline-flex items-center gap-1 text-[10px] font-bold text-fuchsia-300">
                           <Gift className="w-3 h-3" /> Presente
                         </span>

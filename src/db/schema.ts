@@ -12,6 +12,7 @@ import {
 import type {
   CustomCharacterConfig,
   ExclusiveSkinId,
+  LockedExclusiveSkinId,
   MapId,
   MultiplayerMode,
   PaintRegion,
@@ -381,7 +382,9 @@ export const exclusiveSkinPermissions = pgTable(
     userId: text('user_id')
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
-    skinId: text('skin_id').$type<ExclusiveSkinId | SpecialUnlockableSkinId>().notNull(),
+    skinId: text('skin_id')
+      .$type<ExclusiveSkinId | SpecialUnlockableSkinId | LockedExclusiveSkinId>()
+      .notNull(),
     reason: text('reason')
       .$type<'admin' | 'top1' | 'top2' | 'top3' | 'promo_code' | 'admin_gift' | 'special_rule'>()
       .notNull(),

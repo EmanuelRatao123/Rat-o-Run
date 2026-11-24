@@ -26,6 +26,9 @@ import {
   adminCreatePollHandler,
   adminDeleteMessageHandler,
   adminGiftSkinHandler,
+  adminGrantExclusiveSkinHandler,
+  adminListExclusiveSkinOwnersHandler,
+  adminRevokeExclusiveSkinHandler,
   adminSearchPlayersHandler,
   adminStatsHandler,
   equipSkinHandler,
@@ -147,6 +150,21 @@ app.get('/api/custom-character/user/:userId', wrap(getUserCustomCharacterPublicH
 app.get('/api/admin/stats', requireAdmin, wrap(adminStatsHandler));
 app.get('/api/admin/players', requireAdmin, wrap(adminSearchPlayersHandler));
 app.post('/api/admin/unlock-king-skin', requireAdmin, wrap(adminUnlockKingSkinHandler));
+app.get(
+  '/api/admin/exclusive-skins/owners',
+  requireAdmin,
+  wrap(adminListExclusiveSkinOwnersHandler)
+);
+app.post(
+  '/api/admin/exclusive-skins/grant',
+  requireAdmin,
+  wrap(adminGrantExclusiveSkinHandler)
+);
+app.post(
+  '/api/admin/exclusive-skins/revoke',
+  requireAdmin,
+  wrap(adminRevokeExclusiveSkinHandler)
+);
 app.post('/api/admin/messages', requireAdmin, wrap(adminCreateMessageHandler));
 app.delete('/api/admin/messages/:id', requireAdmin, wrap(adminDeleteMessageHandler));
 app.post('/api/admin/polls', requireAdmin, wrap(adminCreatePollHandler));

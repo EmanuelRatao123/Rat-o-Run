@@ -11,7 +11,7 @@ import {
   PlayerWalletStats,
   SkinId,
   UserProfile,
-  isSpecialUnlockableSkinId,
+  isGiftableSkinId,
 } from '../shared/constants.ts';
 import {
   SlidingRateLimiter,
@@ -115,21 +115,23 @@ export function sanitizeUserProfile(
   walletStats?: PlayerWalletStats,
   customCharacterConfig?: CustomCharacterConfig
 ): UserProfile {
+  const allowedSet = new Set(allowedExclusiveSkins);
+  const unlockedSkins = Array.from(
+    new Set([
+      ...user.unlockedSkins.filter(
+        (s) => (COMMON_SKIN_IDS as string[]).includes(s) || allowedSet.has(s)
+      ),
+      ...allowedExclusiveSkins,
+    ])
+  );
   return {
     id: user.id,
     nickname: user.nickname,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
     equippedSkin: user.equippedSkin,
-    unlockedSkins: user.unlockedSkins.filter(
-      (s) =>
-        (COMMON_SKIN_IDS as string[]).includes(s) ||
-        isSpecialUnlockableSkinId(s) ||
-        allowedExclusiveSkins.includes(s)
-    ),
-    giftedSkins: user.giftedSkins.filter(
-      (s) => (COMMON_SKIN_IDS as string[]).includes(s) || isSpecialUnlockableSkinId(s)
-    ),
+    unlockedSkins,
+    giftedSkins: user.giftedSkins.filter((s) => isGiftableSkinId(s)),
     allowedExclusiveSkins,
     bestNoCoinTimeMs: user.bestNoCoinTimeMs,
     bestDistance: user.bestDistance,

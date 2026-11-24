@@ -5,7 +5,7 @@ import {
   SuggestionStatus,
   SuggestionType,
   isCommonSkinId,
-  isSpecialUnlockableSkinId,
+  isGiftableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
 import { AuthedRequest } from './auth.ts';
@@ -201,9 +201,13 @@ export async function redeemPromoCodeHandler(req: AuthedRequest, res: Response):
     repoGetAllowedExclusiveSkinsForUser(freshUser),
   ]);
 
-  const unlockedSkins = freshUser.unlockedSkins.filter(
-    (s: SkinId) =>
-      isCommonSkinId(s) || isSpecialUnlockableSkinId(s) || allowedExclusiveSkins.includes(s)
+  const unlockedSkins = Array.from(
+    new Set([
+      ...freshUser.unlockedSkins.filter(
+        (s: SkinId) => isCommonSkinId(s) || allowedExclusiveSkins.includes(s)
+      ),
+      ...allowedExclusiveSkins,
+    ])
   );
 
   res.json({
@@ -274,7 +278,7 @@ export async function adminCreatePromoCodeHandler(
       res.status(400).json({ error: 'Selecione uma skin válida.' });
       return;
     }
-    if (!isCommonSkinId(rewardSkinId) && !isSpecialUnlockableSkinId(rewardSkinId)) {
+    if (!isGiftableSkinId(rewardSkinId)) {
       res.status(403).json({
         error: 'Skins exclusivas de Admin e Top 1/2/3 não podem ser distribuídas por código.',
       });

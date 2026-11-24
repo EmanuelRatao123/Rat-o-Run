@@ -16,6 +16,7 @@ import {
   Sparkles,
   Ticket,
   Trash2,
+  Unlock,
   Users,
   Vote,
   X,
@@ -23,10 +24,12 @@ import {
 import React, { useCallback, useEffect, useState } from 'react';
 import { api, setMemoryAdminToken, setMemorySessionToken } from '../services/api.ts';
 import {
+  AdminExclusiveSkinOwner,
   AdminLogItem,
   AdminPlayerRecord,
   AdminStats,
   GlobalMessage,
+  LOCKED_EXCLUSIVE_SKINS,
   PlayerSuggestion,
   PollItem,
   PromoCodeRecord,
@@ -61,7 +64,8 @@ type AdminTab =
   | 'players'
   | 'logs';
 
-const GIFTABLE_SKINS = [...SKINS, ...SPECIAL_UNLOCKABLE_SKINS];
+const GIFTABLE_SKINS = [...SKINS, ...SPECIAL_UNLOCKABLE_SKINS, ...LOCKED_EXCLUSIVE_SKINS];
+const MANAGEABLE_LOCKED_SKINS = [...LOCKED_EXCLUSIVE_SKINS, ...SPECIAL_UNLOCKABLE_SKINS];
 
 const SUGGESTION_STATUS_META: Record<
   SuggestionStatus,
@@ -105,8 +109,16 @@ export function AdminPortalModal({
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
 
-  // Admin King Skin state
+  // Admin King Skin & Locked Exclusive Skins management state
   const [unlockKingBusy, setUnlockKingBusy] = useState(false);
+  const [exclusiveOwners, setExclusiveOwners] = useState<AdminExclusiveSkinOwner[]>([]);
+  const [ownersLoading, setOwnersLoading] = useState(false);
+  const [ownerSkinFilter, setOwnerSkinFilter] = useState<'all' | SkinId>('all');
+  const [grantSkinNickname, setGrantSkinNickname] = useState('');
+  const [grantSkinId, setGrantSkinId] = useState<SkinId>('homem_aranha');
+  const [grantBusy, setGrantBusy] = useState(false);
+  const [revokeBusyKey, setRevokeBusyKey] = useState<string | null>(null);
+  const [quickPlayerMatches, setQuickPlayerMatches] = useState<AdminPlayerRecord[]>([]);
 
   // Message form
   const [msgTitle, setMsgTitle] = useState('');
@@ -236,6 +248,20 @@ export function AdminPortalModal({
     }
   }, []);
 
+  const loadExclusiveOwners = useCallback(async (skinFilter: 'all' | SkinId = 'all') => {
+    setOwnersLoading(true);
+    try {
+      const res = await api.adminListExclusiveSkinOwners(
+        skinFilter === 'all' ? undefined : skinFilter
+      );
+      setExclusiveOwners(res.owners);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao consultar donos das skins.');
+    } finally {
+      setOwnersLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     Promise.all([
@@ -282,6 +308,28 @@ export function AdminPortalModal({
       void loadPromoCodes();
     }
   }, [isVerifiedAdmin, tab, loadPromoCodes]);
+
+  useEffect(() => {
+    if (isVerifiedAdmin && tab === 'admin_skins') {
+      void loadExclusiveOwners(ownerSkinFilter);
+    }
+  }, [isVerifiedAdmin, tab, ownerSkinFilter, loadExclusiveOwners]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin || tab !== 'admin_skins') return;
+    const q = grantSkinNickname.trim();
+    if (q.length < 1) {
+      setQuickPlayerMatches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void api
+        .searchAdminPlayers(q)
+        .then((res) => setQuickPlayerMatches(res.players.slice(0, 6)))
+        .catch(() => {});
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [isVerifiedAdmin, tab, grantSkinNickname]);
 
   const handleSecretF8Login = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -498,6 +546,89 @@ export function AdminPortalModal({
       setActionErr(err instanceof Error ? err.message : 'Erro ao desbloquear Ratão Rei.');
     } finally {
       setUnlockKingBusy(false);
+    }
+  };
+
+  const handleGrantExclusiveSkin = async (
+    nicknameOverride?: string,
+    skinOverride?: SkinId
+  ) => {
+    const targetNickname = (nicknameOverride ?? grantSkinNickname).trim();
+    const targetSkinId = skinOverride ?? grantSkinId;
+    if (!targetNickname) {
+      setActionErr('Informe o nickname do jogador para liberar a skin.');
+      return;
+    }
+    setGrantBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminGrantExclusiveSkin({
+        nickname: targetNickname,
+        skinId: targetSkinId,
+      });
+      const skinName = getSkinDefinition(targetSkinId).name;
+      setActionMsg(
+        `Skin "${skinName}" liberada para ${res.owner.nickname}!`
+      );
+      if (currentUser && currentUser.id === res.owner.userId) {
+        const nextAllowed = Array.from(
+          new Set([...(currentUser.allowedExclusiveSkins || []), targetSkinId])
+        );
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: nextAllowed,
+          unlockedSkins: Array.from(new Set([...currentUser.unlockedSkins, targetSkinId])),
+        });
+      }
+      if (!nicknameOverride) setGrantSkinNickname('');
+      await Promise.all([
+        loadExclusiveOwners(ownerSkinFilter),
+        tab === 'players' ? loadPlayers(playerQuery) : Promise.resolve(),
+        loadDashboard(),
+      ]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao liberar skin.');
+    } finally {
+      setGrantBusy(false);
+    }
+  };
+
+  const handleRevokeExclusiveSkin = async (
+    userId: string,
+    skinId: SkinId,
+    nickname: string
+  ) => {
+    const busyKey = `${userId}:${skinId}`;
+    setRevokeBusyKey(busyKey);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminRevokeExclusiveSkin({ userId, skinId });
+      const skinName = getSkinDefinition(skinId).name;
+      setActionMsg(
+        `Permissão da skin "${skinName}" removida de ${res.targetNickname || nickname}${
+          res.resetEquipped ? ' (skin equipada voltou para Ratão)' : ''
+        }.`
+      );
+      if (currentUser && currentUser.id === userId) {
+        const nextAllowed = (currentUser.allowedExclusiveSkins || []).filter((s) => s !== skinId);
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: nextAllowed,
+          unlockedSkins: currentUser.unlockedSkins.filter((s) => s !== skinId),
+          equippedSkin: res.resetEquipped ? 'ratao' : currentUser.equippedSkin,
+        });
+      }
+      await Promise.all([
+        loadExclusiveOwners(ownerSkinFilter),
+        tab === 'players' ? loadPlayers(playerQuery) : Promise.resolve(),
+        loadDashboard(),
+      ]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao remover permissão da skin.');
+    } finally {
+      setRevokeBusyKey(null);
     }
   };
 
@@ -1056,8 +1187,206 @@ export function AdminPortalModal({
                         {unlockKingBusy ? 'DESBLOQUEANDO...' : 'DESBLOQUEAR PARA MIM'}
                       </button>
                       <span className="text-[11px] text-slate-400">
-                        Após desbloquear, abra o menu <strong>SKINS → Exclusivas</strong> para equipar o Ratão Rei.
+                        Após desbloquear, abra o menu <strong>SKINS</strong> para equipar o Ratão Rei.
                       </span>
+                    </div>
+                  </div>
+
+                  {/* Gerenciar 10 Novas Skins Bloqueadas + Meu Ratão */}
+                  <div className="p-5 rounded-2xl bg-slate-950 border border-slate-800 space-y-5">
+                    <div>
+                      <span className="px-2.5 py-1 rounded bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[10px] font-extrabold uppercase tracking-wider">
+                        CONTROLE DE PERMISSÕES POR JOGADOR
+                      </span>
+                      <h3 className="font-display text-lg font-bold text-white mt-2 flex items-center gap-2">
+                        <Lock className="w-4 h-4 text-rose-400" />
+                        SKINS EXCLUSIVAS BLOQUEADAS (LIBERAR, CONSULTAR & REVOGAR)
+                      </h3>
+                      <p className="text-xs text-slate-400 mt-1">
+                        Todas as 10 novas skins começam bloqueadas para todos os jogadores. Libere
+                        para um jogador específico pelo nickname, consulte quem possui cada skin ou
+                        remova a permissão a qualquer momento.
+                      </p>
+                    </div>
+
+                    {/* Formulário de Liberação */}
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void handleGrantExclusiveSkin();
+                      }}
+                      className="p-4 rounded-xl bg-slate-900/70 border border-slate-800 space-y-3"
+                    >
+                      <div className="grid grid-cols-1 sm:grid-cols-12 gap-3">
+                        <div className="sm:col-span-5">
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Selecionar Skin Bloqueada
+                          </label>
+                          <select
+                            value={grantSkinId}
+                            onChange={(e) => setGrantSkinId(e.target.value as SkinId)}
+                            className="w-full px-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs font-semibold"
+                          >
+                            {MANAGEABLE_LOCKED_SKINS.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.name}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        <div className="sm:col-span-5 relative">
+                          <label className="block text-[10px] font-bold uppercase text-slate-400 mb-1">
+                            Pesquisar Jogador pelo Nickname
+                          </label>
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                            <input
+                              type="text"
+                              value={grantSkinNickname}
+                              onChange={(e) => setGrantSkinNickname(e.target.value)}
+                              placeholder="Digite o nickname..."
+                              className="w-full pl-8 pr-3 py-2.5 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs"
+                            />
+                          </div>
+                        </div>
+
+                        <div className="sm:col-span-2 flex items-end">
+                          <button
+                            type="submit"
+                            disabled={grantBusy}
+                            className="w-full py-2.5 px-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer disabled:opacity-60"
+                          >
+                            <Unlock className="w-3.5 h-3.5" />
+                            {grantBusy ? 'LIBERANDO...' : 'LIBERAR'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {quickPlayerMatches.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                          <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">
+                            Jogadores encontrados:
+                          </span>
+                          {quickPlayerMatches.map((mp) => {
+                            const alreadyHas = mp.activeExclusivePermissions?.includes(grantSkinId);
+                            return (
+                              <button
+                                key={mp.id}
+                                type="button"
+                                onClick={() => setGrantSkinNickname(mp.nickname)}
+                                className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border cursor-pointer transition ${
+                                  alreadyHas
+                                    ? 'bg-emerald-950/60 border-emerald-500/40 text-emerald-300'
+                                    : 'bg-slate-950 border-slate-700 text-slate-200 hover:border-sky-400'
+                                }`}
+                              >
+                                {mp.nickname} {alreadyHas ? '✓ já possui' : ''}
+                              </button>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </form>
+
+                    {/* Consultar Quem Possui Cada Skin + Revogar */}
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <h4 className="text-xs font-extrabold uppercase text-slate-300">
+                          Consultar Possuidores ({exclusiveOwners.length})
+                        </h4>
+                        <div className="flex items-center gap-2">
+                          <select
+                            value={ownerSkinFilter}
+                            onChange={(e) => setOwnerSkinFilter(e.target.value as 'all' | SkinId)}
+                            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
+                          >
+                            <option value="all">Todas as Skins Bloqueadas</option>
+                            {MANAGEABLE_LOCKED_SKINS.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                Apenas: {s.name}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() => void loadExclusiveOwners(ownerSkinFilter)}
+                            className="px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                          >
+                            <RefreshCw className={`w-3.5 h-3.5 ${ownersLoading ? 'animate-spin' : ''}`} />
+                            Atualizar
+                          </button>
+                        </div>
+                      </div>
+
+                      {ownersLoading ? (
+                        <div className="text-xs text-slate-400">Consultando permissões ativas...</div>
+                      ) : exclusiveOwners.length === 0 ? (
+                        <div className="p-4 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400 text-center">
+                          Nenhum jogador possui permissão ativa para este filtro.
+                        </div>
+                      ) : (
+                        <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                          {exclusiveOwners.map((owner) => {
+                            const skinDef = getSkinDefinition(owner.skinId);
+                            const busyKey = `${owner.userId}:${owner.skinId}`;
+                            return (
+                              <div
+                                key={owner.id}
+                                className="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex flex-wrap items-center justify-between gap-3"
+                              >
+                                <div className="flex items-center gap-3 min-w-0">
+                                  <div
+                                    className="w-8 h-8 rounded-lg shrink-0 border border-white/20"
+                                    style={{
+                                      background: `linear-gradient(135deg, ${skinDef.primaryColor}, ${skinDef.accentColor})`,
+                                    }}
+                                  />
+                                  <div className="min-w-0">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                      <span className="font-bold text-sm text-white">
+                                        {owner.nickname}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
+                                        {skinDef.name}
+                                      </span>
+                                      <span className="px-2 py-0.5 rounded bg-slate-800 text-slate-300 text-[10px] font-semibold">
+                                        {owner.reason === 'promo_code'
+                                          ? 'Código Promocional'
+                                          : 'Liberada pelo Admin'}
+                                      </span>
+                                      {owner.equipped && (
+                                        <span className="px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 text-[10px] font-bold">
+                                          EQUIPADA
+                                        </span>
+                                      )}
+                                    </div>
+                                    <div className="text-[10px] text-slate-500 mt-0.5">
+                                      Liberada em {new Date(owner.grantedAt).toLocaleString('pt-BR')}
+                                    </div>
+                                  </div>
+                                </div>
+
+                                <button
+                                  type="button"
+                                  disabled={revokeBusyKey === busyKey}
+                                  onClick={() =>
+                                    void handleRevokeExclusiveSkin(
+                                      owner.userId,
+                                      owner.skinId,
+                                      owner.nickname
+                                    )
+                                  }
+                                  className="px-3 py-1.5 rounded-lg bg-rose-950 hover:bg-rose-900 border border-rose-700/60 text-rose-200 text-xs font-bold flex items-center gap-1.5 cursor-pointer disabled:opacity-60"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                  {revokeBusyKey === busyKey ? 'Removendo...' : 'Remover Permissão'}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1603,7 +1932,7 @@ export function AdminPortalModal({
                           onChange={(e) => setPromoRewardType(e.target.value as PromoRewardType)}
                           className="w-full px-3 py-2 rounded-lg bg-slate-900 border border-slate-700 text-white text-xs"
                         >
-                          <option value="skin">Skin (Inclui Meu Ratão)</option>
+                          <option value="skin">Skin (Inclui Bloqueadas e Meu Ratão)</option>
                           <option value="coins">Moedas Coletadas</option>
                           <option value="special">Recompensa Especial</option>
                           <option value="future_item">Item Futuro</option>
@@ -1965,6 +2294,62 @@ export function AdminPortalModal({
                                 {getSkinDefinition(sk).name}
                               </span>
                             ))}
+                          </div>
+                        </div>
+
+                        <div>
+                          <div className="text-[11px] font-bold uppercase text-slate-400 mb-1.5 flex items-center gap-1">
+                            <Lock className="w-3.5 h-3.5 text-rose-400" /> Permissões das Skins Bloqueadas
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                            {MANAGEABLE_LOCKED_SKINS.map((sk) => {
+                              const hasPerm = Boolean(
+                                selectedPlayer.activeExclusivePermissions?.includes(sk.id)
+                              );
+                              const busyKey = `${selectedPlayer.id}:${sk.id}`;
+                              return (
+                                <div
+                                  key={sk.id}
+                                  className={`px-2.5 py-1.5 rounded-lg border text-[11px] flex items-center justify-between gap-2 ${
+                                    hasPerm
+                                      ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
+                                      : 'bg-slate-900 border-slate-800 text-slate-400'
+                                  }`}
+                                >
+                                  <span className="truncate font-semibold">{sk.name}</span>
+                                  {hasPerm ? (
+                                    <button
+                                      type="button"
+                                      disabled={revokeBusyKey === busyKey}
+                                      onClick={() =>
+                                        void handleRevokeExclusiveSkin(
+                                          selectedPlayer.id,
+                                          sk.id,
+                                          selectedPlayer.nickname
+                                        )
+                                      }
+                                      className="px-2 py-0.5 rounded bg-rose-950 hover:bg-rose-900 border border-rose-700/50 text-rose-200 text-[10px] font-bold cursor-pointer shrink-0"
+                                    >
+                                      Remover
+                                    </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={grantBusy}
+                                      onClick={() =>
+                                        void handleGrantExclusiveSkin(
+                                          selectedPlayer.nickname,
+                                          sk.id
+                                        )
+                                      }
+                                      className="px-2 py-0.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white text-[10px] font-bold cursor-pointer shrink-0"
+                                    >
+                                      Liberar
+                                    </button>
+                                  )}
+                                </div>
+                              );
+                            })}
                           </div>
                         </div>
 

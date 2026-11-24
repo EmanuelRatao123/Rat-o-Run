@@ -12,7 +12,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase.ts';
-import { ALL_SKIN_IDS, MapId, SkinId } from '../shared/constants.ts';
+import { COMMON_SKIN_IDS, MapId, SkinId } from '../shared/constants.ts';
 
 export async function syncFirebaseUserProfile(nickname: string, equippedSkin: SkinId): Promise<void> {
   const user = auth.currentUser;
@@ -27,7 +27,7 @@ export async function syncFirebaseUserProfile(nickname: string, equippedSkin: Sk
         uid: user.uid,
         nickname: nickname.slice(0, 24),
         equippedSkin,
-        unlockedSkins: ALL_SKIN_IDS,
+        unlockedSkins: COMMON_SKIN_IDS,
         bestNoCoinTimeMs: 0,
         bestDistance: 0,
         bestScore: 0,
