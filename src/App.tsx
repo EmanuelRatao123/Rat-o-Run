@@ -49,7 +49,7 @@ import { SkinsModal } from './components/SkinsModal.tsx';
 import { SuggestionsModal } from './components/SuggestionsModal.tsx';
 import { gameAudio } from './game/audio.ts';
 import { useFullscreen, useMobileMode } from './hooks/useDeviceDisplay.ts';
-import { api, setMemorySessionToken } from './services/api.ts';
+import { ApiError, api, setMemorySessionToken } from './services/api.ts';
 import { flushPendingMatchFinishes } from './services/pendingMatches.ts';
 import {
   GlobalMessage,
@@ -93,6 +93,9 @@ export default function App() {
   const [user, setUser] = useState<UserProfile | null>(null);
   const [bootChecking, setBootChecking] = useState(true);
   const [playing, setPlaying] = useState(false);
+  const [playSessionId, setPlaySessionId] = useState(0);
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
 
   const [selectedMap, setSelectedMap] = useState<MapId>('brasil');
   const [soloMode, setSoloMode] = useState<SoloGameMode>('no_coin');
@@ -154,8 +157,10 @@ export default function App() {
     try {
       const res = await api.me();
       setUser(res.user);
-    } catch {
-      setUser(null);
+    } catch (err) {
+      if (err instanceof ApiError && (err.status === 401 || err.status === 403)) {
+        setUser(null);
+      }
     }
   }, []);
 
@@ -246,8 +251,10 @@ export default function App() {
   }, []);
 
   const refreshMultiplayerOverview = useCallback(async () => {
+    if (playingRef.current) return;
     try {
       const ov = await api.multiplayer.overview();
+      if (playingRef.current) return;
       setPendingInvites(ov.incomingInvites);
       if (
         ov.activeRoom &&
@@ -260,6 +267,7 @@ export default function App() {
           serverNow: ov.activeRoom.serverNow,
         });
         setActiveModal(null);
+        setPlaySessionId((id) => id + 1);
         setPlaying(true);
       }
     } catch {
@@ -267,19 +275,21 @@ export default function App() {
     }
   }, []);
 
+  const userId = user?.id;
+
   // Periodic server polling every 8 seconds for messages, polls & skin gifts
   useEffect(() => {
-    if (!user) return;
+    if (!userId) return;
     void refreshSocialFeed();
     const timer = window.setInterval(() => {
       void refreshSocialFeed();
     }, 8000);
     return () => window.clearInterval(timer);
-  }, [user, refreshSocialFeed]);
+  }, [userId, refreshSocialFeed]);
 
   // Live polling every 3.5 seconds for multiplayer invites, active room & friend alerts
   useEffect(() => {
-    if (!user || playing) return;
+    if (!userId || playing) return;
     void refreshMultiplayerOverview();
     const refreshFriendCounts = () => {
       void api.friends
@@ -298,13 +308,13 @@ export default function App() {
       refreshFriendCounts();
     }, 3500);
     return () => window.clearInterval(timer);
-  }, [user, playing, refreshMultiplayerOverview]);
+  }, [userId, playing, refreshMultiplayerOverview]);
 
   useEffect(() => {
-    if (user && activeModal === 'skins') {
+    if (userId && activeModal === 'skins') {
       void refreshUser();
     }
-  }, [user, activeModal, refreshUser]);
+  }, [userId, activeModal, refreshUser]);
 
   const handleLogout = async () => {
     await api.logout().catch(() => {});
@@ -328,14 +338,41 @@ export default function App() {
     await api.markNotificationsSeen().catch(() => {});
   };
 
-  const handleStartSoloMode = (mode: SoloGameMode) => {
+  const handleStartSoloMode = useCallback((mode: SoloGameMode) => {
+    if (playingRef.current) return;
     gameAudio.unlock();
     gameAudio.playUiClick();
     setSoloMode(mode);
     setActiveMpSession(null);
     setActiveModal(null);
+    setPlaySessionId((id) => id + 1);
     setPlaying(true);
-  };
+  }, []);
+
+  const handleUserPatchInGame = useCallback((patch: Partial<UserProfile>) => {
+    setUser((prev) => (prev ? { ...prev, ...patch } : prev));
+  }, []);
+
+  const handleToggleMobileInGame = useCallback(() => {
+    gameAudio.playUiClick();
+    toggleMobileMode();
+  }, [toggleMobileMode]);
+
+  const handleToggleFullscreenInGame = useCallback(() => {
+    gameAudio.playUiClick();
+    void toggleFullscreen();
+  }, [toggleFullscreen]);
+
+  const handleExitToMenuFromGame = useCallback(() => {
+    setPlaying(false);
+    setActiveMpSession(null);
+    setMpLobbyRoom(null);
+    void flushPendingMatchFinishes().finally(() => {
+      void refreshUser();
+      void refreshSocialFeed();
+      void refreshMultiplayerOverview();
+    });
+  }, [refreshMultiplayerOverview, refreshSocialFeed, refreshUser]);
 
   const handleRespondBannerInvite = async (
     invite: MultiplayerInvite,
@@ -409,6 +446,7 @@ export default function App() {
         />
       ) : playing ? (
         <GameView
+          key={playSessionId}
           user={user}
           mapId={activeMpSession ? activeMpSession.room.mapId : selectedMap}
           skinId={user.equippedSkin}
@@ -416,28 +454,11 @@ export default function App() {
           soloMode={soloMode}
           mobileMode={mobileMode}
           isFullscreen={isFullscreen}
-          onToggleMobileMode={() => {
-            gameAudio.playUiClick();
-            toggleMobileMode();
-          }}
-          onToggleFullscreen={() => {
-            gameAudio.playUiClick();
-            void toggleFullscreen();
-          }}
+          onToggleMobileMode={handleToggleMobileInGame}
+          onToggleFullscreen={handleToggleFullscreenInGame}
           multiplayerSession={activeMpSession}
-          onUserPatch={(patch) =>
-            setUser((prev) => (prev ? { ...prev, ...patch } : prev))
-          }
-          onExitToMenu={() => {
-            setPlaying(false);
-            setActiveMpSession(null);
-            setMpLobbyRoom(null);
-            void flushPendingMatchFinishes().finally(() => {
-              void refreshUser();
-              void refreshSocialFeed();
-              void refreshMultiplayerOverview();
-            });
-          }}
+          onUserPatch={handleUserPatchInGame}
+          onExitToMenu={handleExitToMenuFromGame}
         />
       ) : (
         <div className="relative w-full h-full overflow-hidden bg-slate-950">
@@ -1256,6 +1277,7 @@ export default function App() {
                 gameAudio.unlock();
                 setActiveMpSession({ room, participants });
                 setActiveModal(null);
+                setPlaySessionId((id) => id + 1);
                 setPlaying(true);
               }}
               onClose={() => {

@@ -29,6 +29,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { gameAudio } from '../game/audio.ts';
+import { MatchLifecycleController } from '../game/matchLifecycle.ts';
 import { NetworkHealthStatus, TelemetryFilter } from '../game/netSync.ts';
 import { HudSnapshot, RunResultPayload, RunnerEngine } from '../game/RunnerEngine.ts';
 import { api } from '../services/api.ts';
@@ -123,6 +124,52 @@ export function GameView({
     : 0;
   const latestUserRef = useRef(user);
   latestUserRef.current = user;
+  const latestLaunchPropsRef = useRef({
+    mapId,
+    skinId,
+    quality,
+    soloMode,
+    multiplayerSession,
+    userId: user.id,
+  });
+  latestLaunchPropsRef.current = {
+    mapId,
+    skinId,
+    quality,
+    soloMode,
+    multiplayerSession,
+    userId: user.id,
+  };
+  const onUserPatchRef = useRef(onUserPatch);
+  onUserPatchRef.current = onUserPatch;
+  const onExitToMenuRef = useRef(onExitToMenu);
+  onExitToMenuRef.current = onExitToMenu;
+
+  const lifecycleRef = useRef<MatchLifecycleController | null>(null);
+  if (!lifecycleRef.current) {
+    lifecycleRef.current = new MatchLifecycleController({
+      onDiagnostic: (entry) => {
+        if (
+          entry.event === 'unexpected_reset_blocked' ||
+          entry.event === 'duplicate_start_blocked' ||
+          entry.event === 'restart_blocked' ||
+          entry.event === 'engine_error' ||
+          entry.event === 'reconnect_event' ||
+          entry.event === 'finish_begin'
+        ) {
+          void api.reportMatchDiagnostic({
+            matchId: entry.serverMatchId || entry.runInstanceId,
+            mode: latestLaunchPropsRef.current.multiplayerSession
+              ? latestLaunchPropsRef.current.multiplayerSession.room.mode
+              : latestLaunchPropsRef.current.soloMode,
+            stage: entry.phase,
+            status: entry.event,
+            detail: entry.detail,
+          });
+        }
+      },
+    });
+  }
 
   const [runKey, setRunKey] = useState(1);
   const [paused, setPaused] = useState(false);
@@ -262,33 +309,55 @@ export function GameView({
 
   const handleSkateConsumption = useCallback(
     (skateId: SkateId, useSeq: number) => {
+      const currentUser = latestUserRef.current;
+      const launch = latestLaunchPropsRef.current;
       const matchId =
         matchTokenRef.current?.matchId ||
         mpRoom?.id ||
-        `run_${user.id}_${runKey}`;
-      const mode = isMultiplayer ? mpRoom?.mode || 'coop' : soloMode;
+        `run_${currentUser.id}_${runKey}`;
+      const mode = launch.multiplayerSession ? launch.multiplayerSession.room.mode : launch.soloMode;
       const eventKey = `${matchId}:${useSeq}`;
       void api
         .consumeMatchSkate({ matchId, skateId, mode, eventKey })
         .then((res) => {
           engineRef.current?.syncSkateCharges(res.remainingCharges);
-          if (onUserPatch) {
+          if (onUserPatchRef.current) {
             const currentInv = latestUserRef.current.skateInventory || [];
             const nextInv = currentInv.map((item) =>
               item.skateId === skateId ? { ...item, charges: res.remainingCharges } : item
             );
-            onUserPatch({ skateInventory: nextInv });
+            onUserPatchRef.current({ skateInventory: nextInv });
           }
         })
         .catch(() => {
           // Transient error does not block in-match skate activation
         });
     },
-    [isMultiplayer, mpRoom?.id, mpRoom?.mode, onUserPatch, runKey, soloMode, user.id]
+    [mpRoom?.id, runKey]
   );
 
   const handleSoloGameOver = useCallback(
-    async (result: RunResultPayload) => {
+    async (result: RunResultPayload, expectedRunId: string) => {
+      const lifecycle = lifecycleRef.current!;
+      if (expectedRunId !== lifecycle.getRunInstanceId()) {
+        lifecycle.recordUnexpectedResetAttempt(
+          'handleSoloGameOver',
+          `Ignored stale gameOver for run=${expectedRunId}`
+        );
+        return;
+      }
+      const endReason = result.endReason || (result.collectedCoin ? 'coin' : 'police');
+      if (!lifecycle.beginFinishing(expectedRunId, endReason)) {
+        return;
+      }
+
+      const launch = latestLaunchPropsRef.current;
+      const snapshotUser = latestUserRef.current;
+      const runMapId = launch.mapId;
+      const runSkinId = launch.skinId;
+      const runSoloMode = launch.soloMode;
+
+      setPaused(false);
       setSubmitting(true);
       setSubmitError(null);
       try {
@@ -296,10 +365,17 @@ export function GameView({
         if (!token && matchStartPromiseRef.current) {
           token = await matchStartPromiseRef.current.catch(() => null);
         }
+        if (expectedRunId !== lifecycle.getRunInstanceId()) {
+          return;
+        }
         if (!token) {
-          const started = await api.startMatch(effectiveMapId, skinId, soloMode);
+          const started = await api.startMatch(runMapId, runSkinId, runSoloMode);
+          if (expectedRunId !== lifecycle.getRunInstanceId()) {
+            return;
+          }
           token = { matchId: started.matchId, signature: started.signature };
           matchTokenRef.current = token;
+          lifecycle.bindServerMatchId(expectedRunId, started.matchId);
         }
         const payload: PendingMatchFinishPayload = {
           matchId: token.matchId,
@@ -308,13 +384,17 @@ export function GameView({
         };
         lastFinishPayloadRef.current = payload;
         const res = await submitMatchFinishWithRetry(payload, 3);
+        if (expectedRunId !== lifecycle.getRunInstanceId()) {
+          return;
+        }
         lastFinishPayloadRef.current = null;
         setSummary(res.summary);
+        lifecycle.completeResult(expectedRunId, `recorded:${endReason}`);
         void syncMatchToFirestore({
           matchId: token.matchId,
-          nickname: user.nickname,
-          skinId,
-          mapId: effectiveMapId,
+          nickname: snapshotUser.nickname,
+          skinId: runSkinId,
+          mapId: runMapId,
           noCoinTimeMs: result.noCoinTimeMs,
           coins: result.coins,
           distance: result.distance,
@@ -322,6 +402,9 @@ export function GameView({
           durationMs: result.durationMs,
         }).catch(() => {});
       } catch (err) {
+        if (expectedRunId !== lifecycle.getRunInstanceId()) {
+          return;
+        }
         setSubmitError(
           err instanceof Error
             ? `${err.message} (Resultado salvo localmente para reenvio automático.)`
@@ -329,25 +412,38 @@ export function GameView({
         );
         setSummary({
           matchId: matchTokenRef.current?.matchId || 'local',
-          mode: soloMode,
-          mapId: effectiveMapId,
-          skinId,
-          noCoinTimeMs: soloMode === 'normal' ? 0 : result.noCoinTimeMs,
+          mode: runSoloMode,
+          mapId: runMapId,
+          skinId: runSkinId,
+          noCoinTimeMs: runSoloMode === 'normal' ? 0 : result.noCoinTimeMs,
           collectedCoin: result.collectedCoin,
           coins: result.coins,
           distance: result.distance,
           score: result.score,
           durationMs: result.durationMs,
           endReason: result.endReason,
-          isNewPersonalRecord: soloMode === 'no_coin' && result.noCoinTimeMs > user.bestNoCoinTimeMs,
-          globalRank: user.rank ?? null,
+          isNewPersonalRecord:
+            runSoloMode === 'no_coin' && result.noCoinTimeMs > snapshotUser.bestNoCoinTimeMs,
+          globalRank: snapshotUser.rank ?? null,
         });
+        lifecycle.completeResult(expectedRunId, `queued_offline:${endReason}`);
       } finally {
         setSubmitting(false);
       }
     },
-    [effectiveMapId, skinId, soloMode, user.bestNoCoinTimeMs, user.nickname, user.rank]
+    []
   );
+
+  const engineCallbacksRef = useRef({
+    handleSkateConsumption,
+    handleSoloGameOver,
+    sendMultiplayerSync,
+  });
+  engineCallbacksRef.current = {
+    handleSkateConsumption,
+    handleSoloGameOver,
+    sendMultiplayerSync,
+  };
 
   const handleRetrySyncSummary = useCallback(async () => {
     const payload = lastFinishPayloadRef.current;
@@ -365,15 +461,31 @@ export function GameView({
     }
   }, []);
 
-  // Main Engine Lifecycle (Solo or Multiplayer)
+  // Main Engine Lifecycle (Solo or Multiplayer) — strictly keyed to [runKey, user.id, multiplayerSession?.room.id]
+  // so incidental App re-renders, user profile patches, resizes, fullscreen, or broadcasts NEVER restart an active run.
   useEffect(() => {
     const container = mountRef.current;
     if (!container) return;
+
+    const launch = latestLaunchPropsRef.current;
+    const lifecycle = lifecycleRef.current!;
+    const runMode = launch.multiplayerSession ? launch.multiplayerSession.room.mode : launch.soloMode;
+    const runMap = launch.multiplayerSession?.room.mapId || launch.mapId;
+    const { started, runInstanceId: myRunId } = lifecycle.beginRun({
+      mode: runMode,
+      mapId: runMap,
+      skinId: launch.skinId,
+      caller: `GameView.useEffect(runKey=${runKey})`,
+    });
+    if (!started) {
+      return;
+    }
 
     let cancelled = false;
     coinEventSentRef.current = false;
     crashEventSentRef.current = false;
     matchTokenRef.current = null;
+    matchStartPromiseRef.current = null;
     lastFinishPayloadRef.current = null;
     setPaused(false);
     setSummary(null);
@@ -406,14 +518,14 @@ export function GameView({
 
     void flushPendingMatchFinishes();
 
-    if (multiplayerSession) {
-      const room = multiplayerSession.room;
-      const participants = multiplayerSession.participants;
-      const opponent = participants.find((p) => p.userId !== user.id);
-      const isHost = room.hostUserId === user.id;
+    if (launch.multiplayerSession) {
+      const mp = launch.multiplayerSession;
+      const room = mp.room;
+      const participants = mp.participants;
+      const opponent = participants.find((p) => p.userId !== launch.userId);
+      const isHost = room.hostUserId === launch.userId;
       const initialServerNow = Date.now() + clockOffsetRef.current;
-      const stillCountingDown =
-        Boolean(room.startedAt && initialServerNow < room.startedAt);
+      const stillCountingDown = Boolean(room.startedAt && initialServerNow < room.startedAt);
 
       telemetryFilterRef.current.reset();
       pendingImmediateRef.current = false;
@@ -421,21 +533,22 @@ export function GameView({
       const engine = new RunnerEngine({
         container,
         mapId: room.mapId,
-        skinId,
-        quality,
+        skinId: launch.skinId,
+        quality: launch.quality,
         customConfig: activeUser.customCharacterConfig,
         capeConfig: activeUser.capeConfig,
         equippedSkateId: activeSkateId,
         skateCharges: activeSkateCharges,
-        onSkateActivated: handleSkateConsumption,
+        onSkateActivated: (sId, seq) => engineCallbacksRef.current.handleSkateConsumption(sId, seq),
+        onEngineError: (source, error) => lifecycle.recordError(source, error),
         onHudUpdate: (snapshot) => {
-          if (!cancelled) setHud(snapshot);
+          if (!cancelled && lifecycle.getRunInstanceId() === myRunId) setHud(snapshot);
         },
         onGameOver: () => {
           // Collision while slow triggers server loss/adjudication
-          if (!cancelled && !crashEventSentRef.current) {
+          if (!cancelled && !crashEventSentRef.current && lifecycle.getRunInstanceId() === myRunId) {
             crashEventSentRef.current = true;
-            void sendMultiplayerSync(room.id, { type: 'crashed' }, true);
+            void engineCallbacksRef.current.sendMultiplayerSync(room.id, { type: 'crashed' }, true);
           }
         },
         multiplayer: {
@@ -450,13 +563,13 @@ export function GameView({
           frozenAtStart: stillCountingDown,
           onDiscreteAction: () => {
             if (!cancelled) {
-              void sendMultiplayerSync(room.id, undefined, true);
+              void engineCallbacksRef.current.sendMultiplayerSync(room.id, undefined, true);
             }
           },
           onCoinCollected: (coinZ, coinLane) => {
             if (!cancelled && room.mode === 'x1' && !coinEventSentRef.current) {
               coinEventSentRef.current = true;
-              void sendMultiplayerSync(
+              void engineCallbacksRef.current.sendMultiplayerSync(
                 room.id,
                 {
                   type: 'coin_collected',
@@ -472,13 +585,14 @@ export function GameView({
               setCoopSpectating(true);
               if (!crashEventSentRef.current) {
                 crashEventSentRef.current = true;
-                void sendMultiplayerSync(room.id, { type: 'crashed' }, true);
+                void engineCallbacksRef.current.sendMultiplayerSync(room.id, { type: 'crashed' }, true);
               }
             }
           },
         },
       });
       engineRef.current = engine;
+      lifecycle.transition('JOGANDO', 'multiplayer_engine_started', myRunId);
       engine.start();
 
       // Synchronized 3, 2, 1, VAI! countdown timer
@@ -504,7 +618,7 @@ export function GameView({
       // 85ms adaptive delta-filtered telemetry loop
       const syncInterval = window.setInterval(() => {
         if (!cancelled) {
-          void sendMultiplayerSync(room.id);
+          void engineCallbacksRef.current.sendMultiplayerSync(room.id);
         }
       }, 85);
 
@@ -523,75 +637,126 @@ export function GameView({
         if (goHideTimer) window.clearTimeout(goHideTimer);
         engine.dispose();
         engineRef.current = null;
+        if (lifecycle.getRunInstanceId() === myRunId) {
+          lifecycle.exitToMenu('multiplayer_effect_cleanup');
+        }
       };
     }
 
     // Standard Solo Mode (Normal & No Coin)
     const engine = new RunnerEngine({
       container,
-      mapId,
-      skinId,
-      quality,
-      soloMode,
+      mapId: launch.mapId,
+      skinId: launch.skinId,
+      quality: launch.quality,
+      soloMode: launch.soloMode,
       customConfig: activeUser.customCharacterConfig,
       capeConfig: activeUser.capeConfig,
       equippedSkateId: activeSkateId,
       skateCharges: activeSkateCharges,
-      onSkateActivated: handleSkateConsumption,
+      onSkateActivated: (sId, seq) => engineCallbacksRef.current.handleSkateConsumption(sId, seq),
+      onPausedChange: (nextPaused, source) => {
+        if (cancelled || lifecycle.getRunInstanceId() !== myRunId) return;
+        setPaused(nextPaused);
+        if (nextPaused) {
+          lifecycle.transition('PAUSADO', source, myRunId);
+        } else {
+          lifecycle.transition('JOGANDO', source, myRunId);
+        }
+      },
+      onEngineError: (source, error) => lifecycle.recordError(source, error),
       onHudUpdate: (snapshot) => {
-        if (!cancelled) setHud(snapshot);
+        if (!cancelled && lifecycle.getRunInstanceId() === myRunId) setHud(snapshot);
       },
       onGameOver: (res) => {
-        if (!cancelled) void handleSoloGameOver(res);
+        if (!cancelled && lifecycle.getRunInstanceId() === myRunId) {
+          void engineCallbacksRef.current.handleSoloGameOver(res, myRunId);
+        }
       },
     });
     engineRef.current = engine;
 
-    const startWithRetry = async () => {
-      for (let attempt = 1; attempt <= 2; attempt += 1) {
-        try {
-          const tok = await api.startMatch(mapId, skinId, soloMode);
-          return { matchId: tok.matchId, signature: tok.signature };
-        } catch {
-          if (attempt < 2) {
-            await new Promise((r) => window.setTimeout(r, 200));
-          }
+    let bgRetryTimer: number | null = null;
+    let bgRetryInFlight = false;
+    let bgAttempts = 0;
+
+    const tryAcquireStartToken = async (reason: string) => {
+      try {
+        const tok = await api.startMatch(launch.mapId, launch.skinId, launch.soloMode);
+        if (cancelled || lifecycle.getRunInstanceId() !== myRunId) {
+          lifecycle.recordUnexpectedResetAttempt(
+            'tryAcquireStartToken',
+            `Ignored delayed startMatch token=${tok.matchId} from ${reason}`
+          );
+          return null;
         }
+        const bound = { matchId: tok.matchId, signature: tok.signature };
+        matchTokenRef.current = bound;
+        lifecycle.bindServerMatchId(myRunId, tok.matchId);
+        if (reason !== 'initial_start') {
+          lifecycle.recordReconnect(
+            `Acquired start token in background (${reason}) while preserving active run`
+          );
+        }
+        return bound;
+      } catch (err) {
+        lifecycle.recordError(`startMatch_${reason}`, err);
+        return null;
       }
-      return null;
     };
 
-    const startPromise = startWithRetry().then((tok) => {
-      if (!cancelled && tok) {
-        matchTokenRef.current = tok;
+    const scheduleBackgroundTokenRecovery = () => {
+      if (cancelled || matchTokenRef.current || lifecycle.getRunInstanceId() !== myRunId) return;
+      if (bgAttempts >= 5 || !lifecycle.isActiveMatchPhase()) return;
+      const delayMs = Math.min(10000, 2000 * Math.pow(1.5, bgAttempts));
+      bgAttempts += 1;
+      bgRetryTimer = window.setTimeout(async () => {
+        if (cancelled || matchTokenRef.current || bgRetryInFlight) return;
+        bgRetryInFlight = true;
+        const tok = await tryAcquireStartToken(`bg_retry_${bgAttempts}`);
+        bgRetryInFlight = false;
+        if (!tok && !cancelled && !matchTokenRef.current) {
+          scheduleBackgroundTokenRecovery();
+        }
+      }, delayMs);
+    };
+
+    const onBrowserOnline = () => {
+      if (cancelled || lifecycle.getRunInstanceId() !== myRunId) return;
+      lifecycle.recordReconnect('Browser online event detected during active match; preserving run');
+      if (!matchTokenRef.current && !bgRetryInFlight) {
+        bgRetryInFlight = true;
+        void tryAcquireStartToken('browser_online').finally(() => {
+          bgRetryInFlight = false;
+        });
       }
-      return tok;
-    });
+      void flushPendingMatchFinishes();
+    };
+    window.addEventListener('online', onBrowserOnline);
+
+    const startPromise = tryAcquireStartToken('initial_start');
     matchStartPromiseRef.current = startPromise;
 
     void startPromise.finally(() => {
-      if (!cancelled) {
-        engine.start();
+      if (cancelled || lifecycle.getRunInstanceId() !== myRunId) return;
+      lifecycle.transition('JOGANDO', 'solo_engine_started', myRunId);
+      engine.start();
+      if (!matchTokenRef.current) {
+        scheduleBackgroundTokenRecovery();
       }
     });
 
     return () => {
       cancelled = true;
+      if (bgRetryTimer !== null) window.clearTimeout(bgRetryTimer);
+      window.removeEventListener('online', onBrowserOnline);
       engine.dispose();
       engineRef.current = null;
+      if (lifecycle.getRunInstanceId() === myRunId) {
+        lifecycle.exitToMenu('solo_effect_cleanup');
+      }
     };
-  }, [
-    runKey,
-    mapId,
-    skinId,
-    quality,
-    soloMode,
-    multiplayerSession,
-    user.id,
-    handleSkateConsumption,
-    handleSoloGameOver,
-    sendMultiplayerSync,
-  ]);
+  }, [runKey, user.id, multiplayerSession?.room.id]);
 
   // Esc key to pause/resume (Solo mode only)
   useEffect(() => {
@@ -600,11 +765,8 @@ export function GameView({
       const activeEl = document.activeElement as HTMLElement | null;
       if (activeEl?.closest('[data-admin-overlay="true"]')) return;
       if (e.code === 'Escape' && !summary) {
-        setPaused((prev) => {
-          const next = !prev;
-          engineRef.current?.setPaused(next);
-          return next;
-        });
+        const currentPaused = lifecycleRef.current?.getPhase() === 'PAUSADO';
+        engineRef.current?.setPaused(!currentPaused, 'esc_key');
       }
     };
     window.addEventListener('keydown', onKey);
@@ -614,8 +776,7 @@ export function GameView({
   const togglePause = () => {
     if (summary || isMultiplayer) return;
     const next = !paused;
-    setPaused(next);
-    engineRef.current?.setPaused(next);
+    engineRef.current?.setPaused(next, 'hud_pause_button');
   };
 
   const toggleMute = () => {
@@ -625,6 +786,10 @@ export function GameView({
 
   const handleRestart = () => {
     if (isMultiplayer) return;
+    const lifecycle = lifecycleRef.current!;
+    const reason = summary ? 'user_gameover_retry' : 'user_pause_restart';
+    const check = lifecycle.requestRestart(reason);
+    if (!check.allowed) return;
     gameAudio.playUiClick();
     setRunKey((k) => k + 1);
   };
@@ -633,7 +798,13 @@ export function GameView({
     if (mpRoom) {
       await api.multiplayer.leaveRoom(mpRoom.id).catch(() => {});
     }
-    onExitToMenu();
+    lifecycleRef.current?.exitToMenu('user_leave_multiplayer');
+    onExitToMenuRef.current();
+  };
+
+  const handleExitSoloToMenu = () => {
+    lifecycleRef.current?.exitToMenu('user_exit_solo');
+    onExitToMenuRef.current();
   };
 
   const opponentParticipant = mpParticipants.find((p) => p.userId !== user.id);
@@ -830,7 +1001,10 @@ export function GameView({
               {onToggleFullscreen && (
                 <button
                   type="button"
-                  onClick={() => void onToggleFullscreen()}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    void onToggleFullscreen();
+                  }}
                   title={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
                   aria-label={isFullscreen ? 'Sair da tela cheia' : 'Tela cheia'}
                   className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold ${
@@ -851,7 +1025,10 @@ export function GameView({
               {onToggleMobileMode && (
                 <button
                   type="button"
-                  onClick={onToggleMobileMode}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    onToggleMobileMode();
+                  }}
                   title={mobileMode ? 'Modo Mobile ativo (toque para PC)' : 'Ativar Modo Mobile'}
                   aria-label="Alternar Modo Mobile"
                   className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border transition cursor-pointer flex items-center justify-center gap-1.5 text-xs font-bold ${
@@ -866,7 +1043,10 @@ export function GameView({
 
               <button
                 type="button"
-                onClick={() => setShowTouchButtons((v) => !v)}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  setShowTouchButtons((v) => !v);
+                }}
                 title={showTouchButtons ? 'Ocultar botões na tela' : 'Mostrar botões na tela'}
                 aria-label="Controles na tela"
                 className={`min-w-[44px] min-h-[44px] p-2.5 rounded-xl border transition cursor-pointer flex items-center justify-center ${
@@ -881,7 +1061,10 @@ export function GameView({
               {liveTexts.length > 0 && (
                 <button
                   type="button"
-                  onClick={() => setLiveOverlayEnabled((v) => !v)}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    setLiveOverlayEnabled((v) => !v);
+                  }}
                   title={liveOverlayEnabled ? 'Ocultar overlay Modo Live' : 'Mostrar overlay Modo Live'}
                   aria-label="Alternar Modo Live"
                   className={`min-w-[44px] min-h-[44px] px-2.5 rounded-xl border transition cursor-pointer flex items-center justify-center gap-1 text-xs font-bold ${
@@ -897,7 +1080,10 @@ export function GameView({
 
               <button
                 type="button"
-                onClick={toggleMute}
+                onClick={(e) => {
+                  e.currentTarget.blur();
+                  toggleMute();
+                }}
                 title={muted ? 'Ativar som' : 'Silenciar'}
                 aria-label={muted ? 'Ativar som' : 'Silenciar'}
                 className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-slate-200 hover:bg-slate-800 transition cursor-pointer flex items-center justify-center"
@@ -918,7 +1104,10 @@ export function GameView({
               ) : (
                 <button
                   type="button"
-                  onClick={togglePause}
+                  onClick={(e) => {
+                    e.currentTarget.blur();
+                    togglePause();
+                  }}
                   title="Pausar (Esc)"
                   aria-label="Pausar"
                   className="min-w-[44px] min-h-[44px] p-2.5 rounded-xl bg-slate-950/90 border border-slate-700 text-white hover:bg-slate-800 transition cursor-pointer flex items-center justify-center"
@@ -1207,7 +1396,7 @@ export function GameView({
               )}
               <button
                 type="button"
-                onClick={() => onExitToMenu()}
+                onClick={handleExitSoloToMenu}
                 className="w-full min-h-[48px] py-3 rounded-xl bg-slate-950 border border-slate-700 hover:bg-slate-800 text-slate-300 font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Home className="w-4 h-4" /> VOLTAR AO MENU
@@ -1342,7 +1531,7 @@ export function GameView({
               </button>
               <button
                 type="button"
-                onClick={() => onExitToMenu()}
+                onClick={handleExitSoloToMenu}
                 className="py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-display font-bold flex items-center justify-center gap-2 cursor-pointer"
               >
                 <Home className="w-4 h-4" /> MENU

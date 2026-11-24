@@ -38,6 +38,7 @@ import {
   adminRevokeSecretSkinHandler,
   adminSearchPlayersHandler,
   adminStatsHandler,
+  clientMatchDiagnosticHandler,
   equipSkinHandler,
   finishMatchHandler,
   leaderboardHandler,
@@ -143,6 +144,7 @@ app.post('/api/admin/logout', wrap(adminLogoutHandler));
 app.post('/api/skins/equip', requireAuth, wrap(equipSkinHandler));
 app.post('/api/match/start', requireAuth, wrap(startMatchHandler));
 app.post('/api/match/finish', requireAuth, wrap(finishMatchHandler));
+app.post('/api/match/diagnostic', requireAuth, wrap(clientMatchDiagnosticHandler));
 app.get('/api/leaderboard', wrap(leaderboardHandler));
 app.get('/api/profile/:nickname', wrap(publicProfileHandler));
 app.get('/api/social/feed', wrap(socialFeedHandler));

@@ -170,8 +170,11 @@ export class RunnerEngine {
 
   private frameId = 0;
   private timerId = 0;
+  private loopScheduled = false;
+  private gameOverEmitted = false;
   private lastTimestamp = 0;
   private totalElapsed = 0;
+  private lastOpenLane: number | undefined = undefined;
 
   // Player physics
   private targetLane = 0; // -1, 0, 1
@@ -223,11 +226,16 @@ export class RunnerEngine {
   private skateUseSeq = 0;
   private onSkateActivated?: (skateId: SkateId, useSeq: number) => void;
   private onSkateAbsorbed?: (skateId: SkateId) => void;
+  private onPausedChange?: (paused: boolean, source: string) => void;
+  private onEngineError?: (source: string, error: unknown) => void;
   private remoteEquippedSkateId: SkateId | null = null;
 
   private keyDownHandler: (e: KeyboardEvent) => void;
   private blurHandler: () => void;
+  private visibilityHandler: () => void;
   private resizeHandler: () => void;
+  private webglContextLostHandler: (e: Event) => void;
+  private webglContextRestoredHandler: () => void;
   private resizeObserver?: ResizeObserver;
   private portraitFactor = 0;
   private touchStartX = 0;
@@ -251,6 +259,8 @@ export class RunnerEngine {
     skateCharges?: number;
     onSkateActivated?: (skateId: SkateId, useSeq: number) => void;
     onSkateAbsorbed?: (skateId: SkateId) => void;
+    onPausedChange?: (paused: boolean, source: string) => void;
+    onEngineError?: (source: string, error: unknown) => void;
     onHudUpdate: (hud: HudSnapshot) => void;
     onGameOver: (result: RunResultPayload) => void;
     multiplayer?: MultiplayerRunnerOptions;
@@ -264,6 +274,8 @@ export class RunnerEngine {
     this.skateChargesRemaining = Math.max(0, opts.skateCharges ?? 0);
     this.onSkateActivated = opts.onSkateActivated;
     this.onSkateAbsorbed = opts.onSkateAbsorbed;
+    this.onPausedChange = opts.onPausedChange;
+    this.onEngineError = opts.onEngineError;
     this.remoteEquippedSkateId = opts.multiplayer?.opponentEquippedSkateId ?? null;
     this.onHudUpdate = opts.onHudUpdate;
     this.onGameOver = opts.onGameOver;
@@ -431,13 +443,39 @@ export class RunnerEngine {
     };
 
     this.blurHandler = () => {
-      // Never auto-pause active multiplayer matches on window blur
+      // Never auto-pause active multiplayer matches on window blur; preserve solo state cleanly
       if (!this.multiplayer && this.running && !this.paused && !this.ended) {
-        this.setPaused(true);
+        this.setPaused(true, 'window_blur');
+      }
+    };
+
+    this.visibilityHandler = () => {
+      if (
+        typeof document !== 'undefined' &&
+        document.hidden &&
+        !this.multiplayer &&
+        this.running &&
+        !this.paused &&
+        !this.ended
+      ) {
+        this.setPaused(true, 'visibility_hidden');
       }
     };
 
     this.resizeHandler = () => this.handleResize();
+
+    this.webglContextLostHandler = (e: Event) => {
+      e.preventDefault();
+      this.onEngineError?.('webgl_context_lost', 'WebGL context lost');
+      if (!this.multiplayer && this.running && !this.paused && !this.ended) {
+        this.setPaused(true, 'webgl_context_lost');
+      }
+    };
+
+    this.webglContextRestoredHandler = () => {
+      this.onEngineError?.('webgl_context_restored', 'WebGL context restored without resetting run');
+      this.handleResize();
+    };
 
     this.touchStartHandler = (e: TouchEvent) => {
       if (e.touches.length !== 1 || !this.running || this.paused || this.ended) return;
@@ -481,12 +519,18 @@ export class RunnerEngine {
 
     window.addEventListener('keydown', this.keyDownHandler);
     window.addEventListener('blur', this.blurHandler);
+    document.addEventListener('visibilitychange', this.visibilityHandler);
     window.addEventListener('resize', this.resizeHandler);
     window.addEventListener('orientationchange', this.resizeHandler);
     if (typeof ResizeObserver !== 'undefined') {
       this.resizeObserver = new ResizeObserver(() => this.handleResize());
       this.resizeObserver.observe(this.container);
     }
+    this.ctx.renderer.domElement.addEventListener('webglcontextlost', this.webglContextLostHandler);
+    this.ctx.renderer.domElement.addEventListener(
+      'webglcontextrestored',
+      this.webglContextRestoredHandler
+    );
     this.ctx.renderer.domElement.addEventListener('touchstart', this.touchStartHandler, { passive: true });
     this.ctx.renderer.domElement.addEventListener('touchmove', this.touchMoveHandler, { passive: false });
     this.ctx.renderer.domElement.addEventListener('touchend', this.touchEndHandler, { passive: true });
@@ -501,12 +545,14 @@ export class RunnerEngine {
     this.scheduleNextTick();
   }
 
-  public setPaused(paused: boolean): void {
-    if (this.multiplayer) return;
+  public setPaused(paused: boolean, source = 'manual'): void {
+    if (this.multiplayer || this.ended) return;
+    if (this.paused === paused) return;
     this.paused = paused;
     if (!paused) {
       this.lastTimestamp = performance.now();
     }
+    this.onPausedChange?.(paused, source);
   }
 
   public setFrozen(frozen: boolean): void {
@@ -681,17 +727,24 @@ export class RunnerEngine {
   }
 
   private scheduleNextTick(): void {
-    if (this.disposed) return;
+    if (this.disposed || !this.running || this.loopScheduled) return;
+    this.loopScheduled = true;
     if (this.ctx.isSoftwareGl) {
       scheduleSoftwareFrame(
         this.ctx.renderer,
-        () => this.tick(),
+        () => {
+          this.loopScheduled = false;
+          this.tick();
+        },
         (id) => {
           this.timerId = id;
         }
       );
     } else {
-      this.frameId = requestAnimationFrame(() => this.tick());
+      this.frameId = requestAnimationFrame(() => {
+        this.loopScheduled = false;
+        this.tick();
+      });
     }
   }
 
@@ -720,73 +773,77 @@ export class RunnerEngine {
   }
 
   private tick(): void {
-    if (this.disposed) return;
-    const now = performance.now();
-    const rawDt = (now - this.lastTimestamp) / 1000;
-    this.lastTimestamp = now;
-    const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
+    if (this.disposed || !this.running) return;
+    try {
+      const now = performance.now();
+      const rawDt = (now - this.lastTimestamp) / 1000;
+      this.lastTimestamp = now;
+      const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
 
-    if (this.frozen) {
-      this.totalElapsed += dt;
-      this.currentAnimState = 'idle';
-      animateCharacterRig(this.playerRig, 'idle', this.totalElapsed, dt);
-      if (this.remoteRig) {
-        animateCharacterRig(this.remoteRig, 'idle', this.totalElapsed, dt);
-      }
-      this.camera.position.set(
-        0,
-        4.1 + this.portraitFactor * 0.5,
-        6.9 + this.portraitFactor * 1.4
-      );
-      this.camera.lookAt(0, 1.35, -12);
-    } else if (this.coopLocalDead && !this.ended) {
-      this.totalElapsed += dt;
-      this.updateRemoteVisuals(dt);
-      animateCharacterRig(this.playerRig, 'crash', this.totalElapsed, dt);
-      animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
-      this.updateParticles(dt);
-
-      const focusPos = this.remoteRig ? this.remoteRig.root.position : this.playerRig.root.position;
-      for (const chunk of this.chunks) {
-        if (chunk.group.position.z - focusPos.z > CHUNK_LENGTH * 1.1) {
-          chunk.group.position.z -= NUM_CHUNKS * CHUNK_LENGTH;
+      if (this.frozen) {
+        this.totalElapsed += dt;
+        this.currentAnimState = 'idle';
+        animateCharacterRig(this.playerRig, 'idle', this.totalElapsed, dt);
+        if (this.remoteRig) {
+          animateCharacterRig(this.remoteRig, 'idle', this.totalElapsed, dt);
         }
-      }
-      while (this.nextSpawnZ > focusPos.z - 140) {
-        this.spawnWave();
-      }
-      this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, focusPos.x * 0.65, 8, dt);
-      this.camera.position.y = THREE.MathUtils.damp(
-        this.camera.position.y,
-        Math.max(4.1, focusPos.y + 3.8) + this.portraitFactor * 0.45,
-        8,
-        dt
-      );
-      this.camera.position.z = THREE.MathUtils.damp(
-        this.camera.position.z,
-        focusPos.z + 6.9 + this.portraitFactor * 1.4,
-        8,
-        dt
-      );
-      this.camera.lookAt(focusPos.x * 0.45, focusPos.y + 1.35, focusPos.z - 12);
-    } else if (!this.paused && !this.ended) {
-      this.stepSimulation(dt);
-    } else if (this.ended) {
-      this.totalElapsed += dt;
-      animateCharacterRig(this.playerRig, this.endAnimState, this.totalElapsed, dt);
-      animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
-      if (this.remoteRig) {
-        animateCharacterRig(
-          this.remoteRig,
-          this.remoteLastAlive ? 'idle' : 'crash',
-          this.totalElapsed,
+        this.camera.position.set(
+          0,
+          4.1 + this.portraitFactor * 0.5,
+          6.9 + this.portraitFactor * 1.4
+        );
+        this.camera.lookAt(0, 1.35, -12);
+      } else if (this.coopLocalDead && !this.ended) {
+        this.totalElapsed += dt;
+        this.updateRemoteVisuals(dt);
+        animateCharacterRig(this.playerRig, 'crash', this.totalElapsed, dt);
+        animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
+        this.updateParticles(dt);
+
+        const focusPos = this.remoteRig ? this.remoteRig.root.position : this.playerRig.root.position;
+        for (const chunk of this.chunks) {
+          if (chunk.group.position.z - focusPos.z > CHUNK_LENGTH * 1.1) {
+            chunk.group.position.z -= NUM_CHUNKS * CHUNK_LENGTH;
+          }
+        }
+        while (this.nextSpawnZ > focusPos.z - 140) {
+          this.spawnWave();
+        }
+        this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, focusPos.x * 0.65, 8, dt);
+        this.camera.position.y = THREE.MathUtils.damp(
+          this.camera.position.y,
+          Math.max(4.1, focusPos.y + 3.8) + this.portraitFactor * 0.45,
+          8,
           dt
         );
+        this.camera.position.z = THREE.MathUtils.damp(
+          this.camera.position.z,
+          focusPos.z + 6.9 + this.portraitFactor * 1.4,
+          8,
+          dt
+        );
+        this.camera.lookAt(focusPos.x * 0.45, focusPos.y + 1.35, focusPos.z - 12);
+      } else if (!this.paused && !this.ended) {
+        this.stepSimulation(dt);
+      } else if (this.ended) {
+        this.totalElapsed += dt;
+        animateCharacterRig(this.playerRig, this.endAnimState, this.totalElapsed, dt);
+        animateCharacterRig(this.policeRig, 'idle', this.totalElapsed, dt);
+        if (this.remoteRig) {
+          animateCharacterRig(
+            this.remoteRig,
+            this.remoteLastAlive ? 'idle' : 'crash',
+            this.totalElapsed,
+            dt
+          );
+        }
       }
-    }
 
-    this.ctx.renderer.render(this.scene, this.camera);
-    if (!this.disposed) {
+      this.ctx.renderer.render(this.scene, this.camera);
+    } catch (err) {
+      this.onEngineError?.('runner_tick', err);
+    }
+    if (!this.disposed && this.running) {
       this.scheduleNextTick();
     }
   }
@@ -1001,11 +1058,15 @@ export class RunnerEngine {
     // Update Obstacles & Check Collisions
     this.updateObstaclesAndCollisions(dt);
 
-    // Update Coins & Magnet
-    this.updateCoins(dt);
+    if (!this.ended && !this.coopLocalDead) {
+      // Update Coins & Magnet (never process coin pickup on the same frame after obstacle death)
+      this.updateCoins(dt);
+    }
 
-    // Update PowerUps
-    this.updatePowerUps(dt);
+    if (!this.ended && !this.coopLocalDead) {
+      // Update PowerUps
+      this.updatePowerUps(dt);
+    }
 
     // Update Particles
     this.updateParticles(dt);
@@ -1200,7 +1261,8 @@ export class RunnerEngine {
     if (this.multiplayer?.mode === 'coop') {
       this.coopLocalDead = true;
       this.multiplayer.onLocalCrashed?.(resultPayload);
-    } else {
+    } else if (!this.gameOverEmitted) {
+      this.gameOverEmitted = true;
       this.ended = true;
       this.endAnimState = 'crash';
       this.onGameOver(resultPayload);
@@ -1208,8 +1270,10 @@ export class RunnerEngine {
   }
 
   private updateCoins(dt: number): void {
+    if (this.ended || this.coopLocalDead) return;
     const magnetOn = this.powerTimers.magnet > 0;
     for (let i = this.coins.length - 1; i >= 0; i--) {
+      if (this.ended || this.coopLocalDead) return;
       const coin = this.coins[i];
       if (coin.collected || coin.z - this.playerZ > 16) {
         this.scene.remove(coin.mesh);
@@ -1243,6 +1307,8 @@ export class RunnerEngine {
 
         const isStrictNoCoinSolo = !this.multiplayer && this.soloMode === 'no_coin';
         if (isStrictNoCoinSolo) {
+          if (this.gameOverEmitted || this.ended) return;
+          this.gameOverEmitted = true;
           this.collectedCoin = true;
           gameAudio.playTimerFrozen();
           this.spawnBurst(coin.x, coin.y, coin.z, 0xfacc15, 10);
@@ -1350,7 +1416,13 @@ export class RunnerEngine {
   }
 
   private spawnWave(): void {
-    const wave = generateTrackWave(this.rng, this.waveIndex++, this.nextSpawnZ);
+    const wave = generateTrackWave(
+      this.rng,
+      this.waveIndex++,
+      this.nextSpawnZ,
+      this.lastOpenLane
+    );
+    this.lastOpenLane = wave.openLane;
     for (const obs of wave.obstacles) {
       this.addObstacle(obs.kind, obs.lane, obs.z);
     }
@@ -1383,14 +1455,24 @@ export class RunnerEngine {
     if (this.disposed) return;
     this.disposed = true;
     this.running = false;
+    this.loopScheduled = false;
     cancelAnimationFrame(this.frameId);
     clearTimeout(this.timerId);
 
     window.removeEventListener('keydown', this.keyDownHandler);
     window.removeEventListener('blur', this.blurHandler);
+    document.removeEventListener('visibilitychange', this.visibilityHandler);
     window.removeEventListener('resize', this.resizeHandler);
     window.removeEventListener('orientationchange', this.resizeHandler);
     this.resizeObserver?.disconnect();
+    this.ctx.renderer.domElement.removeEventListener(
+      'webglcontextlost',
+      this.webglContextLostHandler
+    );
+    this.ctx.renderer.domElement.removeEventListener(
+      'webglcontextrestored',
+      this.webglContextRestoredHandler
+    );
     this.ctx.renderer.domElement.removeEventListener('touchstart', this.touchStartHandler);
     this.ctx.renderer.domElement.removeEventListener('touchmove', this.touchMoveHandler);
     this.ctx.renderer.domElement.removeEventListener('touchend', this.touchEndHandler);

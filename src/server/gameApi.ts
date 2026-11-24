@@ -333,6 +333,36 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
   });
 }
 
+export async function clientMatchDiagnosticHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const user = req.authUser!;
+  const { matchId, mode, stage, status, detail } = req.body ?? {};
+  const safeMatchId =
+    typeof matchId === 'string' && matchId.trim() ? matchId.trim().slice(0, 64) : 'client_run';
+  const rawMode = typeof mode === 'string' && mode.trim() ? mode.trim().slice(0, 24) : 'no_coin';
+  const safeMode: SoloGameMode = rawMode === 'normal' ? 'normal' : 'no_coin';
+  const safeStage = typeof stage === 'string' && stage.trim() ? stage.trim().slice(0, 40) : 'client';
+  const safeStatus =
+    typeof status === 'string' && status.trim() ? status.trim().slice(0, 32) : 'info';
+  const baseDetail = typeof detail === 'string' ? detail : '';
+  const safeDetail = (
+    rawMode !== safeMode ? `[mode=${rawMode}] ${baseDetail}` : baseDetail
+  ).slice(0, 300);
+
+  await repoLogMatchDiagnostic({
+    userId: user.id,
+    matchId: safeMatchId,
+    mode: safeMode,
+    stage: safeStage,
+    status: safeStatus,
+    detail: safeDetail,
+  });
+
+  res.json({ ok: true });
+}
+
 export async function leaderboardHandler(req: AuthedRequest, res: Response): Promise<void> {
   const rawCategory = String(req.query.category || 'no_coin');
   const category: LeaderboardCategory = rawCategory === 'coins' ? 'coins' : 'no_coin';

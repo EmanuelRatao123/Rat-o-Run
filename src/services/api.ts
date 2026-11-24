@@ -63,10 +63,24 @@ export function getMemoryAdminToken(): string | null {
   return memoryAdminToken;
 }
 
-async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const headers = new Headers(init.headers);
+export class ApiError extends Error {
+  public readonly status: number;
+
+  constructor(message: string, status: number) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
+async function apiFetch<T>(
+  path: string,
+  init: RequestInit & { timeoutMs?: number } = {}
+): Promise<T> {
+  const { timeoutMs, ...fetchInit } = init;
+  const headers = new Headers(fetchInit.headers);
   headers.set('X-Requested-With', 'XMLHttpRequest');
-  if (init.body && !headers.has('Content-Type')) {
+  if (fetchInit.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
   if (memorySessionToken) {
@@ -76,17 +90,30 @@ async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
     headers.set('X-Admin-Token', memoryAdminToken);
   }
 
-  const res = await fetch(path, {
-    ...init,
-    headers,
-    credentials: 'include',
-  });
-
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(data.error || `Erro na requisição (${res.status})`);
+  const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  let timeoutId: number | undefined;
+  if (controller && timeoutMs && timeoutMs > 0 && typeof window !== 'undefined') {
+    timeoutId = window.setTimeout(() => controller.abort(), timeoutMs);
   }
-  return data as T;
+
+  try {
+    const res = await fetch(path, {
+      ...fetchInit,
+      signal: fetchInit.signal ?? controller?.signal,
+      headers,
+      credentials: 'include',
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new ApiError(data.error || `Erro na requisição (${res.status})`, res.status);
+    }
+    return data as T;
+  } finally {
+    if (timeoutId !== undefined && typeof window !== 'undefined') {
+      window.clearTimeout(timeoutId);
+    }
+  }
 }
 
 export const api = {
@@ -192,6 +219,7 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify({ mapId, skinId, mode }),
+        timeoutMs: 3000,
       }
     ),
 
@@ -209,7 +237,21 @@ export const api = {
     apiFetch<{ summary: MatchSummary; idempotent?: boolean }>('/api/match/finish', {
       method: 'POST',
       body: JSON.stringify(payload),
+      timeoutMs: 6000,
     }),
+
+  reportMatchDiagnostic: (payload: {
+    matchId?: string;
+    mode?: string;
+    stage: string;
+    status: string;
+    detail: string;
+  }) =>
+    apiFetch<{ ok: boolean }>('/api/match/diagnostic', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+      timeoutMs: 3000,
+    }).catch(() => ({ ok: false })),
 
   getLeaderboard: (params?: {
     category?: LeaderboardCategory;
