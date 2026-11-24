@@ -726,3 +726,9 @@ export const matchSkateUses = pgTable(
   },
   (table) => [index('match_skate_uses_user_idx').on(table.userId, table.createdAt)]
 );
+
+export const serverRuntimeSecrets = pgTable('server_runtime_secrets', {
+  id: text('id').primaryKey(),
+  secretHex: text('secret_hex').notNull(),
+  createdAt: text('created_at').notNull(),
+});

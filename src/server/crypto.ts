@@ -2,17 +2,49 @@ import crypto from 'crypto';
 
 declare global {
   var _rataoSessionSecret: string | undefined;
+  var _rataoClusterSecret: string | undefined;
 }
 
-function getSigningSecret(): string {
-  const envSecret = process.env.SESSION_SECRET?.trim();
-  if (envSecret && envSecret.length >= 16) {
-    return envSecret;
+export type SigningSecretSource = 'env' | 'env_derived' | 'neon_cluster' | 'memory';
+
+export function hasEnvSigningSecret(): boolean {
+  return Boolean(
+    process.env.SESSION_SECRET?.trim() || process.env.MATCH_SIGNING_SECRET?.trim()
+  );
+}
+
+export function setClusterSigningSecret(secretHex: string): void {
+  const clean = secretHex.trim();
+  if (clean.length >= 32) {
+    global._rataoClusterSecret = clean;
+  }
+}
+
+export function getSigningSecretInfo(): { source: SigningSecretSource; secret: string } {
+  const rawEnvSecret =
+    process.env.SESSION_SECRET?.trim() || process.env.MATCH_SIGNING_SECRET?.trim() || '';
+  if (rawEnvSecret.length >= 16) {
+    return { source: 'env', secret: rawEnvSecret };
+  }
+  if (rawEnvSecret.length > 0) {
+    // Deterministically stretch shorter configured secrets so all serverless instances share the exact same key
+    const derived = crypto
+      .createHash('sha256')
+      .update(`ratao_match_key_v1:${rawEnvSecret}`)
+      .digest('hex');
+    return { source: 'env_derived', secret: derived };
+  }
+  if (global._rataoClusterSecret && global._rataoClusterSecret.length >= 32) {
+    return { source: 'neon_cluster', secret: global._rataoClusterSecret };
   }
   if (!global._rataoSessionSecret) {
     global._rataoSessionSecret = crypto.randomBytes(32).toString('hex');
   }
-  return global._rataoSessionSecret;
+  return { source: 'memory', secret: global._rataoSessionSecret };
+}
+
+function getSigningSecret(): string {
+  return getSigningSecretInfo().secret;
 }
 
 export async function hashPassword(password: string): Promise<string> {
@@ -43,16 +75,35 @@ export async function verifyPassword(password: string, storedHash: string): Prom
   return crypto.timingSafeEqual(expected, derived);
 }
 
+export function safeTimingEqualHex(expectedHex: string, candidateHex: string): boolean {
+  if (typeof expectedHex !== 'string' || typeof candidateHex !== 'string') {
+    return false;
+  }
+  const normA = expectedHex.trim().toLowerCase();
+  const normB = candidateHex.trim().toLowerCase();
+  if (
+    normA.length === 0 ||
+    normA.length !== normB.length ||
+    normA.length % 2 !== 0 ||
+    !/^[0-9a-f]+$/.test(normA) ||
+    !/^[0-9a-f]+$/.test(normB)
+  ) {
+    return false;
+  }
+  const a = Buffer.from(normA, 'hex');
+  const b = Buffer.from(normB, 'hex');
+  if (a.length === 0 || a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 export function signHmac(data: string): string {
   return crypto.createHmac('sha256', getSigningSecret()).update(data).digest('hex');
 }
 
 export function verifyHmac(data: string, signature: string): boolean {
+  if (typeof signature !== 'string') return false;
   const expected = signHmac(data);
-  const a = Buffer.from(expected, 'hex');
-  const b = Buffer.from(signature, 'hex');
-  if (a.length !== b.length) return false;
-  return crypto.timingSafeEqual(a, b);
+  return safeTimingEqualHex(expected, signature);
 }
 
 export function generateToken(bytes = 32): string {

@@ -1,5 +1,5 @@
 import { MatchSummary } from '../shared/constants.ts';
-import { api } from './api.ts';
+import { ApiError, api } from './api.ts';
 
 export interface PendingMatchFinishPayload {
   matchId: string;
@@ -53,14 +53,23 @@ export function removePendingMatchFinish(matchId: string): void {
   writeQueue(next);
 }
 
-function isRetriableError(err: unknown): boolean {
+export function isRetriableMatchError(err: unknown): boolean {
+  if (err instanceof ApiError) {
+    if (err.status === 408 || err.status === 429 || err.status >= 500) {
+      return true;
+    }
+    if (err.status >= 400 && err.status < 500) {
+      return false;
+    }
+  }
   if (!(err instanceof Error)) return true;
   const msg = err.message.toLowerCase();
   if (
     msg.includes('assinatura') ||
     msg.includes('não autenticado') ||
     msg.includes('sessão expirada') ||
-    msg.includes('partida não encontrada')
+    msg.includes('partida inválida') ||
+    msg.includes('incompatível')
   ) {
     return false;
   }
@@ -83,7 +92,7 @@ export async function submitMatchFinishWithRetry(
       return res;
     } catch (err) {
       lastError = err;
-      if (!isRetriableError(err)) {
+      if (!isRetriableMatchError(err)) {
         removePendingMatchFinish(payload.matchId);
         throw err;
       }
@@ -107,7 +116,7 @@ export async function flushPendingMatchFinishes(): Promise<number> {
       await api.finishMatch(item);
       flushed += 1;
     } catch (err) {
-      if (isRetriableError(err)) {
+      if (isRetriableMatchError(err)) {
         remaining.push(item);
       }
     }

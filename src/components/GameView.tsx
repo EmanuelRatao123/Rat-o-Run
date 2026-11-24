@@ -36,6 +36,7 @@ import { api } from '../services/api.ts';
 import { syncMatchToFirestore } from '../services/firestoreSync.ts';
 import {
   flushPendingMatchFinishes,
+  isRetriableMatchError,
   PendingMatchFinishPayload,
   submitMatchFinishWithRetry,
 } from '../services/pendingMatches.ts';
@@ -388,7 +389,19 @@ export function GameView({
           return;
         }
         lastFinishPayloadRef.current = null;
-        setSummary(res.summary);
+        const confirmedSummary: MatchSummary = {
+          ...res.summary,
+          confirmedByServer: true,
+        };
+        setSummary(confirmedSummary);
+        if (onUserPatchRef.current) {
+          onUserPatchRef.current({
+            ...(confirmedSummary.isNewPersonalRecord && confirmedSummary.mode === 'no_coin'
+              ? { bestNoCoinTimeMs: confirmedSummary.noCoinTimeMs }
+              : {}),
+            rank: confirmedSummary.globalRank,
+          });
+        }
         lifecycle.completeResult(expectedRunId, `recorded:${endReason}`);
         void syncMatchToFirestore({
           matchId: token.matchId,
@@ -405,10 +418,16 @@ export function GameView({
         if (expectedRunId !== lifecycle.getRunInstanceId()) {
           return;
         }
+        const retriable = isRetriableMatchError(err);
+        if (!retriable) {
+          lastFinishPayloadRef.current = null;
+        }
         setSubmitError(
           err instanceof Error
-            ? `${err.message} (Resultado salvo localmente para reenvio automático.)`
-            : 'Erro ao registrar partida. Resultado salvo localmente para reenvio automático.'
+            ? retriable
+              ? `${err.message} (Resultado salvo localmente para reenvio automático.)`
+              : `${err.message} (Resultado não confirmado pelo servidor.)`
+            : 'Erro ao registrar partida. Resultado aguardando confirmação no servidor.'
         );
         setSummary({
           matchId: matchTokenRef.current?.matchId || 'local',
@@ -422,11 +441,11 @@ export function GameView({
           score: result.score,
           durationMs: result.durationMs,
           endReason: result.endReason,
-          isNewPersonalRecord:
-            runSoloMode === 'no_coin' && result.noCoinTimeMs > snapshotUser.bestNoCoinTimeMs,
+          isNewPersonalRecord: false,
           globalRank: snapshotUser.rank ?? null,
+          confirmedByServer: false,
         });
-        lifecycle.completeResult(expectedRunId, `queued_offline:${endReason}`);
+        lifecycle.completeResult(expectedRunId, `${retriable ? 'queued_offline' : 'rejected_server'}:${endReason}`);
       } finally {
         setSubmitting(false);
       }
@@ -453,8 +472,20 @@ export function GameView({
     try {
       const res = await submitMatchFinishWithRetry(payload, 2);
       lastFinishPayloadRef.current = null;
-      setSummary(res.summary);
+      const confirmedSummary: MatchSummary = { ...res.summary, confirmedByServer: true };
+      setSummary(confirmedSummary);
+      if (onUserPatchRef.current) {
+        onUserPatchRef.current({
+          ...(confirmedSummary.isNewPersonalRecord && confirmedSummary.mode === 'no_coin'
+            ? { bestNoCoinTimeMs: confirmedSummary.noCoinTimeMs }
+            : {}),
+          rank: confirmedSummary.globalRank,
+        });
+      }
     } catch (err) {
+      if (!isRetriableMatchError(err)) {
+        lastFinishPayloadRef.current = null;
+      }
       setSubmitError(err instanceof Error ? err.message : 'Erro ao sincronizar partida.');
     } finally {
       setSubmitting(false);
@@ -681,6 +712,9 @@ export function GameView({
     let bgAttempts = 0;
 
     const tryAcquireStartToken = async (reason: string) => {
+      if (matchTokenRef.current) {
+        return matchTokenRef.current;
+      }
       try {
         const tok = await api.startMatch(launch.mapId, launch.skinId, launch.soloMode);
         if (cancelled || lifecycle.getRunInstanceId() !== myRunId) {
@@ -689,6 +723,9 @@ export function GameView({
             `Ignored delayed startMatch token=${tok.matchId} from ${reason}`
           );
           return null;
+        }
+        if (matchTokenRef.current) {
+          return matchTokenRef.current;
         }
         const bound = { matchId: tok.matchId, signature: tok.signature };
         matchTokenRef.current = bound;
@@ -736,18 +773,26 @@ export function GameView({
 
     const startPromise = tryAcquireStartToken('initial_start');
     matchStartPromiseRef.current = startPromise;
-
-    void startPromise.finally(() => {
-      if (cancelled || lifecycle.getRunInstanceId() !== myRunId) return;
+    let engineBooted = false;
+    const bootSoloEngine = () => {
+      if (engineBooted || cancelled || lifecycle.getRunInstanceId() !== myRunId) return;
+      engineBooted = true;
       lifecycle.transition('JOGANDO', 'solo_engine_started', myRunId);
       engine.start();
-      if (!matchTokenRef.current) {
+    };
+
+    const bootWaitTimer = window.setTimeout(bootSoloEngine, 1500);
+    void startPromise.finally(() => {
+      window.clearTimeout(bootWaitTimer);
+      bootSoloEngine();
+      if (!cancelled && lifecycle.getRunInstanceId() === myRunId && !matchTokenRef.current) {
         scheduleBackgroundTokenRecovery();
       }
     });
 
     return () => {
       cancelled = true;
+      window.clearTimeout(bootWaitTimer);
       if (bgRetryTimer !== null) window.clearTimeout(bgRetryTimer);
       window.removeEventListener('online', onBrowserOnline);
       engine.dispose();
@@ -1419,11 +1464,14 @@ export function GameView({
                     : 'CAPTURADO PELO POLICIAL!'}
               </span>
               <h2 className="font-display text-3xl font-bold text-white">FIM DE PARTIDA</h2>
-              {summary.mode === 'no_coin' && summary.isNewPersonalRecord && (
-                <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 text-xs font-extrabold">
-                  <Crown className="w-4 h-4" /> NOVO RECORDE PESSOAL SEM MOEDAS!
-                </div>
-              )}
+              {summary.mode === 'no_coin' &&
+                summary.isNewPersonalRecord &&
+                summary.confirmedByServer !== false &&
+                !submitError && (
+                  <div className="mt-2 inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-amber-500/20 border border-amber-400 text-amber-300 text-xs font-extrabold">
+                    <Crown className="w-4 h-4" /> NOVO RECORDE PESSOAL SEM MOEDAS!
+                  </div>
+                )}
             </div>
 
             {skinId === 'cristiano_ronaldo' && (
@@ -1514,7 +1562,13 @@ export function GameView({
                   <div className="bg-slate-950/80 border border-slate-800 rounded-xl p-3">
                     <div className="text-[11px] text-slate-400 font-bold uppercase">Ranking</div>
                     <div className="font-mono-num text-lg font-bold text-emerald-400">
-                      {submitting ? '...' : summary.globalRank ? `#${summary.globalRank}` : '—'}
+                      {submitting
+                        ? '...'
+                        : summary.confirmedByServer === false
+                          ? 'Não salvo'
+                          : summary.globalRank
+                            ? `#${summary.globalRank}`
+                            : '—'}
                     </div>
                   </div>
                 </div>

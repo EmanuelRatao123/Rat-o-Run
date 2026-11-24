@@ -13,6 +13,7 @@ import {
   playerWalletStats,
   pollVotes,
   polls,
+  serverRuntimeSecrets,
   sessions,
   skinGifts,
   skinGrantHistory,
@@ -58,7 +59,13 @@ import {
   isSpecialUnlockableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
-import { generateToken, hashPassword } from './crypto.ts';
+import {
+  generateToken,
+  getSigningSecretInfo,
+  hasEnvSigningSecret,
+  hashPassword,
+  setClusterSigningSecret,
+} from './crypto.ts';
 import {
   ActiveMatchToken,
   StoredMatch,
@@ -107,6 +114,47 @@ function mapNeonUserRow(row: typeof users.$inferSelect): StoredUser {
 declare global {
   var _rataoLastPruneAt: number | undefined;
   var _rataoNeonAdminChecked: boolean | undefined;
+  var _rataoClusterSecretPromise: Promise<void> | undefined;
+}
+
+export async function ensureClusterSigningSecret(): Promise<void> {
+  if (hasEnvSigningSecret() || !isNeonConfigured()) {
+    return;
+  }
+  const current = getSigningSecretInfo();
+  if (current.source === 'neon_cluster') {
+    return;
+  }
+  if (!global._rataoClusterSecretPromise) {
+    global._rataoClusterSecretPromise = (async () => {
+      await ensureNeonSchema();
+      const db = getNeonDb();
+      const candidate = generateToken(32);
+      const nowIso = new Date().toISOString();
+      await db
+        .insert(serverRuntimeSecrets)
+        .values({
+          id: 'match_hmac_v1',
+          secretHex: candidate,
+          createdAt: nowIso,
+        })
+        .onConflictDoNothing();
+
+      const rows = await db
+        .select({ secretHex: serverRuntimeSecrets.secretHex })
+        .from(serverRuntimeSecrets)
+        .where(eq(serverRuntimeSecrets.id, 'match_hmac_v1'))
+        .limit(1);
+
+      if (rows[0]?.secretHex) {
+        setClusterSigningSecret(rows[0].secretHex);
+      }
+    })().catch((err) => {
+      global._rataoClusterSecretPromise = undefined;
+      throw err;
+    });
+  }
+  await global._rataoClusterSecretPromise;
 }
 
 export async function ensureDbAndAdminReady(): Promise<void> {
@@ -116,6 +164,7 @@ export async function ensureDbAndAdminReady(): Promise<void> {
   }
 
   await ensureNeonSchema();
+  await ensureClusterSigningSecret();
 
   if (global._rataoNeonAdminChecked) return;
   const envUser = process.env.ADMIN_INITIAL_USERNAME?.trim();
@@ -421,21 +470,26 @@ export async function repoComputePlayerRank(userId: string): Promise<number | nu
 }
 
 export async function repoCreateActiveMatch(match: ActiveMatchToken): Promise<void> {
+  const normalized: ActiveMatchToken = {
+    ...match,
+    startedAt: Math.trunc(Number(match.startedAt)),
+  };
   if (!isNeonConfigured()) {
     const db = getLocalDb();
-    db.activeMatches[match.matchId] = match;
+    db.activeMatches[normalized.matchId] = normalized;
     saveLocalDb();
     return;
   }
   await ensureNeonSchema();
   const db = getNeonDb();
-  await db.insert(activeMatches).values(match);
+  await db.insert(activeMatches).values(normalized);
 }
 
 export async function repoGetActiveMatch(matchId: string): Promise<ActiveMatchToken | undefined> {
   if (!isNeonConfigured()) {
     const db = getLocalDb();
-    return db.activeMatches[matchId];
+    const found = db.activeMatches[matchId];
+    return found ? { ...found, startedAt: Math.trunc(Number(found.startedAt)) } : undefined;
   }
   await ensureNeonSchema();
   const db = getNeonDb();
@@ -447,6 +501,7 @@ export async function repoGetActiveMatch(matchId: string): Promise<ActiveMatchTo
   if (!rows[0]) return undefined;
   return {
     ...rows[0],
+    startedAt: Math.trunc(Number(rows[0].startedAt)),
     mode: rows[0].mode === 'normal' ? 'normal' : 'no_coin',
     summaryJson: rows[0].summaryJson ?? null,
   };
@@ -617,6 +672,7 @@ export async function repoCompleteMatchAndRecord(params: {
       isNewPersonalRecord,
       globalRank,
       endReason: normalizedEndReason,
+      confirmedByServer: true,
     };
     active.summaryJson = summary;
     saveLocalDb();
@@ -864,6 +920,7 @@ export async function repoCompleteMatchAndRecord(params: {
     isNewPersonalRecord,
     globalRank,
     endReason: normalizedEndReason,
+    confirmedByServer: true,
   };
   await pool
     .query(`UPDATE active_matches SET summary_json = $1::jsonb WHERE match_id = $2`, [

@@ -617,6 +617,14 @@ export async function ensureNeonSchema(): Promise<void> {
       `;
       await sql`CREATE INDEX IF NOT EXISTS match_skate_uses_user_idx ON match_skate_uses (user_id, created_at DESC)`;
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS server_runtime_secrets (
+          id TEXT PRIMARY KEY,
+          secret_hex TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+
       // One-time safe backfill of best_single_match_coins from historical normal matches
       await sql`
         UPDATE users u

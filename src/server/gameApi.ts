@@ -8,12 +8,14 @@ import {
   isValidAnySkinId,
 } from '../shared/constants.ts';
 import { AuthedRequest } from './auth.ts';
-import { generateToken, signHmac, verifyHmac } from './crypto.ts';
+import { generateToken } from './crypto.ts';
+import { signCanonicalMatchToken, verifyMatchSignature } from './matchSignature.ts';
 import {
   repoGetCustomCharacterConfig,
   repoGetUnreadNotificationsForUser,
 } from './featureRepository.ts';
 import {
+  ensureClusterSigningSecret,
   repoAdminGetPlayerSkinsSummary,
   repoAdminGrantAllEligibleSkins,
   repoAdminGrantLockedSkin,
@@ -90,38 +92,52 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
     res.status(403).json({ error: 'Skin exclusiva não autorizada para esta conta.' });
     return;
   }
+
+  await ensureClusterSigningSecret();
+
   const matchId = `m_${generateToken(10)}`;
-  const startedAt = Date.now();
-  const payload = `${matchId}:${user.id}:${startedAt}:${mapId}:${chosenSkin}:${chosenMode}`;
-  const signature = signHmac(payload);
+  const rawStartedAt = Date.now();
+  const signed = signCanonicalMatchToken({
+    matchId,
+    userId: user.id,
+    startedAt: rawStartedAt,
+    mapId,
+    skinId: chosenSkin,
+    mode: chosenMode,
+  });
 
   await repoCreateActiveMatch({
     matchId,
     userId: user.id,
-    mode: chosenMode,
+    mode: signed.mode,
     mapId,
     skinId: chosenSkin,
-    startedAt,
-    signature,
+    startedAt: signed.startedAt,
+    signature: signed.signature,
     completed: false,
   });
   void repoLogMatchDiagnostic({
     userId: user.id,
     matchId,
-    mode: chosenMode,
+    mode: signed.mode,
     stage: 'start',
     status: 'ok',
-    detail: `Started ${chosenMode} map=${mapId} skin=${chosenSkin}`,
+    detail: `Started ${signed.mode} map=${mapId} skin=${chosenSkin}`,
   });
 
-  res.json({ matchId, startedAt, signature, mode: chosenMode });
+  res.json({
+    matchId,
+    startedAt: signed.startedAt,
+    signature: signed.signature,
+    mode: signed.mode,
+  });
 }
 
 export async function finishMatchHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
   const {
-    matchId,
-    signature,
+    matchId: rawMatchId,
+    signature: rawSignature,
     noCoinTimeMs,
     collectedCoin,
     coins,
@@ -131,40 +147,58 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     endReason,
   } = req.body ?? {};
 
-  if (typeof matchId !== 'string' || typeof signature !== 'string') {
-    res.status(400).json({ error: 'Identificador de partida inválido.' });
+  const matchId = typeof rawMatchId === 'string' ? rawMatchId.trim() : '';
+  const signature = typeof rawSignature === 'string' ? rawSignature.trim().toLowerCase() : '';
+
+  if (!matchId || !signature) {
+    res.status(400).json({ error: 'Identificador ou assinatura de partida ausente.' });
     return;
   }
 
+  await ensureClusterSigningSecret();
+
   const active = await repoGetActiveMatch(matchId);
-  if (!active || active.userId !== user.id) {
+  if (!active) {
     void repoLogMatchDiagnostic({
       userId: user.id,
       matchId,
       mode: 'no_coin',
       stage: 'finish',
       status: 'not_found',
-      detail: 'Active match missing or belongs to another user',
+      detail: 'Active match not found in database',
     });
     res.status(400).json({ error: 'Partida inválida ou expirada.' });
     return;
   }
 
   const activeMode: SoloGameMode = active.mode === 'normal' ? 'normal' : 'no_coin';
-  const expectedPayload = `${active.matchId}:${user.id}:${active.startedAt}:${active.mapId}:${active.skinId}:${activeMode}`;
-  const legacyPayload = `${active.matchId}:${user.id}:${active.startedAt}:${active.mapId}:${active.skinId}`;
-  const sigMatches =
-    active.signature === signature &&
-    (verifyHmac(expectedPayload, signature) || verifyHmac(legacyPayload, signature));
+  if (active.userId !== user.id) {
+    void repoLogMatchDiagnostic({
+      userId: user.id,
+      matchId,
+      mode: activeMode,
+      stage: 'finish',
+      status: 'user_mismatch',
+      detail: `Match belongs to user=${active.userId} caller=${user.id}`,
+    });
+    res.status(403).json({ error: 'Assinatura de partida inválida.' });
+    return;
+  }
 
-  if (!sigMatches) {
+  const sigCheck = verifyMatchSignature({
+    active,
+    authenticatedUserId: user.id,
+    clientSignature: signature,
+  });
+
+  if (!sigCheck.ok) {
     void repoLogMatchDiagnostic({
       userId: user.id,
       matchId,
       mode: activeMode,
       stage: 'finish',
       status: 'bad_signature',
-      detail: 'Signature mismatch on match finish',
+      detail: `reason=${sigCheck.reason} secretSource=${sigCheck.secretSource} startedAt=${sigCheck.startedAtInt} completed=${active.completed}`,
     });
     res.status(403).json({ error: 'Assinatura de partida inválida.' });
     return;
@@ -180,12 +214,15 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       status: 'idempotent_hit',
       detail: 'Returned persisted summary for already finalized match',
     });
-    res.json({ summary: active.summaryJson, idempotent: true });
+    res.json({
+      summary: { ...active.summaryJson, confirmedByServer: true },
+      idempotent: true,
+    });
     return;
   }
 
   const now = Date.now();
-  const wallElapsedMs = Math.max(0, now - active.startedAt);
+  const wallElapsedMs = Math.max(0, now - sigCheck.startedAtInt);
 
   const safeDuration = Number(durationMs);
   const safeNoCoin = activeMode === 'no_coin' ? Number(noCoinTimeMs) : 0;
@@ -329,6 +366,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       isNewPersonalRecord: outcome.isNewPersonalRecord,
       globalRank: outcome.globalRank,
       endReason: normalizedEndReason,
+      confirmedByServer: true,
     },
   });
 }

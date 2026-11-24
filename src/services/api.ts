@@ -219,7 +219,7 @@ export const api = {
       {
         method: 'POST',
         body: JSON.stringify({ mapId, skinId, mode }),
-        timeoutMs: 3000,
+        timeoutMs: 10000,
       }
     ),
 
@@ -237,7 +237,7 @@ export const api = {
     apiFetch<{ summary: MatchSummary; idempotent?: boolean }>('/api/match/finish', {
       method: 'POST',
       body: JSON.stringify(payload),
-      timeoutMs: 6000,
+      timeoutMs: 10000,
     }),
 
   reportMatchDiagnostic: (payload: {

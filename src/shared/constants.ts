@@ -1076,6 +1076,7 @@ export interface MatchSummary {
   isNewPersonalRecord: boolean;
   globalRank: number | null;
   endReason?: 'police' | 'coin';
+  confirmedByServer?: boolean;
 }
 
 // --- Multiplayer & X1 Shared Types ---
