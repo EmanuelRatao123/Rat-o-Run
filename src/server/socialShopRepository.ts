@@ -37,6 +37,7 @@ import {
   getSkateDefinition,
   isValidSkateId,
 } from '../shared/constants.ts';
+import { repoGetActiveVoiceCallUserIds } from './callRepository.ts';
 import { generateToken } from './crypto.ts';
 import { getDb as getLocalDb, saveDb as saveLocalDb } from './store.ts';
 
@@ -831,7 +832,11 @@ export async function repoSearchPlayersForFriends(
     const matches = Object.values(db.users)
       .filter((u) => u.id !== requesterId && u.nicknameLower.includes(clean))
       .slice(0, 15);
-    const inMatchSet = await getActiveMatchUserSet(matches.map((m) => m.id));
+    const matchIds = matches.map((m) => m.id);
+    const [inMatchSet, inCallSet] = await Promise.all([
+      getActiveMatchUserSet(matchIds),
+      repoGetActiveVoiceCallUserIds(matchIds),
+    ]);
 
     return matches.map((u) => {
       const [low, high] = makePairIds(requesterId, u.id);
@@ -846,6 +851,7 @@ export async function repoSearchPlayersForFriends(
         nickname: u.nickname,
         equippedSkin: u.equippedSkin,
         status: computeStatus(u.id, u.lastSeenAt, inMatchSet, nowMs),
+        inCall: inCallSet.has(u.id),
         relation,
       };
     });
@@ -868,11 +874,15 @@ export async function repoSearchPlayersForFriends(
   const candidates = rows.filter((u) => u.id !== requesterId).slice(0, 15);
   if (candidates.length === 0) return [];
 
-  const ships = await db
-    .select()
-    .from(friendships)
-    .where(or(eq(friendships.userLowId, requesterId), eq(friendships.userHighId, requesterId)));
-  const inMatchSet = await getActiveMatchUserSet(candidates.map((c) => c.id));
+  const candidateIds = candidates.map((c) => c.id);
+  const [ships, inMatchSet, inCallSet] = await Promise.all([
+    db
+      .select()
+      .from(friendships)
+      .where(or(eq(friendships.userLowId, requesterId), eq(friendships.userHighId, requesterId))),
+    getActiveMatchUserSet(candidateIds),
+    repoGetActiveVoiceCallUserIds(candidateIds),
+  ]);
 
   return candidates.map((u) => {
     const [low, high] = makePairIds(requesterId, u.id);
@@ -887,6 +897,7 @@ export async function repoSearchPlayersForFriends(
       nickname: u.nickname,
       equippedSkin: u.equippedSkin,
       status: computeStatus(u.id, u.lastSeenAt, inMatchSet, nowMs),
+      inCall: inCallSet.has(u.id),
       relation,
     };
   });
@@ -905,7 +916,10 @@ export async function repoGetFriendsOverview(userId: string): Promise<FriendsOve
     const peerIds = Array.from(
       new Set(myShips.map((f) => (f.userLowId === userId ? f.userHighId : f.userLowId)))
     );
-    const inMatchSet = await getActiveMatchUserSet(peerIds);
+    const [inMatchSet, inCallSet] = await Promise.all([
+      getActiveMatchUserSet(peerIds),
+      repoGetActiveVoiceCallUserIds(peerIds),
+    ]);
 
     const friends: FriendEntry[] = [];
     const incomingRequests: FriendRequestEntry[] = [];
@@ -926,6 +940,7 @@ export async function repoGetFriendsOverview(userId: string): Promise<FriendsOve
           nickname: peer.nickname,
           equippedSkin: peer.equippedSkin,
           status: computeStatus(peer.id, peer.lastSeenAt, inMatchSet, nowMs),
+          inCall: inCallSet.has(peer.id),
           unreadCount,
           lastSeenAt: peer.lastSeenAt,
           since: f.acceptedAt || f.updatedAt,
@@ -992,7 +1007,7 @@ export async function repoGetFriendsOverview(userId: string): Promise<FriendsOve
     new Set(myShips.map((f) => (f.userLowId === userId ? f.userHighId : f.userLowId)))
   );
 
-  const [peerRows, unreadRows, inMatchSet] = await Promise.all([
+  const [peerRows, unreadRows, inMatchSet, inCallSet] = await Promise.all([
     db
       .select({
         id: users.id,
@@ -1009,6 +1024,7 @@ export async function repoGetFriendsOverview(userId: string): Promise<FriendsOve
       .from(friendMessages)
       .where(and(eq(friendMessages.receiverUserId, userId), eq(friendMessages.read, false))),
     getActiveMatchUserSet(peerIds),
+    repoGetActiveVoiceCallUserIds(peerIds),
   ]);
 
   const peerMap = new Map(peerRows.map((p) => [p.id, p]));
@@ -1033,6 +1049,7 @@ export async function repoGetFriendsOverview(userId: string): Promise<FriendsOve
         nickname: peer.nickname,
         equippedSkin: peer.equippedSkin,
         status: computeStatus(peer.id, peer.lastSeenAt, inMatchSet, nowMs),
+        inCall: inCallSet.has(peer.id),
         unreadCount: unreadByShip.get(f.id) || 0,
         lastSeenAt: peer.lastSeenAt,
         since: f.acceptedAt || f.updatedAt,

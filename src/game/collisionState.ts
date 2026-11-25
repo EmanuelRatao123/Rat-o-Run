@@ -22,9 +22,9 @@ export interface CollisionConfig {
 }
 
 export const DEFAULT_COLLISION_CONFIG: CollisionConfig = {
-  slowDurationSec: 2.0,
-  stumbleDurationSec: 0.75,
-  simultaneousLockSec: 0.45,
+  slowDurationSec: 1.0,
+  stumbleDurationSec: 0.55,
+  simultaneousLockSec: 0.35,
   hoverboardLockSec: 0.85,
   slowSpeedMultiplier: 0.62,
   jetpackSpeedMultiplier: 1.35,
@@ -35,9 +35,9 @@ export const DEFAULT_COLLISION_CONFIG: CollisionConfig = {
  *
  * Core rule:
  * - Death NEVER depends on cumulative collision count over the match.
- * - Normal/fast speed + obstacle hit => transitions to 'slow' (stumble + 2s police chase).
+ * - Normal/fast speed + obstacle hit => transitions to 'slow' (stumble + exact 1s police chase).
  * - Already 'slow' + obstacle hit (after simultaneous-hit lock) => 'died'.
- * - Surviving the 2s chase restores 'normal', allowing future single collisions to slow again.
+ * - Surviving the 1s chase restores 'normal', allowing future single collisions to slow again.
  */
 export class CollisionStateController {
   private config: CollisionConfig;
@@ -95,21 +95,25 @@ export class CollisionStateController {
     return 1.0;
   }
 
-  public step(dtSec: number): { recoveredToNormal: boolean } {
+  public step(dtSec: number, timerDtSec = dtSec): { recoveredToNormal: boolean } {
     const safeDt = Math.max(0, dtSec);
+    const safeTimerDt = Math.max(0, timerDtSec);
     if (this.collisionLockSec > 0) {
       this.collisionLockSec = Math.max(0, this.collisionLockSec - safeDt);
     }
     if (this.stumbleRemainingSec > 0) {
-      this.stumbleRemainingSec = Math.max(0, this.stumbleRemainingSec - safeDt);
+      this.stumbleRemainingSec = Math.max(0, this.stumbleRemainingSec - safeTimerDt);
     }
 
     let recoveredToNormal = false;
     if (this.slowRemainingSec > 0) {
-      this.slowRemainingSec = Math.max(0, this.slowRemainingSec - safeDt);
-      if (this.slowRemainingSec === 0 && this.speedState === 'slow') {
-        this.speedState = 'normal';
-        recoveredToNormal = true;
+      this.slowRemainingSec = Math.max(0, this.slowRemainingSec - safeTimerDt);
+      if (this.slowRemainingSec <= 1e-6) {
+        this.slowRemainingSec = 0;
+        if (this.speedState === 'slow') {
+          this.speedState = 'normal';
+          recoveredToNormal = true;
+        }
       }
     }
 

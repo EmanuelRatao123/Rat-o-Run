@@ -197,6 +197,7 @@ export class RunnerEngine {
   // Speed recovery & police chase state (2 seconds after collision while fast)
   private collisionState = new CollisionStateController();
   private policeZOffset = 10;
+  private slowCameraOffset = 0;
 
   // Mode: Sem Pegar Moedas
   private durationMs = 0;
@@ -776,9 +777,10 @@ export class RunnerEngine {
     if (this.disposed || !this.running) return;
     try {
       const now = performance.now();
-      const rawDt = (now - this.lastTimestamp) / 1000;
+      const rawDt = Math.max(0.001, (now - this.lastTimestamp) / 1000);
       this.lastTimestamp = now;
-      const dt = Math.min(Math.max(rawDt, 0.001), 0.05);
+      const dt = Math.min(rawDt, 0.05);
+      const timerDt = Math.min(rawDt, 0.25);
 
       if (this.frozen) {
         this.totalElapsed += dt;
@@ -824,7 +826,7 @@ export class RunnerEngine {
         );
         this.camera.lookAt(focusPos.x * 0.45, focusPos.y + 1.35, focusPos.z - 12);
       } else if (!this.paused && !this.ended) {
-        this.stepSimulation(dt);
+        this.stepSimulation(dt, timerDt);
       } else if (this.ended) {
         this.totalElapsed += dt;
         animateCharacterRig(this.playerRig, this.endAnimState, this.totalElapsed, dt);
@@ -848,9 +850,10 @@ export class RunnerEngine {
     }
   }
 
-  private stepSimulation(dt: number): void {
+  private stepSimulation(dt: number, timerDt = dt): void {
     if (this.hitstopTimer > 0) {
       this.hitstopTimer -= dt;
+      this.collisionState.step(0, timerDt);
       return;
     }
 
@@ -874,10 +877,11 @@ export class RunnerEngine {
       }
     }
 
-    const { recoveredToNormal } = this.collisionState.step(dt);
+    const { recoveredToNormal } = this.collisionState.step(dt, timerDt);
     if (recoveredToNormal) {
-      // Escaped! Police drops back and normal speed is restored
+      // Escaped after 1s! Police drops back, normal speed is restored, and HUD syncs immediately
       this.policeZOffset = 3.2;
+      this.hudEmitAccum = 0.05;
     }
     if (this.slideTimer > 0) this.slideTimer -= dt;
     if (this.jumpBufferTimer > 0) this.jumpBufferTimer -= dt;
@@ -1082,9 +1086,15 @@ export class RunnerEngine {
       this.shakeIntensity = 0;
     }
 
+    this.slowCameraOffset = THREE.MathUtils.damp(
+      this.slowCameraOffset,
+      this.collisionState.isSlow() ? -0.55 : 0,
+      9,
+      dt
+    );
     const camTargetX = this.playerX * 0.65 + shakeX;
     const camTargetY = Math.max(4.1, this.playerY + 3.8) + this.portraitFactor * 0.45 + shakeY;
-    const camTargetZ = this.playerZ + 6.9 + this.portraitFactor * 1.4;
+    const camTargetZ = this.playerZ + 6.9 + this.portraitFactor * 1.4 + this.slowCameraOffset;
 
     this.camera.position.x = THREE.MathUtils.damp(this.camera.position.x, camTargetX, 10, dt);
     this.camera.position.y = THREE.MathUtils.damp(this.camera.position.y, camTargetY, 8, dt);
@@ -1235,7 +1245,7 @@ export class RunnerEngine {
     this.spawnBurst(this.playerX, this.playerY + 0.8, this.playerZ, 0xef4444, 14);
 
     if (resolution.outcome === 'slowed') {
-      // Collision while fast/normal -> enter SLOW state, stumble animation & 2s police chase
+      // Collision while fast/normal -> enter SLOW state, stumble animation & 1s police chase
       this.policeZOffset = 5.5;
       this.policeRig.root.visible = true;
       gameAudio.playStumbleAndWhistle();

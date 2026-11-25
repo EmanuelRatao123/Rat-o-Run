@@ -47,6 +47,8 @@ import { ScenePreview3D } from './components/ScenePreview3D.tsx';
 import { ShopModal } from './components/ShopModal.tsx';
 import { SkinsModal } from './components/SkinsModal.tsx';
 import { SuggestionsModal } from './components/SuggestionsModal.tsx';
+import { VoiceCallOverlay } from './components/VoiceCallOverlay.tsx';
+import { VoiceCallProvider } from './components/VoiceCallProvider.tsx';
 import { gameAudio } from './game/audio.ts';
 import { useFullscreen, useMobileMode } from './hooks/useDeviceDisplay.ts';
 import { ApiError, api, setMemorySessionToken } from './services/api.ts';
@@ -432,7 +434,8 @@ export default function App() {
     : false;
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-slate-950">
+    <VoiceCallProvider user={user}>
+      <div className="relative w-full h-full overflow-hidden bg-slate-950">
       {!user ? (
         <AuthScreen
           isFullscreen={isFullscreen}
@@ -1291,11 +1294,12 @@ export default function App() {
         </div>
       )}
 
-      {/* Automatic Centered 3s Global Broadcast & In-Match/Menu Live Poll Overlays */}
+      {/* Automatic Centered 3s Global Broadcast, Live Poll & Voice Call Overlays */}
       {user && (
         <>
           <GlobalBroadcastOverlay messages={messages} />
           <LivePollOverlay polls={polls} onPollsUpdated={setPolls} />
+          <VoiceCallOverlay user={user} playing={playing} />
         </>
       )}
 
@@ -1332,6 +1336,7 @@ export default function App() {
           onClose={closeAdminPortal}
         />
       )}
-    </div>
+      </div>
+    </VoiceCallProvider>
   );
 }

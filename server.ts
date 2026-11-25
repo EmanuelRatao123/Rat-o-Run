@@ -95,6 +95,15 @@ import {
   mpStartRoomHandler,
   mpSyncRoomHandler,
 } from './src/server/multiplayerApi.ts';
+import {
+  endCallHandler,
+  getCallIceConfigHandler,
+  getCallStateHandler,
+  heartbeatCallHandler,
+  inviteCallHandler,
+  postCallSignalHandler,
+  respondCallHandler,
+} from './src/server/callApi.ts';
 import { ensureDbAndAdminReady } from './src/server/repository.ts';
 
 dotenv.config();
@@ -180,6 +189,15 @@ app.post('/api/friends/request/:friendshipId/respond', requireAuth, wrap(respond
 app.delete('/api/friends/:friendshipId', requireAuth, wrap(removeFriendHandler));
 app.get('/api/friends/messages/:friendUserId', requireAuth, wrap(getFriendMessagesHandler));
 app.post('/api/friends/messages/:friendUserId', requireAuth, wrap(sendFriendMessageHandler));
+
+// WebRTC Voice Call Signaling routes (Vercel serverless + PostgreSQL)
+app.get('/api/calls/ice-config', requireAuth, wrap(getCallIceConfigHandler));
+app.get('/api/calls/state', requireAuth, wrap(getCallStateHandler));
+app.post('/api/calls/invite', requireAuth, wrap(inviteCallHandler));
+app.post('/api/calls/:callId/respond', requireAuth, wrap(respondCallHandler));
+app.post('/api/calls/:callId/signal', requireAuth, wrap(postCallSignalHandler));
+app.post('/api/calls/:callId/heartbeat', requireAuth, wrap(heartbeatCallHandler));
+app.post('/api/calls/:callId/end', requireAuth, wrap(endCallHandler));
 
 // Capes & Live Mode routes
 app.get('/api/capes', requireAuth, wrap(getCapeConfigHandler));

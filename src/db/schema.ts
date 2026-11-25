@@ -6,6 +6,7 @@ import {
   integer,
   jsonb,
   pgTable,
+  serial,
   text,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
@@ -29,6 +30,8 @@ import type {
   SpecialUnlockableSkinId,
   SuggestionStatus,
   SuggestionType,
+  VoiceCallSignalType,
+  VoiceCallStatus,
 } from '../shared/constants.ts';
 
 export const users = pgTable(
@@ -732,3 +735,54 @@ export const serverRuntimeSecrets = pgTable('server_runtime_secrets', {
   secretHex: text('secret_hex').notNull(),
   createdAt: text('created_at').notNull(),
 });
+
+export const voiceCalls = pgTable(
+  'voice_calls',
+  {
+    id: text('id').primaryKey(),
+    callerUserId: text('caller_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    callerNickname: text('caller_nickname').notNull(),
+    calleeUserId: text('callee_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    calleeNickname: text('callee_nickname').notNull(),
+    status: text('status').$type<VoiceCallStatus>().notNull().default('ringing'),
+    endReason: text('end_reason'),
+    createdAt: text('created_at').notNull(),
+    answeredAt: text('answered_at'),
+    endedAt: text('ended_at'),
+    expiresAt: text('expires_at').notNull(),
+    callerHeartbeatAt: text('caller_heartbeat_at').notNull(),
+    calleeHeartbeatAt: text('callee_heartbeat_at'),
+  },
+  (table) => [
+    index('voice_calls_caller_status_idx').on(table.callerUserId, table.status),
+    index('voice_calls_callee_status_idx').on(table.calleeUserId, table.status),
+    index('voice_calls_status_created_idx').on(table.status, table.createdAt),
+  ]
+);
+
+export const voiceCallSignals = pgTable(
+  'voice_call_signals',
+  {
+    id: text('id').primaryKey(),
+    seq: serial('seq').notNull(),
+    callId: text('call_id')
+      .notNull()
+      .references(() => voiceCalls.id, { onDelete: 'cascade' }),
+    fromUserId: text('from_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    toUserId: text('to_user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: text('type').$type<VoiceCallSignalType>().notNull(),
+    payload: jsonb('payload').$type<Record<string, unknown>>().notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('voice_signals_call_to_seq_idx').on(table.callId, table.toUserId, table.seq),
+  ]
+);

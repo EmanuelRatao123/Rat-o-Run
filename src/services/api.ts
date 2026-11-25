@@ -41,6 +41,11 @@ import {
   SuggestionStatus,
   SuggestionType,
   UserProfile,
+  VoiceCallIceConfig,
+  VoiceCallRecord,
+  VoiceCallSignal,
+  VoiceCallSignalType,
+  VoiceCallStatePayload,
   X1ResultRecord,
 } from '../shared/constants.ts';
 
@@ -453,6 +458,68 @@ export const api = {
           body: JSON.stringify({ content }),
         }
       ),
+  },
+
+  calls: {
+    getIceConfig: () => apiFetch<VoiceCallIceConfig>('/api/calls/ice-config'),
+
+    getState: (callId?: string, sinceSeq = 0) => {
+      const qs = new URLSearchParams();
+      if (callId) qs.set('callId', callId);
+      if (sinceSeq > 0) qs.set('sinceSeq', String(sinceSeq));
+      const suffix = qs.toString() ? `?${qs.toString()}` : '';
+      return apiFetch<VoiceCallStatePayload>(`/api/calls/state${suffix}`);
+    },
+
+    invite: (targetUserId: string) =>
+      apiFetch<{ call: VoiceCallRecord }>('/api/calls/invite', {
+        method: 'POST',
+        body: JSON.stringify({ targetUserId }),
+      }),
+
+    respond: (callId: string, action: 'accept' | 'decline' | 'cancel') =>
+      apiFetch<{ call: VoiceCallRecord }>(`/api/calls/${encodeURIComponent(callId)}/respond`, {
+        method: 'POST',
+        body: JSON.stringify({ action }),
+      }),
+
+    signal: (callId: string, type: VoiceCallSignalType, payload: Record<string, unknown>) =>
+      apiFetch<{ signal: VoiceCallSignal }>(`/api/calls/${encodeURIComponent(callId)}/signal`, {
+        method: 'POST',
+        body: JSON.stringify({ type, payload }),
+      }),
+
+    heartbeat: (callId: string) =>
+      apiFetch<{ call: VoiceCallRecord }>(`/api/calls/${encodeURIComponent(callId)}/heartbeat`, {
+        method: 'POST',
+      }),
+
+    end: (callId: string, reason = 'hangup') =>
+      apiFetch<{ ok: boolean; call: VoiceCallRecord }>(
+        `/api/calls/${encodeURIComponent(callId)}/end`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ reason }),
+        }
+      ),
+
+    endKeepalive: (callId: string, reason = 'tab_closed') => {
+      try {
+        const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+        if (memorySessionToken) {
+          headers.Authorization = `Bearer ${memorySessionToken}`;
+        }
+        void fetch(`/api/calls/${encodeURIComponent(callId)}/end`, {
+          method: 'POST',
+          headers,
+          credentials: 'include',
+          keepalive: true,
+          body: JSON.stringify({ reason }),
+        }).catch(() => {});
+      } catch {
+        // Ignore teardown failures on page unload
+      }
+    },
   },
 
   markGiftsSeen: () => apiFetch<{ ok: boolean }>('/api/gifts/seen', { method: 'POST' }),

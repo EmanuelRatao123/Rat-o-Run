@@ -130,7 +130,7 @@ function runLongNoCoinSimulationTest(): void {
       collisionCtrl.forceRecoverWithLock(1.15);
     }
 
-    // Simulate first obstacle collision at 90s (while fast) -> slows for 2s then recovers
+    // Simulate first obstacle collision at 90s (while fast) -> slows for 1s then recovers
     if (step === 5400) {
       const res = collisionCtrl.resolveObstacleCollision({
         obstacleId: 1002,
@@ -184,7 +184,7 @@ function runLongNoCoinSimulationTest(): void {
     alreadyEnded: false,
   });
   assert.equal(hit1.outcome, 'slowed');
-  collisionCtrl.step(0.6); // Past simultaneousLockSec (0.45s), still slow (< 2.0s)
+  collisionCtrl.step(0.5); // Past simultaneousLockSec (0.35s), still slow (< 1.0s)
   const hit2 = collisionCtrl.resolveObstacleCollision({
     obstacleId: 2002,
     hoverboardActive: false,

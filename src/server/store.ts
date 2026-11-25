@@ -29,6 +29,8 @@ import {
   SkinGrantHistoryRecord,
   SkinId,
   SoloGameMode,
+  VoiceCallRecord,
+  VoiceCallSignal,
   X1ResultRecord,
 } from '../shared/constants.ts';
 import { generateToken, hashPassword } from './crypto.ts';
@@ -229,6 +231,9 @@ export interface DatabaseState {
   playerSkateInventory: Record<string, PlayerSkateInventoryItem[]>;
   shopTransactions: StoredShopTransaction[];
   matchSkateUses: StoredMatchSkateUse[];
+  voiceCalls: VoiceCallRecord[];
+  voiceCallSignals: VoiceCallSignal[];
+  voiceCallSignalSeq: number;
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -276,6 +281,9 @@ function createInitialState(): DatabaseState {
     playerSkateInventory: {},
     shopTransactions: [],
     matchSkateUses: [],
+    voiceCalls: [],
+    voiceCallSignals: [],
+    voiceCallSignalSeq: 0,
   };
 }
 

@@ -625,6 +625,41 @@ export async function ensureNeonSchema(): Promise<void> {
         )
       `;
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS voice_calls (
+          id TEXT PRIMARY KEY,
+          caller_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          caller_nickname TEXT NOT NULL,
+          callee_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          callee_nickname TEXT NOT NULL,
+          status TEXT NOT NULL DEFAULT 'ringing',
+          end_reason TEXT,
+          created_at TEXT NOT NULL,
+          answered_at TEXT,
+          ended_at TEXT,
+          expires_at TEXT NOT NULL,
+          caller_heartbeat_at TEXT NOT NULL,
+          callee_heartbeat_at TEXT
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS voice_calls_caller_status_idx ON voice_calls (caller_user_id, status)`;
+      await sql`CREATE INDEX IF NOT EXISTS voice_calls_callee_status_idx ON voice_calls (callee_user_id, status)`;
+      await sql`CREATE INDEX IF NOT EXISTS voice_calls_status_created_idx ON voice_calls (status, created_at DESC)`;
+
+      await sql`
+        CREATE TABLE IF NOT EXISTS voice_call_signals (
+          id TEXT PRIMARY KEY,
+          seq SERIAL NOT NULL,
+          call_id TEXT NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE,
+          from_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          to_user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          type TEXT NOT NULL,
+          payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS voice_signals_call_to_seq_idx ON voice_call_signals (call_id, to_user_id, seq)`;
+
       // One-time safe backfill of best_single_match_coins from historical normal matches
       await sql`
         UPDATE users u

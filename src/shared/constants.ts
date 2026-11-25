@@ -1464,6 +1464,7 @@ export interface FriendEntry {
   nickname: string;
   equippedSkin: SkinId;
   status: PlayerOnlineStatus;
+  inCall?: boolean;
   unreadCount: number;
   lastSeenAt: string;
   since: string;
@@ -1493,6 +1494,7 @@ export interface FriendSearchResult {
   nickname: string;
   equippedSkin: SkinId;
   status: PlayerOnlineStatus;
+  inCall?: boolean;
   relation: 'none' | 'friend' | 'pending_incoming' | 'pending_outgoing';
 }
 
@@ -1502,6 +1504,59 @@ export interface FriendsOverviewPayload {
   outgoingRequests: FriendRequestEntry[];
   totalUnreadMessages: number;
   pendingRequestsCount: number;
+}
+
+// --- Voice Call System (WebRTC + Serverless Signaling) ---
+
+export type VoiceCallStatus = 'ringing' | 'accepted' | 'ended' | 'declined' | 'missed';
+export type VoiceCallSignalType = 'offer' | 'answer' | 'ice' | 'renegotiate';
+
+export interface VoiceCallIceServerConfig {
+  urls: string | string[];
+  username?: string;
+  credential?: string;
+}
+
+export interface VoiceCallIceConfig {
+  iceServers: VoiceCallIceServerConfig[];
+  inviteTimeoutSec: number;
+  hasTurn: boolean;
+}
+
+export interface VoiceCallRecord {
+  id: string;
+  callerUserId: string;
+  callerNickname: string;
+  calleeUserId: string;
+  calleeNickname: string;
+  status: VoiceCallStatus;
+  endReason?: string | null;
+  createdAt: string;
+  answeredAt?: string | null;
+  endedAt?: string | null;
+  expiresAt: string;
+  callerHeartbeatAt: string;
+  calleeHeartbeatAt?: string | null;
+}
+
+export interface VoiceCallSignal {
+  id: string;
+  seq: number;
+  callId: string;
+  fromUserId: string;
+  toUserId: string;
+  type: VoiceCallSignalType;
+  payload: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface VoiceCallStatePayload {
+  serverNow: string;
+  activeCall: VoiceCallRecord | null;
+  incomingInvite: VoiceCallRecord | null;
+  recentTerminalCall: VoiceCallRecord | null;
+  signals: VoiceCallSignal[];
+  inCallFriendIds: string[];
 }
 
 export interface PublicPlayerLookup {

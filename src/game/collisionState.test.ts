@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { CollisionStateController } from './collisionState.ts';
 
 function runCollisionTests(): void {
-  // 1) Jogador rápido bate: fica lento (sem morrer)
+  // 1) Jogador rápido bate: fica lento (sem morrer) por exatamente 1.0 segundo
   {
     const ctrl = new CollisionStateController();
     assert.equal(ctrl.getSpeedState(), 'normal');
@@ -18,12 +18,12 @@ function runCollisionTests(): void {
     assert.equal(hit1.outcome, 'slowed');
     assert.equal(ctrl.getSpeedState(), 'slow');
     assert.equal(ctrl.isSlow(), true);
-    assert.equal(ctrl.getSlowRemainingSec(), 2.0);
-    assert.equal(ctrl.getStumbleRemainingSec(), 0.75);
+    assert.equal(ctrl.getSlowRemainingSec(), 1.0);
+    assert.equal(ctrl.getStumbleRemainingSec(), 0.55);
     assert.equal(ctrl.getSpeedMultiplier(false), 0.62);
   }
 
-  // 2) Jogador lento bate novamente (após janela de colisão simultânea): morre
+  // 2) Jogador lento bate novamente (após janela de colisão simultânea, ainda dentro de 1.0s): morre
   {
     const ctrl = new CollisionStateController();
     const hit1 = ctrl.resolveObstacleCollision({
@@ -34,8 +34,8 @@ function runCollisionTests(): void {
     });
     assert.equal(hit1.outcome, 'slowed');
 
-    // Avança 0.6s (ainda dentro dos 2.0s de perseguição policial e estado lento)
-    const stepRes = ctrl.step(0.6);
+    // Avança 0.5s (passou o lock de 0.35s, ainda dentro de 1.0s)
+    const stepRes = ctrl.step(0.5);
     assert.equal(stepRes.recoveredToNormal, false);
     assert.equal(ctrl.getSpeedState(), 'slow');
     assert.equal(ctrl.isLocked(), false);
@@ -49,7 +49,7 @@ function runCollisionTests(): void {
     assert.equal(hit2.outcome, 'died');
   }
 
-  // 3, 4, 5, 6) Bate -> fica lento -> recupera -> volta ao normal -> bate de novo -> fica lento sem morrer -> recupera de novo
+  // 3, 4, 5, 6) Bate -> fica lento 1.0s -> recupera -> volta ao normal -> bate de novo -> fica lento sem morrer -> recupera de novo
   {
     const ctrl = new CollisionStateController();
 
@@ -63,12 +63,12 @@ function runCollisionTests(): void {
     assert.equal(hit1.outcome, 'slowed');
     assert.equal(ctrl.getSpeedState(), 'slow');
 
-    // 4) Jogador se recupera (2.0s sem bater): volta ao normal
-    const stepMid = ctrl.step(1.0);
+    // 4) Jogador ainda lento em 0.9s, recupera exatamente em 1.0s sem bater
+    const stepMid = ctrl.step(0.9);
     assert.equal(stepMid.recoveredToNormal, false);
     assert.equal(ctrl.getSpeedState(), 'slow');
 
-    const stepRecover = ctrl.step(1.05);
+    const stepRecover = ctrl.step(0.1);
     assert.equal(stepRecover.recoveredToNormal, true);
     assert.equal(ctrl.getSpeedState(), 'normal');
     assert.equal(ctrl.getSlowRemainingSec(), 0);
@@ -84,8 +84,8 @@ function runCollisionTests(): void {
     assert.equal(hit2.outcome, 'slowed');
     assert.equal(ctrl.getSpeedState(), 'slow');
 
-    // 6) Jogador se recupera novamente e pode continuar jogando (inclusive sofrendo novas 1ªs colisões)
-    const stepRecover2 = ctrl.step(2.0);
+    // 6) Jogador se recupera novamente após 1.0s e pode continuar jogando (inclusive sofrendo novas 1ªs colisões)
+    const stepRecover2 = ctrl.step(1.0);
     assert.equal(stepRecover2.recoveredToNormal, true);
     assert.equal(ctrl.getSpeedState(), 'normal');
 
@@ -131,6 +131,26 @@ function runCollisionTests(): void {
     assert.equal(ctrl.getSpeedState(), 'slow');
   }
 
+  // Edge case: Consistência do tempo de 1s mesmo com queda de FPS (dt físico limitado a 0.05s, tempo real 0.1s/frame)
+  {
+    const ctrl = new CollisionStateController();
+    const hit = ctrl.resolveObstacleCollision({
+      obstacleId: 250,
+      hoverboardActive: false,
+      jetpackActive: false,
+      alreadyEnded: false,
+    });
+    assert.equal(hit.outcome, 'slowed');
+    for (let i = 0; i < 9; i++) {
+      const s = ctrl.step(0.05, 0.1);
+      assert.equal(s.recoveredToNormal, false);
+      assert.equal(ctrl.getSpeedState(), 'slow');
+    }
+    const finalStep = ctrl.step(0.05, 0.1);
+    assert.equal(finalStep.recoveredToNormal, true);
+    assert.equal(ctrl.getSpeedState(), 'normal');
+  }
+
   // Edge case: Hoverboard absorve colisão sem deixar lento nem matar
   {
     const ctrl = new CollisionStateController();
@@ -144,7 +164,7 @@ function runCollisionTests(): void {
     assert.equal(ctrl.getSpeedState(), 'normal');
   }
 
-  console.log('ALL COLLISION STATE TESTS PASSED (6/6 sequences + duplicate/simultaneous + hoverboard)');
+  console.log('ALL COLLISION STATE TESTS PASSED (1.0s exact + FPS consistency + duplicate/simultaneous + hoverboard)');
 }
 
 runCollisionTests();
