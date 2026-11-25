@@ -786,3 +786,24 @@ export const voiceCallSignals = pgTable(
     index('voice_signals_call_to_seq_idx').on(table.callId, table.toUserId, table.seq),
   ]
 );
+
+export const securityAuditLogs = pgTable(
+  'security_audit_logs',
+  {
+    id: text('id').primaryKey(),
+    eventType: text('event_type').notNull(),
+    category: text('category').notNull(),
+    severity: text('severity').notNull(),
+    ip: text('ip').notNull().default('unknown'),
+    userId: text('user_id'),
+    nickname: text('nickname'),
+    route: text('route'),
+    details: text('details').notNull(),
+    createdAt: text('created_at').notNull(),
+  },
+  (table) => [
+    index('sec_audit_created_idx').on(table.createdAt),
+    index('sec_audit_sev_created_idx').on(table.severity, table.createdAt),
+    index('sec_audit_ip_idx').on(table.ip, table.createdAt),
+  ]
+);

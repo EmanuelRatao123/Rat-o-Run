@@ -33,7 +33,8 @@ import {
   repoCreateSession,
   repoCreateUser,
   repoDeleteSession,
-  repoFindAdminAccount,
+  repoDeleteSessionsForUser,
+  repoFindAllAdminAccounts,
   repoFindUserByGoogleUid,
   repoFindUserByNickname,
   repoGetAllowedExclusiveSkinsForUser,
@@ -45,6 +46,7 @@ import {
   repoUpdateUserLastSeen,
   repoUpdateUserPassword,
 } from './repository.ts';
+import { recordSecurityEvent } from './securityAudit.ts';
 import {
   computeAvailableCoins,
   repoGetPlayerCapeConfig,
@@ -52,7 +54,7 @@ import {
   repoGetPlayerSkateInventory,
   repoGetUnreadAndPendingCounts,
 } from './socialShopRepository.ts';
-import { StoredUser } from './store.ts';
+import { StoredUser, isReservedAdminNickname, isSamukaAdminUser } from './store.ts';
 
 export const SESSION_COOKIE_NAME = 'ratao_session';
 export const ADMIN_SESSION_COOKIE_NAME = 'ratao_admin_session';
@@ -71,12 +73,16 @@ export interface AuthedRequest extends Request {
   adminToken?: string;
 }
 
-function getClientIp(req: Request): string {
-  const fwd = req.headers['x-forwarded-for'];
-  if (typeof fwd === 'string' && fwd.length > 0) {
-    return fwd.split(',')[0].trim();
+export function getClientIp(req: Request): string {
+  if (process.env.VERCEL === '1') {
+    const vercelIp = req.headers['x-real-ip'] || req.headers['x-vercel-forwarded-for'];
+    if (typeof vercelIp === 'string' && vercelIp.trim()) {
+      const clean = vercelIp.split(',')[0].trim();
+      return clean.startsWith('::ffff:') ? clean.slice(7) : clean;
+    }
   }
-  return req.ip || 'unknown';
+  const raw = req.ip || req.socket?.remoteAddress || 'unknown';
+  return raw.startsWith('::ffff:') ? raw.slice(7) : raw;
 }
 
 function setSessionCookie(res: Response, token: string): void {
@@ -153,11 +159,14 @@ export function sanitizeUserProfile(
     ? computeAvailableCoins(walletStats, user.totalCoins)
     : Math.max(0, user.totalCoins);
 
+  const showAdminPanelButton = isSamukaAdminUser(user);
+
   return {
     id: user.id,
     nickname: user.nickname,
     role: user.role,
     mustChangePassword: user.mustChangePassword,
+    showAdminPanelButton,
     equippedSkin: user.equippedSkin,
     equippedSkateId: user.equippedSkateId ?? null,
     unlockedSkins,
@@ -231,20 +240,45 @@ async function createSessionForUser(
 function validateCsrfForCookie(req: Request): boolean {
   const method = req.method.toUpperCase();
   if (method === 'GET' || method === 'HEAD' || method === 'OPTIONS') return true;
-  if (req.headers.authorization?.startsWith('Bearer ')) return true;
-  if (req.headers['x-admin-token']) return true;
-  if (req.headers['x-requested-with'] === 'XMLHttpRequest') return true;
 
+  const rawHost =
+    (typeof req.headers['x-forwarded-host'] === 'string' && req.headers['x-forwarded-host']) ||
+    req.headers.host ||
+    '';
+  const expectedHost = rawHost.split(',')[0].trim().toLowerCase();
+
+  // Always check explicit Origin header FIRST — never allow mismatched Origin even if X-Requested-With is set
   const origin = req.headers.origin;
-  const host = (req.headers['x-forwarded-host'] as string) || req.headers.host;
-  if (origin && host) {
+  if (typeof origin === 'string' && origin.trim()) {
+    if (!expectedHost) return false;
     try {
-      const originHost = new URL(origin).host;
-      if (originHost === host) return true;
+      const originHost = new URL(origin).host.toLowerCase();
+      if (originHost !== expectedHost) return false;
+      return true;
     } catch {
       return false;
     }
   }
+
+  // Fallback to Referer header verification when Origin is absent on state-changing browser calls
+  const referer = req.headers.referer;
+  if (typeof referer === 'string' && referer.trim()) {
+    if (!expectedHost) return false;
+    try {
+      const refHost = new URL(referer).host.toLowerCase();
+      if (refHost !== expectedHost) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  // When neither Origin nor Referer is present (e.g. non-browser API clients / Bearer auth / custom header),
+  // require either explicit token header or X-Requested-With header (browsers cannot forge these cross-origin via forms)
+  if (req.headers.authorization?.startsWith('Bearer ')) return true;
+  if (req.headers['x-admin-token']) return true;
+  if (req.headers['x-requested-with'] === 'XMLHttpRequest') return true;
+
   return false;
 }
 
@@ -304,6 +338,16 @@ export async function attachAuth(
 
 export function requireAuth(req: AuthedRequest, res: Response, next: NextFunction): void {
   if (!validateCsrfForCookie(req)) {
+    void recordSecurityEvent({
+      eventType: 'CSRF_VALIDATION_FAILED',
+      category: 'csrf',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: req.authUser?.id ?? null,
+      nickname: req.authUser?.nickname ?? null,
+      route: `${req.method} ${req.path}`,
+      details: `Blocked request with invalid origin/CSRF headers (origin=${String(req.headers.origin || 'none')})`,
+    });
     res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
     return;
   }
@@ -316,11 +360,31 @@ export function requireAuth(req: AuthedRequest, res: Response, next: NextFunctio
 
 export function requireAdmin(req: AuthedRequest, res: Response, next: NextFunction): void {
   if (!validateCsrfForCookie(req)) {
+    void recordSecurityEvent({
+      eventType: 'ADMIN_CSRF_VALIDATION_FAILED',
+      category: 'csrf',
+      severity: 'critical',
+      ip: getClientIp(req),
+      userId: req.authUser?.id ?? null,
+      nickname: req.authUser?.nickname ?? null,
+      route: `${req.method} ${req.path}`,
+      details: `Blocked admin request with invalid origin/CSRF headers`,
+    });
     res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
     return;
   }
   const adm = req.adminUser;
   if (!adm || adm.role !== 'admin') {
+    void recordSecurityEvent({
+      eventType: 'ADMIN_UNAUTHORIZED_ACCESS',
+      category: 'admin_access',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: req.authUser?.id ?? null,
+      nickname: req.authUser?.nickname ?? null,
+      route: `${req.method} ${req.path}`,
+      details: `Unauthorized access attempt to admin route by ${req.authUser ? req.authUser.nickname : 'anonymous'}`,
+    });
     res.status(403).json({ error: 'Acesso negado.' });
     return;
   }
@@ -340,9 +404,30 @@ function validateNickname(raw: unknown): string | null {
 }
 
 export async function registerHandler(req: Request, res: Response): Promise<void> {
+  if (!validateCsrfForCookie(req)) {
+    void recordSecurityEvent({
+      eventType: 'CSRF_REGISTER_FAILED',
+      category: 'csrf',
+      severity: 'high',
+      ip: getClientIp(req),
+      route: 'POST /api/auth/register',
+      details: 'Origin/CSRF mismatch during account registration',
+    });
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
+
   const ip = getClientIp(req);
   const rate = registerLimiter.check(`reg:${ip}`);
   if (!rate.allowed) {
+    void recordSecurityEvent({
+      eventType: 'REGISTER_RATE_LIMITED',
+      category: 'rate_limit',
+      severity: 'medium',
+      ip,
+      route: 'POST /api/auth/register',
+      details: `Registration rate limit exceeded (retryAfter=${rate.retryAfterSec}s)`,
+    });
     res.status(429).json({
       error: `Muitas tentativas de cadastro. Aguarde ${rate.retryAfterSec}s.`,
     });
@@ -368,8 +453,9 @@ export async function registerHandler(req: Request, res: Response): Promise<void
     return;
   }
 
-  const envAdminName = process.env.ADMIN_INITIAL_USERNAME?.trim().toLowerCase();
-  if (envAdminName && nickname.toLowerCase() === envAdminName) {
+  await ensureDbAndAdminReady();
+
+  if (isReservedAdminNickname(nickname)) {
     res.status(409).json({ error: 'Este nickname já está em uso.' });
     return;
   }
@@ -466,12 +552,34 @@ export async function registerHandler(req: Request, res: Response): Promise<void
 export async function loginHandler(req: Request, res: Response): Promise<void> {
   await ensureDbAndAdminReady();
 
+  if (!validateCsrfForCookie(req)) {
+    void recordSecurityEvent({
+      eventType: 'CSRF_LOGIN_FAILED',
+      category: 'csrf',
+      severity: 'high',
+      ip: getClientIp(req),
+      route: 'POST /api/auth/login',
+      details: 'Origin/CSRF mismatch on login request',
+    });
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
+
   const ip = getClientIp(req);
   const { nickname: rawNick, password } = req.body ?? {};
   const nickKey = typeof rawNick === 'string' ? rawNick.trim().toLowerCase() : '';
 
   const ipRate = loginLimiter.check(`ip:${ip}`);
   if (!ipRate.allowed) {
+    void recordSecurityEvent({
+      eventType: 'LOGIN_IP_RATE_LIMITED',
+      category: 'rate_limit',
+      severity: 'high',
+      ip,
+      nickname: nickKey || null,
+      route: 'POST /api/auth/login',
+      details: `IP rate-limited on login (retryAfter=${ipRate.retryAfterSec}s)`,
+    });
     res.status(429).json({
       error: `Muitas tentativas de login. Aguarde ${ipRate.retryAfterSec}s.`,
     });
@@ -481,6 +589,15 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   if (nickKey) {
     const userRate = loginLimiter.check(`user:${nickKey}`);
     if (!userRate.allowed) {
+      void recordSecurityEvent({
+        eventType: 'LOGIN_ACCOUNT_RATE_LIMITED',
+        category: 'rate_limit',
+        severity: 'high',
+        ip,
+        nickname: nickKey,
+        route: 'POST /api/auth/login',
+        details: `Account brute-force lockout triggered for ${nickKey}`,
+      });
       res.status(429).json({
         error: `Conta temporariamente bloqueada por excesso de tentativas. Aguarde ${userRate.retryAfterSec}s.`,
       });
@@ -495,12 +612,31 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
 
   const user = await repoFindUserByNickname(rawNick);
   if (!user || !user.passwordHash) {
+    void recordSecurityEvent({
+      eventType: 'LOGIN_INVALID_CREDENTIALS',
+      category: 'auth',
+      severity: 'low',
+      ip,
+      nickname: nickKey || null,
+      route: 'POST /api/auth/login',
+      details: `Failed login attempt for nickname=${nickKey || 'empty'}`,
+    });
     res.status(401).json({ error: 'Usuário ou senha inválidos.' });
     return;
   }
 
   const valid = await verifyPassword(password, user.passwordHash);
   if (!valid) {
+    void recordSecurityEvent({
+      eventType: 'LOGIN_INVALID_PASSWORD',
+      category: 'auth',
+      severity: user.role === 'admin' ? 'high' : 'medium',
+      ip,
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/auth/login',
+      details: `Invalid password attempt for ${user.role} account ${user.nickname}`,
+    });
     res.status(401).json({ error: 'Usuário ou senha inválidos.' });
     return;
   }
@@ -514,6 +650,14 @@ export async function loginHandler(req: Request, res: Response): Promise<void> {
   const sessionToken = await createSessionForUser(user.id, user.role === 'admin' ? 'admin' : 'player');
   setSessionCookie(res, sessionToken);
 
+  if (user.role === 'admin') {
+    await repoRecordAdminLog(
+      user.nickname,
+      'ADMIN_LOGIN_CONTA',
+      `Login realizado na conta administrativa ${user.nickname} (IP ${ip})`
+    );
+  }
+
   const userProfile = await buildFullUserProfile(user);
   res.json({
     user: userProfile,
@@ -525,6 +669,14 @@ export async function secretAdminLoginHandler(req: Request, res: Response): Prom
   await ensureDbAndAdminReady();
 
   if (!validateCsrfForCookie(req)) {
+    void recordSecurityEvent({
+      eventType: 'ADMIN_SECRET_CSRF_FAILED',
+      category: 'csrf',
+      severity: 'critical',
+      ip: getClientIp(req),
+      route: 'POST /api/admin/secret-login',
+      details: 'Origin/CSRF mismatch on secret admin login',
+    });
     res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
     return;
   }
@@ -537,6 +689,14 @@ export async function secretAdminLoginHandler(req: Request, res: Response): Prom
       'ADMIN_BLOQUEIO',
       `Excesso de tentativas administrativas bloqueadas (IP ${ip})`
     );
+    void recordSecurityEvent({
+      eventType: 'ADMIN_SECRET_RATE_LIMITED',
+      category: 'admin_access',
+      severity: 'critical',
+      ip,
+      route: 'POST /api/admin/secret-login',
+      details: `Secret admin login brute-force lockout triggered`,
+    });
     res.status(429).json({
       error: `Muitas tentativas. Aguarde ${rate.retryAfterSec}s.`,
     });
@@ -549,23 +709,39 @@ export async function secretAdminLoginHandler(req: Request, res: Response): Prom
     return;
   }
 
-  const admin = await repoFindAdminAccount();
-  if (!admin || !admin.passwordHash) {
+  const admins = (await repoFindAllAdminAccounts()).filter((a) => Boolean(a.passwordHash));
+  if (admins.length === 0) {
     res.status(404).json({ error: 'Conta administrativa inicial ainda não configurada.' });
     return;
   }
 
-  const valid = await verifyPassword(password, admin.passwordHash);
-  if (!valid) {
+  let matchedAdmin: StoredUser | undefined;
+  for (const candidate of admins) {
+    if (await verifyPassword(password, candidate.passwordHash)) {
+      matchedAdmin = candidate;
+      break;
+    }
+  }
+
+  if (!matchedAdmin) {
     await repoRecordAdminLog(
       'SEGURANÇA',
       'ADMIN_ACESSO_NEGADO',
       `Tentativa com senha incorreta via acesso secreto (IP ${ip})`
     );
+    void recordSecurityEvent({
+      eventType: 'ADMIN_SECRET_AUTH_FAILED',
+      category: 'admin_access',
+      severity: 'high',
+      ip,
+      route: 'POST /api/admin/secret-login',
+      details: `Invalid password submitted on secret admin portal`,
+    });
     res.status(401).json({ error: 'Senha incorreta.' });
     return;
   }
 
+  const admin = matchedAdmin;
   adminSecretLimiter.reset(`adm:${ip}`);
   const nowIso = new Date().toISOString();
   admin.lastSeenAt = nowIso;
@@ -666,25 +842,42 @@ export async function changePasswordHandler(req: AuthedRequest, res: Response): 
   targetUser.passwordHash = newHash;
   targetUser.mustChangePassword = false;
   await repoUpdateUserPassword(targetUser.id, newHash, false);
+  await repoDeleteSessionsForUser(
+    targetUser.id,
+    [req.authToken || '', req.adminToken || ''].filter(Boolean)
+  );
 
   if (targetUser.role === 'admin') {
     await repoRecordAdminLog(
       targetUser.nickname,
       'ADMIN_SENHA_ALTERADA',
-      'Senha inicial administrativa atualizada com sucesso'
+      `Senha administrativa de ${targetUser.nickname} atualizada com sucesso`
     );
   }
 
-  const rank = await repoComputePlayerRank(targetUser.id);
+  const fullProfile = await buildFullUserProfile(targetUser);
   res.json({
-    user: sanitizeUserProfile(targetUser, rank),
+    user: fullProfile,
   });
 }
 
 export async function recoverAccountHandler(req: Request, res: Response): Promise<void> {
+  if (!validateCsrfForCookie(req)) {
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
+
   const ip = getClientIp(req);
   const rate = recoverLimiter.check(`rec:${ip}`);
   if (!rate.allowed) {
+    void recordSecurityEvent({
+      eventType: 'RECOVER_RATE_LIMITED',
+      category: 'rate_limit',
+      severity: 'high',
+      ip,
+      route: 'POST /api/auth/recover',
+      details: `Account recovery rate limit exceeded`,
+    });
     res.status(429).json({
       error: `Muitas tentativas de recuperação. Aguarde ${rate.retryAfterSec}s.`,
     });
@@ -708,23 +901,47 @@ export async function recoverAccountHandler(req: Request, res: Response): Promis
 
   const user = await repoFindUserByNickname(nickname);
   if (!user || user.role === 'admin' || !user.recoveryHash) {
-    res.status(400).json({ error: 'Não foi possível validar os dados de recuperação.' });
+    void recordSecurityEvent({
+      eventType: 'RECOVER_FAILED',
+      category: 'auth',
+      severity: 'medium',
+      ip,
+      nickname: nickname.trim().slice(0, 24),
+      route: 'POST /api/auth/recover',
+      details: `Account recovery attempt failed (invalid target or missing code)`,
+    });
+    res.status(401).json({ error: 'Não foi possível validar os dados de recuperação.' });
     return;
   }
 
   const validCode = await verifyPassword(recoveryCode.trim(), user.recoveryHash);
   if (!validCode) {
-    res.status(401).json({ error: 'Código de recuperação incorreto.' });
+    void recordSecurityEvent({
+      eventType: 'RECOVER_BAD_CODE',
+      category: 'auth',
+      severity: 'medium',
+      ip,
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/auth/recover',
+      details: `Invalid recovery code supplied for ${user.nickname}`,
+    });
+    res.status(401).json({ error: 'Não foi possível validar os dados de recuperação.' });
     return;
   }
 
   const newHash = await hashPassword(newPassword);
   await repoUpdateUserPassword(user.id, newHash, user.mustChangePassword);
+  await repoDeleteSessionsForUser(user.id);
 
   res.json({ ok: true, message: 'Senha redefinida com sucesso. Faça login!' });
 }
 
 export async function logoutHandler(req: AuthedRequest, res: Response): Promise<void> {
+  if (!validateCsrfForCookie(req)) {
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
   if (req.authToken) {
     await repoDeleteSession(req.authToken);
   }
@@ -755,6 +972,10 @@ export async function adminBootstrapStatusHandler(_req: Request, res: Response):
 }
 
 export async function adminBootstrapHandler(req: Request, res: Response): Promise<void> {
+  if (!validateCsrfForCookie(req)) {
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
   await ensureDbAndAdminReady();
   const envConfigured = Boolean(
     process.env.ADMIN_INITIAL_USERNAME?.trim() && process.env.ADMIN_INITIAL_PASSWORD
@@ -775,8 +996,8 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
     res.status(400).json({ error: 'Senha inválida ou não coincide (mín. 6 caracteres).' });
     return;
   }
-  if (await repoFindUserByNickname(nickname)) {
-    res.status(409).json({ error: 'Este nome já pertence a outro usuário.' });
+  if (isReservedAdminNickname(nickname) || (await repoFindUserByNickname(nickname))) {
+    res.status(409).json({ error: 'Este nome já pertence a outro usuário ou é reservado.' });
     return;
   }
 
@@ -927,6 +1148,10 @@ async function verifyFirebaseJwt(idToken: string): Promise<{ uid: string; name?:
 }
 
 export async function googleAuthHandler(req: Request, res: Response): Promise<void> {
+  if (!validateCsrfForCookie(req)) {
+    res.status(403).json({ error: 'Falha na validação de origem da requisição.' });
+    return;
+  }
   const { idToken, preferredNickname } = req.body ?? {};
   if (typeof idToken !== 'string' || !idToken) {
     res.status(400).json({ error: 'Token Google ausente.' });
@@ -944,7 +1169,7 @@ export async function googleAuthHandler(req: Request, res: Response): Promise<vo
         (claims.email ? claims.email.split('@')[0] : 'Corredor');
       let candidate = baseNameRaw.replace(/[^a-zA-Z0-9_\- ]/g, '').trim().slice(0, 16);
       if (candidate.length < 3) candidate = `Ratao_${claims.uid.slice(0, 4)}`;
-      while (await repoFindUserByNickname(candidate)) {
+      while (isReservedAdminNickname(candidate) || (await repoFindUserByNickname(candidate))) {
         candidate = `${candidate.slice(0, 14)}_${Math.floor(10 + Math.random() * 89)}`;
       }
 

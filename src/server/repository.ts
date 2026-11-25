@@ -75,7 +75,9 @@ import {
   ensureAdminFromEnv as ensureLocalAdminFromEnv,
   findUserByNickname as findLocalUserByNickname,
   getDb as getLocalDb,
+  getSamukaAdminUsername,
   hasAdminAccount as hasLocalAdminAccount,
+  isSamukaAdminUser,
   saveDb as saveLocalDb,
 } from './store.ts';
 
@@ -114,6 +116,7 @@ function mapNeonUserRow(row: typeof users.$inferSelect): StoredUser {
 declare global {
   var _rataoLastPruneAt: number | undefined;
   var _rataoNeonAdminChecked: boolean | undefined;
+  var _rataoNeonAdminCheckedKey: string | undefined;
   var _rataoClusterSecretPromise: Promise<void> | undefined;
 }
 
@@ -166,57 +169,111 @@ export async function ensureDbAndAdminReady(): Promise<void> {
   await ensureNeonSchema();
   await ensureClusterSigningSecret();
 
-  if (global._rataoNeonAdminChecked) return;
-  const envUser = process.env.ADMIN_INITIAL_USERNAME?.trim();
-  const envPass = process.env.ADMIN_INITIAL_PASSWORD;
+  const envUser = process.env.ADMIN_INITIAL_USERNAME?.trim() || '';
+  const envPass = process.env.ADMIN_INITIAL_PASSWORD || '';
+  const samukaUser = getSamukaAdminUsername();
+  const samukaLower = samukaUser.toLowerCase();
+  const samukaPass = process.env.ADMIN_SAMUKA_PASSWORD || '';
+
+  const checkKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}`;
+  if (global._rataoNeonAdminChecked && global._rataoNeonAdminCheckedKey === checkKey) {
+    return;
+  }
+
   const db = getNeonDb();
 
-  const existing = await db
-    .select({ id: users.id })
+  // 1. Primary admin (Ratão) — independent from Samuka
+  if (envUser && envPass) {
+    const existingPrimary = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(
+        or(
+          eq(users.nicknameLower, envUser.toLowerCase()),
+          and(eq(users.role, 'admin'), sql`${users.nicknameLower} <> ${samukaLower}`)
+        )
+      )
+      .limit(1);
+
+    if (existingPrimary.length === 0) {
+      const id = `adm_${generateToken(8)}`;
+      const now = new Date().toISOString();
+      const passwordHash = await hashPassword(envPass);
+
+      await db
+        .insert(users)
+        .values({
+          id,
+          nickname: envUser,
+          nicknameLower: envUser.toLowerCase(),
+          passwordHash,
+          recoveryHash: null,
+          googleUid: null,
+          role: 'admin',
+          mustChangePassword: true,
+          equippedSkin: 'ratao',
+          unlockedSkins: [...COMMON_SKIN_IDS],
+          giftedSkins: [],
+          bestNoCoinTimeMs: 0,
+          bestDistance: 0,
+          bestScore: 0,
+          totalMatches: 0,
+          totalCoins: 0,
+          favoriteSkin: 'ratao',
+          skinUsage: {},
+          createdAt: now,
+          lastSeenAt: now,
+        })
+        .onConflictDoNothing();
+    }
+  }
+
+  // 2. Second admin (Samuka) — created idempotently, preserves updated passwords
+  const existingSamuka = await db
+    .select({ id: users.id, role: users.role })
     .from(users)
-    .where(eq(users.role, 'admin'))
+    .where(eq(users.nicknameLower, samukaLower))
     .limit(1);
 
-  if (existing.length > 0) {
-    global._rataoNeonAdminChecked = true;
-    return;
+  if (existingSamuka.length === 0 && samukaPass) {
+    const id = `adm_samuka_${generateToken(6)}`;
+    const now = new Date().toISOString();
+    const passwordHash = await hashPassword(samukaPass);
+
+    await db
+      .insert(users)
+      .values({
+        id,
+        nickname: samukaUser,
+        nicknameLower: samukaLower,
+        passwordHash,
+        recoveryHash: null,
+        googleUid: null,
+        role: 'admin',
+        mustChangePassword: false,
+        equippedSkin: 'ratao',
+        unlockedSkins: [...COMMON_SKIN_IDS],
+        giftedSkins: [],
+        bestNoCoinTimeMs: 0,
+        bestDistance: 0,
+        bestScore: 0,
+        totalMatches: 0,
+        totalCoins: 0,
+        favoriteSkin: 'ratao',
+        skinUsage: {},
+        createdAt: now,
+        lastSeenAt: now,
+      })
+      .onConflictDoNothing();
+  } else if (existingSamuka[0] && existingSamuka[0].role !== 'admin') {
+    await db
+      .update(users)
+      .set({ role: 'admin' })
+      .where(eq(users.id, existingSamuka[0].id));
   }
-
-  if (!envUser || !envPass) {
-    return;
-  }
-
-  const id = `adm_${generateToken(8)}`;
-  const now = new Date().toISOString();
-  const passwordHash = await hashPassword(envPass);
-
-  await db
-    .insert(users)
-    .values({
-      id,
-      nickname: envUser,
-      nicknameLower: envUser.toLowerCase(),
-      passwordHash,
-      recoveryHash: null,
-      googleUid: null,
-      role: 'admin',
-      mustChangePassword: true,
-      equippedSkin: 'ratao',
-      unlockedSkins: [...COMMON_SKIN_IDS],
-      giftedSkins: [],
-      bestNoCoinTimeMs: 0,
-      bestDistance: 0,
-      bestScore: 0,
-      totalMatches: 0,
-      totalCoins: 0,
-      favoriteSkin: 'ratao',
-      skinUsage: {},
-      createdAt: now,
-      lastSeenAt: now,
-    })
-    .onConflictDoNothing();
 
   global._rataoNeonAdminChecked = true;
+  global._rataoNeonAdminCheckedKey = checkKey;
 }
 
 export async function repoHasAdminAccount(): Promise<boolean> {
@@ -385,7 +442,8 @@ export async function repoGetValidSessionUser(
     if (requiredScope === 'admin' && session.scope !== 'admin') return null;
     const user = db.users[session.userId];
     if (!user) return null;
-    if (requiredScope === 'admin' && user.role !== 'admin') return null;
+    if (session.scope === 'admin' && user.role !== 'admin') return null;
+    if (requiredScope === 'admin' && (session.scope !== 'admin' || user.role !== 'admin')) return null;
     user.lastSeenAt = new Date(now).toISOString();
     return user;
   }
@@ -416,6 +474,7 @@ export async function repoGetValidSessionUser(
     .limit(1);
 
   if (userRows.length === 0) return null;
+  if (sessRows[0].scope === 'admin' && userRows[0].role !== 'admin') return null;
   if (requiredScope === 'admin' && userRows[0].role !== 'admin') return null;
 
   const lastSeenAt = new Date(now).toISOString();
@@ -435,6 +494,35 @@ export async function repoDeleteSession(token: string): Promise<void> {
   await ensureNeonSchema();
   const db = getNeonDb();
   await db.delete(sessions).where(eq(sessions.token, token));
+}
+
+export async function repoDeleteSessionsForUser(
+  userId: string,
+  exceptTokens: string[] = []
+): Promise<void> {
+  const keepSet = new Set(exceptTokens.filter(Boolean));
+  if (!isNeonConfigured()) {
+    const db = getLocalDb();
+    let changed = false;
+    for (const [tok, sess] of Object.entries(db.sessions)) {
+      if (sess.userId === userId && !keepSet.has(tok)) {
+        delete db.sessions[tok];
+        changed = true;
+      }
+    }
+    if (changed) saveLocalDb();
+    return;
+  }
+  await ensureNeonSchema();
+  const db = getNeonDb();
+  const existing = await db
+    .select({ token: sessions.token })
+    .from(sessions)
+    .where(eq(sessions.userId, userId));
+  const toDelete = existing.map((s) => s.token).filter((t) => !keepSet.has(t));
+  if (toDelete.length > 0) {
+    await db.delete(sessions).where(inArray(sessions.token, toDelete));
+  }
 }
 
 export async function repoComputePlayerRank(userId: string): Promise<number | null> {
@@ -1959,19 +2047,30 @@ export async function repoGiftSkinToPlayer(params: {
   return { status: 'ok', gift };
 }
 
-export async function repoFindAdminAccount(): Promise<StoredUser | undefined> {
+export async function repoFindAllAdminAccounts(): Promise<StoredUser[]> {
+  const sortAdmins = (list: StoredUser[]) =>
+    [...list].sort((a, b) => {
+      const aSamuka = isSamukaAdminUser(a) ? 1 : 0;
+      const bSamuka = isSamukaAdminUser(b) ? 1 : 0;
+      return aSamuka - bSamuka;
+    });
+
   if (!isNeonConfigured()) {
     const db = getLocalDb();
-    return Object.values(db.users).find((u) => u.role === 'admin');
+    return sortAdmins(Object.values(db.users).filter((u) => u.role === 'admin'));
   }
   await ensureNeonSchema();
   const db = getNeonDb();
   const rows = await db
     .select()
     .from(users)
-    .where(eq(users.role, 'admin'))
-    .limit(1);
-  return rows[0] ? mapNeonUserRow(rows[0]) : undefined;
+    .where(eq(users.role, 'admin'));
+  return sortAdmins(rows.map(mapNeonUserRow));
+}
+
+export async function repoFindAdminAccount(): Promise<StoredUser | undefined> {
+  const admins = await repoFindAllAdminAccounts();
+  return admins[0];
 }
 
 export async function repoRecordAdminLog(
@@ -3537,82 +3636,104 @@ export async function repoCreditWalletCoins(params: {
   }
 
   await ensureNeonSchema();
-  const db = getNeonDb();
+  const pool = getNeonPool();
+  const client = await pool.connect();
 
-  const inserted = await db
-    .insert(coinLedgerEvents)
-    .values({
-      id: `cl_${generateToken(8)}`,
-      eventKey,
+  try {
+    await client.query('BEGIN');
+
+    const ledgerRes = await client.query<{ id: string }>(
+      `INSERT INTO coin_ledger_events (id, event_key, user_id, source_type, amount, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (event_key) DO NOTHING
+       RETURNING id`,
+      [`cl_${generateToken(8)}`, eventKey, userId, sourceType, safeAmount, nowIso]
+    );
+
+    if (ledgerRes.rows.length === 0) {
+      await client.query('COMMIT');
+      return { credited: false, wallet: await repoGetWalletStatsForUser(userId) };
+    }
+
+    const walletRes = await client.query<{
+      total_coins_collected: number;
+      solo_coins_collected: number;
+      multiplayer_coins_collected: number;
+      promo_coins_collected: number;
+      spent_coins: number;
+    }>(
+      `SELECT total_coins_collected, solo_coins_collected, multiplayer_coins_collected, promo_coins_collected, spent_coins
+       FROM player_wallet_stats
+       WHERE user_id = $1
+       FOR UPDATE`,
+      [userId]
+    );
+
+    let baseTotal = walletRes.rows[0]?.total_coins_collected ?? 0;
+    let baseSolo = walletRes.rows[0]?.solo_coins_collected ?? 0;
+    const baseMp = walletRes.rows[0]?.multiplayer_coins_collected ?? 0;
+    const basePromo = walletRes.rows[0]?.promo_coins_collected ?? 0;
+    const spentCoins = walletRes.rows[0]?.spent_coins ?? 0;
+
+    if (!walletRes.rows[0]) {
+      const userRes = await client.query<{ total_coins: number }>(
+        `SELECT total_coins FROM users WHERE id = $1 FOR UPDATE`,
+        [userId]
+      );
+      const prior = skipUserTotalCoinsUpdate
+        ? Math.max(0, (userRes.rows[0]?.total_coins ?? 0) - safeAmount)
+        : userRes.rows[0]?.total_coins ?? 0;
+      baseTotal = prior;
+      baseSolo = prior;
+    }
+
+    const nextWallet: PlayerWalletStats = {
       userId,
-      sourceType,
-      amount: safeAmount,
-      createdAt: nowIso,
-    })
-    .onConflictDoNothing()
-    .returning({ id: coinLedgerEvents.id });
+      totalCoinsCollected: baseTotal + safeAmount,
+      soloCoinsCollected: baseSolo + (sourceType === 'solo' ? safeAmount : 0),
+      multiplayerCoinsCollected:
+        baseMp + (sourceType === 'coop' || sourceType === 'x1' ? safeAmount : 0),
+      promoCoinsCollected: basePromo + (sourceType === 'promo' ? safeAmount : 0),
+      spentCoins,
+      updatedAt: nowIso,
+    };
 
-  if (inserted.length === 0) {
-    return { credited: false, wallet: await repoGetWalletStatsForUser(userId) };
+    await client.query(
+      `INSERT INTO player_wallet_stats (
+         user_id, total_coins_collected, solo_coins_collected, multiplayer_coins_collected, promo_coins_collected, spent_coins, updated_at
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+       ON CONFLICT (user_id) DO UPDATE SET
+         total_coins_collected = EXCLUDED.total_coins_collected,
+         solo_coins_collected = EXCLUDED.solo_coins_collected,
+         multiplayer_coins_collected = EXCLUDED.multiplayer_coins_collected,
+         promo_coins_collected = EXCLUDED.promo_coins_collected,
+         updated_at = EXCLUDED.updated_at`,
+      [
+        userId,
+        nextWallet.totalCoinsCollected,
+        nextWallet.soloCoinsCollected,
+        nextWallet.multiplayerCoinsCollected,
+        nextWallet.promoCoinsCollected,
+        nextWallet.spentCoins,
+        nowIso,
+      ]
+    );
+
+    if (!skipUserTotalCoinsUpdate) {
+      await client.query(
+        `UPDATE users SET total_coins = total_coins + $1 WHERE id = $2`,
+        [safeAmount, userId]
+      );
+    }
+
+    await client.query('COMMIT');
+    return { credited: true, wallet: nextWallet };
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
-
-  const existing = await db
-    .select()
-    .from(playerWalletStats)
-    .where(eq(playerWalletStats.userId, userId))
-    .limit(1);
-
-  let baseTotal = existing[0]?.totalCoinsCollected ?? 0;
-  let baseSolo = existing[0]?.soloCoinsCollected ?? 0;
-  let baseMp = existing[0]?.multiplayerCoinsCollected ?? 0;
-  let basePromo = existing[0]?.promoCoinsCollected ?? 0;
-
-  if (!existing[0]) {
-    const userRows = await db
-      .select({ totalCoins: users.totalCoins })
-      .from(users)
-      .where(eq(users.id, userId))
-      .limit(1);
-    const prior = skipUserTotalCoinsUpdate
-      ? Math.max(0, (userRows[0]?.totalCoins ?? 0) - safeAmount)
-      : userRows[0]?.totalCoins ?? 0;
-    baseTotal = prior;
-    baseSolo = prior;
-  }
-
-  const nextWallet: PlayerWalletStats = {
-    userId,
-    totalCoinsCollected: baseTotal + safeAmount,
-    soloCoinsCollected: baseSolo + (sourceType === 'solo' ? safeAmount : 0),
-    multiplayerCoinsCollected:
-      baseMp + (sourceType === 'coop' || sourceType === 'x1' ? safeAmount : 0),
-    promoCoinsCollected: basePromo + (sourceType === 'promo' ? safeAmount : 0),
-    spentCoins: existing[0]?.spentCoins ?? 0,
-    updatedAt: nowIso,
-  };
-
-  await db
-    .insert(playerWalletStats)
-    .values(nextWallet)
-    .onConflictDoUpdate({
-      target: playerWalletStats.userId,
-      set: {
-        totalCoinsCollected: nextWallet.totalCoinsCollected,
-        soloCoinsCollected: nextWallet.soloCoinsCollected,
-        multiplayerCoinsCollected: nextWallet.multiplayerCoinsCollected,
-        promoCoinsCollected: nextWallet.promoCoinsCollected,
-        updatedAt: nowIso,
-      },
-    });
-
-  if (!skipUserTotalCoinsUpdate) {
-    await db
-      .update(users)
-      .set({ totalCoins: sql`${users.totalCoins} + ${safeAmount}` })
-      .where(eq(users.id, userId));
-  }
-
-  return { credited: true, wallet: nextWallet };
 }
 
 // ============================================================

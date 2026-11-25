@@ -1034,6 +1034,14 @@ export function validateAndSanitizePngDataUrl(raw: unknown):
   if (!buf.subarray(0, 8).equals(PNG_MAGIC)) {
     return { ok: false, error: 'Assinatura PNG inválida.' };
   }
+  if (buf.subarray(12, 16).toString('ascii') !== 'IHDR') {
+    return { ok: false, error: 'Cabeçalho IHDR PNG inválido.' };
+  }
+  const width = buf.readUInt32BE(16);
+  const height = buf.readUInt32BE(20);
+  if (width < 1 || width > 1024 || height < 1 || height > 1024) {
+    return { ok: false, error: 'Dimensões da textura PNG devem estar entre 1x1 e 1024x1024.' };
+  }
 
   return { ok: true, buffer: buf, dataUrl: `${prefix}${buf.toString('base64')}` };
 }
@@ -1312,7 +1320,11 @@ export async function repoGetCustomTextureBinary(
     if (row?.dataBase64) {
       return { buffer: Buffer.from(row.dataBase64, 'base64'), contentType: 'image/png' };
     }
-    const filePath = path.join(TEXTURE_DIR, `${textureId}.png`);
+    const baseDir = path.resolve(TEXTURE_DIR);
+    const filePath = path.resolve(baseDir, `${textureId}.png`);
+    if (!filePath.startsWith(`${baseDir}${path.sep}`)) {
+      return null;
+    }
     if (fs.existsSync(filePath)) {
       return { buffer: fs.readFileSync(filePath), contentType: 'image/png' };
     }

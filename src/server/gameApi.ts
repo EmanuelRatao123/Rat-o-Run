@@ -7,9 +7,14 @@ import {
   isGiftableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
-import { AuthedRequest } from './auth.ts';
-import { generateToken } from './crypto.ts';
+import { AuthedRequest, getClientIp } from './auth.ts';
+import { SlidingRateLimiter, generateToken } from './crypto.ts';
 import { signCanonicalMatchToken, verifyMatchSignature } from './matchSignature.ts';
+import { listSecurityAuditLogs, recordSecurityEvent } from './securityAudit.ts';
+
+const startMatchLimiter = new SlidingRateLimiter(45, 5 * 60 * 1000, 60 * 1000);
+const finishMatchLimiter = new SlidingRateLimiter(60, 5 * 60 * 1000, 60 * 1000);
+const diagLimiter = new SlidingRateLimiter(90, 5 * 60 * 1000, 30 * 1000);
 import {
   repoGetCustomCharacterConfig,
   repoGetUnreadNotificationsForUser,
@@ -68,6 +73,16 @@ export async function equipSkinHandler(req: AuthedRequest, res: Response): Promi
   }
   const allowed = await repoCanUserEquipSkin(user, skinId);
   if (!allowed) {
+    void recordSecurityEvent({
+      eventType: 'UNAUTHORIZED_SKIN_EQUIP',
+      category: 'economy_skate',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/skins/equip',
+      details: `Blocked attempt to equip locked skin=${skinId}`,
+    });
     res.status(403).json({ error: 'Você não possui permissão para equipar esta skin exclusiva.' });
     return;
   }
@@ -77,6 +92,21 @@ export async function equipSkinHandler(req: AuthedRequest, res: Response): Promi
 
 export async function startMatchHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const rate = startMatchLimiter.check(`start:${user.id}`);
+  if (!rate.allowed) {
+    void recordSecurityEvent({
+      eventType: 'START_MATCH_RATE_LIMITED',
+      category: 'rate_limit',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/start',
+      details: `Match start rate limit exceeded`,
+    });
+    res.status(429).json({ error: `Muitas partidas iniciadas em sequência. Aguarde ${rate.retryAfterSec}s.` });
+    return;
+  }
   const { mapId, skinId, mode } = req.body ?? {};
   if (!isValidMapId(mapId)) {
     res.status(400).json({ error: 'Mapa inválido.' });
@@ -89,6 +119,16 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
   const chosenMode: SoloGameMode = mode === 'normal' ? 'normal' : 'no_coin';
   const chosenSkin: SkinId = isValidSkinId(skinId) ? skinId : user.equippedSkin;
   if (!(await repoCanUserEquipSkin(user, chosenSkin))) {
+    void recordSecurityEvent({
+      eventType: 'UNAUTHORIZED_MATCH_SKIN',
+      category: 'economy_skate',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/start',
+      details: `Blocked startMatch with locked skin=${chosenSkin}`,
+    });
     res.status(403).json({ error: 'Skin exclusiva não autorizada para esta conta.' });
     return;
   }
@@ -135,6 +175,21 @@ export async function startMatchHandler(req: AuthedRequest, res: Response): Prom
 
 export async function finishMatchHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const finishRate = finishMatchLimiter.check(`fin:${user.id}`);
+  if (!finishRate.allowed) {
+    void recordSecurityEvent({
+      eventType: 'FINISH_MATCH_RATE_LIMITED',
+      category: 'rate_limit',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Match finish rate limit exceeded`,
+    });
+    res.status(429).json({ error: `Muitas requisições de finalização. Aguarde ${finishRate.retryAfterSec}s.` });
+    return;
+  }
   const {
     matchId: rawMatchId,
     signature: rawSignature,
@@ -181,6 +236,16 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       status: 'user_mismatch',
       detail: `Match belongs to user=${active.userId} caller=${user.id}`,
     });
+    void recordSecurityEvent({
+      eventType: 'MATCH_USER_MISMATCH',
+      category: 'match_integrity',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Attempted to submit matchId=${matchId} belonging to another account`,
+    });
     res.status(403).json({ error: 'Assinatura de partida inválida.' });
     return;
   }
@@ -199,6 +264,16 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       stage: 'finish',
       status: 'bad_signature',
       detail: `reason=${sigCheck.reason} secretSource=${sigCheck.secretSource} startedAt=${sigCheck.startedAtInt} completed=${active.completed}`,
+    });
+    void recordSecurityEvent({
+      eventType: 'MATCH_SIGNATURE_INVALID',
+      category: 'match_integrity',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Invalid match signature for matchId=${matchId} reason=${sigCheck.reason}`,
     });
     res.status(403).json({ error: 'Assinatura de partida inválida.' });
     return;
@@ -238,6 +313,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     !Number.isFinite(safeDistance) ||
     !Number.isFinite(safeScore) ||
     safeDuration < 0 ||
+    safeDuration > 6 * 60 * 60 * 1000 ||
     safeNoCoin < 0 ||
     safeCoins < 0 ||
     safeDistance < 0 ||
@@ -255,7 +331,7 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
     return;
   }
 
-  // Server-side anti-cheat plausibility checks (generous tolerance for network retry latency)
+  // Server-side anti-cheat plausibility checks (aligned with RunnerEngine.ts MAX_SPEED*1.35*0.85 = 40.16 m/s + generous latency margin)
   if (safeDuration > wallElapsedMs + 10000) {
     void repoLogMatchDiagnostic({
       userId: user.id,
@@ -265,11 +341,31 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       status: 'rejected_duration',
       detail: `safeDuration=${safeDuration} wallElapsed=${wallElapsedMs}`,
     });
+    void recordSecurityEvent({
+      eventType: 'MATCH_DURATION_TAMPER',
+      category: 'match_integrity',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Match duration (${safeDuration}ms) exceeded wall elapsed (${wallElapsedMs}ms)`,
+    });
     res.status(422).json({ error: 'Duração incompatível com o tempo real da partida.' });
     return;
   }
   if (activeMode === 'no_coin') {
     if (safeNoCoin > safeDuration + 250) {
+      void recordSecurityEvent({
+        eventType: 'MATCH_NOCOIN_TAMPER',
+        category: 'match_integrity',
+        severity: 'high',
+        ip: getClientIp(req),
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/match/finish',
+        details: `noCoinTimeMs (${safeNoCoin}) exceeded durationMs (${safeDuration})`,
+      });
       res.status(422).json({ error: 'Tempo sem moedas não pode superar a duração da partida.' });
       return;
     }
@@ -278,24 +374,64 @@ export async function finishMatchHandler(req: AuthedRequest, res: Response): Pro
       return;
     }
     if (safeCollectedCoin && safeCoins > 5) {
+      void recordSecurityEvent({
+        eventType: 'MATCH_NOCOIN_COINS_TAMPER',
+        category: 'match_integrity',
+        severity: 'high',
+        ip: getClientIp(req),
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/match/finish',
+        details: `Excessive coins (${safeCoins}) reported in no_coin mode`,
+      });
       res.status(422).json({ error: 'Tentativa No Coin inválida detectada.' });
       return;
     }
   } else {
-    const maxPlausibleCoins = Math.floor((safeDuration / 1000) * 40 + 50);
+    const maxPlausibleCoins = Math.floor((safeDuration / 1000) * 25 + 30);
     if (safeCoins > maxPlausibleCoins) {
+      void recordSecurityEvent({
+        eventType: 'MATCH_COIN_INJECTION',
+        category: 'match_integrity',
+        severity: 'high',
+        ip: getClientIp(req),
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/match/finish',
+        details: `Implausible solo coins (${safeCoins} > ${maxPlausibleCoins}) in ${safeDuration}ms`,
+      });
       res.status(422).json({ error: 'Quantidade de moedas incompatível com a duração da partida.' });
       return;
     }
   }
 
-  const maxPlausibleDistance = (safeDuration / 1000) * 75 + 45;
+  const maxPlausibleDistance = (safeDuration / 1000) * 55 + 30;
   if (safeDistance > maxPlausibleDistance) {
+    void recordSecurityEvent({
+      eventType: 'MATCH_DISTANCE_TAMPER',
+      category: 'match_integrity',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Implausible distance (${safeDistance} > ${maxPlausibleDistance.toFixed(1)}) in ${safeDuration}ms`,
+    });
     res.status(422).json({ error: 'Distância incompatível com os limites físicos do jogo.' });
     return;
   }
-  const maxPlausibleScore = (safeDuration / 1000) * 3000 + safeCoins * 600 + 1000;
+  const maxPlausibleScore = (safeDuration / 1000) * 400 + safeCoins * 250 + 500;
   if (safeScore > maxPlausibleScore) {
+    void recordSecurityEvent({
+      eventType: 'MATCH_SCORE_TAMPER',
+      category: 'match_integrity',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/match/finish',
+      details: `Implausible score (${safeScore} > ${maxPlausibleScore.toFixed(1)}) in ${safeDuration}ms`,
+    });
     res.status(422).json({ error: 'Pontuação incompatível com os limites do jogo.' });
     return;
   }
@@ -376,6 +512,11 @@ export async function clientMatchDiagnosticHandler(
   res: Response
 ): Promise<void> {
   const user = req.authUser!;
+  const rate = diagLimiter.check(`diag:${user.id}`);
+  if (!rate.allowed) {
+    res.status(429).json({ error: `Limite de diagnósticos atingido. Aguarde ${rate.retryAfterSec}s.` });
+    return;
+  }
   const { matchId, mode, stage, status, detail } = req.body ?? {};
   const safeMatchId =
     typeof matchId === 'string' && matchId.trim() ? matchId.trim().slice(0, 64) : 'client_run';
@@ -925,5 +1066,24 @@ export async function adminRevokeSecretSkinHandler(
     targetNickname: result.targetNickname,
     resetEquipped: result.resetEquipped,
   });
+}
+
+export async function adminSecurityLogsHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const rawLimit = Number(req.query.limit ?? 80);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.min(250, Math.floor(rawLimit)) : 80;
+  const rawSeverity = typeof req.query.severity === 'string' ? req.query.severity : 'all';
+  const validSeverity =
+    rawSeverity === 'low' ||
+    rawSeverity === 'medium' ||
+    rawSeverity === 'high' ||
+    rawSeverity === 'critical'
+      ? rawSeverity
+      : 'all';
+
+  const result = await listSecurityAuditLogs({ limit, severity: validSeverity });
+  res.json(result);
 }
 

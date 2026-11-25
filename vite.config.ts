@@ -40,6 +40,7 @@ export default defineConfig(({ mode }) => {
     },
     esbuild: {
       drop: mode === 'production' ? ['debugger'] : [],
+      pure: mode === 'production' ? ['console.debug'] : [],
     },
     server: {
       // HMR is disabled in AI Studio via DISABLE_HMR env var.

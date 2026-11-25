@@ -30,6 +30,7 @@ import {
   AdminLogItem,
   AdminPlayerRecord,
   AdminPlayerSkinsSummary,
+  AdminSecuritySummary,
   AdminStats,
   BULK_GRANTABLE_ALL_SKIN_IDS,
   GlobalMessage,
@@ -41,6 +42,7 @@ import {
   PromoRewardType,
   SKINS,
   SPECIAL_UNLOCKABLE_SKINS,
+  SecurityAuditLogItem,
   SkinGiftItem,
   SkinGrantHistoryRecord,
   SkinId,
@@ -51,7 +53,7 @@ import {
 } from '../shared/constants.ts';
 
 interface AdminPortalModalProps {
-  entryMode: 'f8' | 'classic';
+  entryMode: 'f8' | 'classic' | 'button';
   currentUser: UserProfile | null;
   onUserUpdated: (user: UserProfile) => void;
   onSocialRefresh: () => void;
@@ -92,9 +94,7 @@ export function AdminPortalModal({
 }: AdminPortalModalProps) {
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [checkingStatus, setCheckingStatus] = useState(true);
-  const [adminProfile, setAdminProfile] = useState<UserProfile | null>(
-    currentUser?.role === 'admin' ? currentUser : null
-  );
+  const [adminProfile, setAdminProfile] = useState<UserProfile | null>(null);
 
   // Auth / Password change forms
   const [loginUser, setLoginUser] = useState('');
@@ -104,6 +104,14 @@ export function AdminPortalModal({
   const [authError, setAuthError] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
 
+  // Voluntary in-panel password change modal
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false);
+  const [panelCurrentPass, setPanelCurrentPass] = useState('');
+  const [panelNewPass, setPanelNewPass] = useState('');
+  const [panelConfirmPass, setPanelConfirmPass] = useState('');
+  const [panelPassErr, setPanelPassErr] = useState<string | null>(null);
+  const [panelPassBusy, setPanelPassBusy] = useState(false);
+
   // Admin Dashboard state
   const [tab, setTab] = useState<AdminTab>('stats');
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -111,6 +119,8 @@ export function AdminPortalModal({
   const [polls, setPolls] = useState<PollItem[]>([]);
   const [gifts, setGifts] = useState<SkinGiftItem[]>([]);
   const [logs, setLogs] = useState<AdminLogItem[]>([]);
+  const [securityLogs, setSecurityLogs] = useState<SecurityAuditLogItem[]>([]);
+  const [securitySummary, setSecuritySummary] = useState<AdminSecuritySummary | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [actionMsg, setActionMsg] = useState<string | null>(null);
   const [actionErr, setActionErr] = useState<string | null>(null);
@@ -212,12 +222,19 @@ export function AdminPortalModal({
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const res = await api.getAdminStats();
+      const [res, secRes] = await Promise.all([
+        api.getAdminStats(),
+        api.getAdminSecurityLogs({ limit: 50 }).catch(() => null),
+      ]);
       setStats(res.stats);
       setMessages(res.messages);
       setPolls(res.polls);
       setGifts(res.gifts);
       setLogs(res.logs);
+      if (secRes) {
+        setSecurityLogs(secRes.logs);
+        setSecuritySummary(secRes.summary);
+      }
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : 'Erro ao carregar painel.');
     } finally {
@@ -349,10 +366,10 @@ export function AdminPortalModal({
       .then(([boot, sess]) => {
         if (cancelled) return;
         setNeedsBootstrap(boot.needsBootstrap);
-        if (sess?.admin) {
+        if (sess?.admin && sess.admin.role === 'admin') {
           setAdminProfile(sess.admin);
-        } else if (currentUser?.role === 'admin') {
-          setAdminProfile(currentUser);
+        } else {
+          setAdminProfile(null);
         }
       })
       .finally(() => {
@@ -361,7 +378,7 @@ export function AdminPortalModal({
     return () => {
       cancelled = true;
     };
-  }, [currentUser]);
+  }, [currentUser?.id, currentUser?.role]);
 
   useEffect(() => {
     if (isVerifiedAdmin) {
@@ -542,6 +559,41 @@ export function AdminPortalModal({
       setAuthError(err instanceof Error ? err.message : 'Erro ao alterar senha.');
     } finally {
       setAuthLoading(false);
+    }
+  };
+
+  const handlePanelChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setPanelPassErr(null);
+    if (panelNewPass.length < 6 || panelNewPass.length > 100) {
+      setPanelPassErr('A nova senha deve ter entre 6 e 100 caracteres.');
+      return;
+    }
+    if (panelNewPass !== panelConfirmPass) {
+      setPanelPassErr('A confirmação da nova senha não confere.');
+      return;
+    }
+    setPanelPassBusy(true);
+    try {
+      const res = await api.adminChangePassword({
+        currentPassword: panelCurrentPass,
+        newPassword: panelNewPass,
+        confirmPassword: panelConfirmPass,
+      });
+      setAdminProfile(res.user);
+      if (currentUser?.id === res.user.id) {
+        onUserUpdated(res.user);
+      }
+      setPanelCurrentPass('');
+      setPanelNewPass('');
+      setPanelConfirmPass('');
+      setShowChangePasswordModal(false);
+      setActionMsg('Senha administrativa atualizada com sucesso!');
+      await loadDashboard();
+    } catch (err) {
+      setPanelPassErr(err instanceof Error ? err.message : 'Erro ao alterar senha.');
+    } finally {
+      setPanelPassBusy(false);
     }
   };
 
@@ -1177,6 +1229,21 @@ export function AdminPortalModal({
                 >
                   <History className="w-3.5 h-3.5" />
                   <span className="hidden sm:inline">Histórico</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPanelPassErr(null);
+                    setPanelCurrentPass('');
+                    setPanelNewPass('');
+                    setPanelConfirmPass('');
+                    setShowChangePasswordModal(true);
+                  }}
+                  title="Alterar minha senha administrativa"
+                  className="px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-emerald-300 text-xs font-bold flex items-center gap-1.5 cursor-pointer"
+                >
+                  <KeyRound className="w-3.5 h-3.5" />
+                  <span className="hidden sm:inline">Alterar Senha</span>
                 </button>
                 <button
                   type="button"
@@ -3158,7 +3225,64 @@ export function AdminPortalModal({
 
               {/* Tab F: Admin Audit Logs */}
               {tab === 'logs' && (
-                <div className="space-y-3">
+                <div className="space-y-4">
+                  {/* Alertas e Auditoria de Segurança */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="text-xs font-extrabold uppercase text-amber-300 flex items-center gap-1.5">
+                        <Shield className="w-3.5 h-3.5" /> Monitoramento & Alertas de Segurança ({securityLogs.length})
+                      </h4>
+                      {securitySummary && (
+                        <div className="flex flex-wrap gap-2 text-[10px] font-bold">
+                          <span className="px-2 py-0.5 rounded bg-rose-950 border border-rose-500/40 text-rose-300">
+                            Críticos: {securitySummary.criticalCount}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-amber-950 border border-amber-500/40 text-amber-300">
+                            Altos: {securitySummary.highCount}
+                          </span>
+                          <span className="px-2 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300">
+                            Bloqueios: {securitySummary.blockedAttemptsCount}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                    <div className="space-y-1 max-h-48 overflow-y-auto">
+                      {securityLogs.length === 0 ? (
+                        <div className="text-xs text-slate-500">
+                          Nenhum evento suspeito recente registrado.
+                        </div>
+                      ) : (
+                        securityLogs.slice(0, 25).map((ev) => (
+                          <div
+                            key={ev.id}
+                            className="p-2 rounded-lg bg-slate-900 border border-slate-800 text-[11px] flex items-start justify-between gap-2"
+                          >
+                            <div className="min-w-0">
+                              <span
+                                className={`font-bold mr-1.5 ${
+                                  ev.severity === 'critical'
+                                    ? 'text-rose-400'
+                                    : ev.severity === 'high'
+                                      ? 'text-amber-300'
+                                      : 'text-sky-300'
+                                }`}
+                              >
+                                [{ev.severity.toUpperCase()}] {ev.eventType}
+                              </span>
+                              <span className="text-slate-200 break-words">{ev.details}</span>
+                              {ev.nickname && (
+                                <span className="text-slate-400 ml-1.5">({ev.nickname})</span>
+                              )}
+                            </div>
+                            <span className="text-[10px] text-slate-500 shrink-0">
+                              {new Date(ev.createdAt).toLocaleString('pt-BR')}
+                            </span>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+
                   <div className="flex items-center justify-between">
                     <h4 className="text-xs font-extrabold uppercase text-slate-400">
                       Histórico Administrativo & Auditoria ({logs.length})
@@ -3171,7 +3295,7 @@ export function AdminPortalModal({
                       Atualizar logs
                     </button>
                   </div>
-                  <div className="space-y-1.5 max-h-[55vh] overflow-y-auto">
+                  <div className="space-y-1.5 max-h-[40vh] overflow-y-auto">
                     {logs.length === 0 ? (
                       <div className="text-xs text-slate-500">Nenhuma ação registrada.</div>
                     ) : (
@@ -3356,6 +3480,88 @@ export function AdminPortalModal({
                 </button>
               </div>
             </div>
+          </div>
+        )}
+        {/* Modal: Alterar Senha Administrativa */}
+        {showChangePasswordModal && (
+          <div className="fixed inset-0 z-[60] bg-slate-950/85 flex items-center justify-center p-4">
+            <form
+              onSubmit={handlePanelChangePassword}
+              className="w-full max-w-md bg-slate-900 border border-emerald-500/60 rounded-2xl p-5 shadow-2xl space-y-4"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2.5">
+                  <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-400/50 text-emerald-300 flex items-center justify-center shrink-0">
+                    <KeyRound className="w-4 h-4" />
+                  </div>
+                  <div>
+                    <h3 className="font-display text-base font-bold text-white">
+                      Alterar Senha Administrativa
+                    </h3>
+                    <p className="text-[11px] text-slate-400">
+                      Conta: {adminProfile?.nickname}
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowChangePasswordModal(false)}
+                  className="p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              {panelPassErr && (
+                <div className="p-3 rounded-xl bg-red-950 border border-red-500/60 text-red-200 text-xs">
+                  {panelPassErr}
+                </div>
+              )}
+
+              <input
+                type="password"
+                required
+                autoFocus
+                value={panelCurrentPass}
+                onChange={(e) => setPanelCurrentPass(e.target.value)}
+                placeholder="Senha atual"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"
+              />
+              <input
+                type="password"
+                required
+                value={panelNewPass}
+                onChange={(e) => setPanelNewPass(e.target.value)}
+                placeholder="Nova senha (mín. 6 caracteres)"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"
+              />
+              <input
+                type="password"
+                required
+                value={panelConfirmPass}
+                onChange={(e) => setPanelConfirmPass(e.target.value)}
+                placeholder="Confirmar nova senha"
+                className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-white text-sm"
+              />
+
+              <div className="grid grid-cols-2 gap-2.5">
+                <button
+                  type="submit"
+                  disabled={panelPassBusy}
+                  className="py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-display font-bold text-xs cursor-pointer disabled:opacity-50"
+                >
+                  {panelPassBusy ? 'SALVANDO...' : 'SALVAR SENHA'}
+                </button>
+                <button
+                  type="button"
+                  disabled={panelPassBusy}
+                  onClick={() => setShowChangePasswordModal(false)}
+                  className="py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-display font-bold text-xs cursor-pointer"
+                >
+                  CANCELAR
+                </button>
+              </div>
+            </form>
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, or } from 'drizzle-orm';
+import { and, desc, eq, ilike, isNull, or } from 'drizzle-orm';
 import { ensureNeonSchema, getNeonDb, isNeonConfigured } from '../db/neon.ts';
 import {
   multiplayerEvents,
@@ -36,6 +36,7 @@ import {
   repoGetRecentX1ResultsForUser,
 } from './repository.ts';
 import { repoGetPlayerCapeConfig } from './socialShopRepository.ts';
+import { recordSecurityEvent } from './securityAudit.ts';
 import { StoredUser, getDb as getLocalDb, saveDb as saveLocalDb } from './store.ts';
 
 export const COUNTDOWN_DURATION_MS = 3400;
@@ -623,10 +624,21 @@ export async function mpRespondToInvite(params: {
     .returning();
   if (claimed.length === 0) return { status: 'invalid_state' };
 
-  await db
+  // Atomic room slot claim enforcing max 2 players strictly
+  const claimedRoom = await db
     .update(multiplayerRooms)
     .set({ guestUserId: user.id, status: 'preparing', updatedAt: nowIso })
-    .where(eq(multiplayerRooms.id, room.id));
+    .where(
+      and(
+        eq(multiplayerRooms.id, room.id),
+        eq(multiplayerRooms.status, 'invite_sent'),
+        isNull(multiplayerRooms.guestUserId)
+      )
+    )
+    .returning();
+  if (claimedRoom.length === 0) {
+    return { status: 'invalid_state' };
+  }
 
   await db
     .insert(multiplayerParticipants)
@@ -1353,12 +1365,13 @@ export async function mpStartRoomMatch(params: {
 export async function mpSyncParticipantState(params: {
   roomId: string;
   user: StoredUser;
+  ip?: string;
   input: TelemetrySyncInput;
 }): Promise<
   | { status: 'ok'; bundle: RoomBundle; warning?: string }
-  | { status: 'not_found' | 'invalid_coin_claim' }
+  | { status: 'not_found' | 'invalid_coin_claim' | 'tampered_telemetry' }
 > {
-  const { roomId, user, input } = params;
+  const { roomId, user, ip, input } = params;
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
 
@@ -1373,7 +1386,7 @@ export async function mpSyncParticipantState(params: {
   const clampedLane = Math.max(-1, Math.min(1, Math.round(Number(input.lane) || 0)));
   const safeX = Number.isFinite(input.posX) ? Math.max(-4, Math.min(4, input.posX)) : 0;
   const safeY = Number.isFinite(input.posY) ? Math.max(0, Math.min(20, input.posY)) : 0;
-  const safeZ = Number.isFinite(input.posZ) ? Math.max(-100000, Math.min(50, input.posZ)) : 0;
+  const safeZ = Number.isFinite(input.posZ) ? Math.max(-250000, Math.min(50, input.posZ)) : 0;
   const safeVx = Number.isFinite(input.vx) ? Math.max(-30, Math.min(30, Number(input.vx))) : 0;
   const safeVy = Number.isFinite(input.vy) ? Math.max(-50, Math.min(50, Number(input.vy))) : 0;
   const safeVz = Number.isFinite(input.vz) ? Math.max(-100, Math.min(20, Number(input.vz))) : 0;
@@ -1392,6 +1405,95 @@ export async function mpSyncParticipantState(params: {
   const safeCollisions = Math.max(0, Math.min(99, Math.round(Number(input.collisionCount) || 0)));
   const animState = sanitizeAnimState(input.animState);
 
+  // Server-authoritative time & physics bounds check (stops Co-op coin injection / speed-teleport hacks)
+  const wallElapsedMs =
+    room.status === 'in_progress' && room.startedAt ? Math.max(0, nowMs - room.startedAt) : 0;
+  const plausibleDurationMs =
+    room.status === 'in_progress' ? Math.min(safeDur, wallElapsedMs + 8000) : 0;
+  const plausibleMaxDist = Math.round((plausibleDurationMs / 1000) * 55 + 35);
+  const plausibleMaxCoins =
+    room.mode === 'x1'
+      ? Math.max(me.coins, 0)
+      : Math.floor((plausibleDurationMs / 1000) * 25 + 30);
+
+  if (room.status === 'countdown') {
+    if (safeCoins > 0 || safeDist > 10 || safeDur > 500) {
+      void recordSecurityEvent({
+        eventType: safeCoins > 0 ? 'MP_COIN_INJECTION' : 'MP_COUNTDOWN_TAMPER',
+        category: 'multiplayer_integrity',
+        severity: 'high',
+        ip,
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/multiplayer/rooms/:roomId/sync',
+        details: `Pre-start multiplayer telemetry tamper during countdown (mode=${room.mode}, coins=${safeCoins}, dist=${safeDist}) room=${roomId}`,
+      });
+      return { status: 'tampered_telemetry' };
+    }
+  } else if (room.status === 'in_progress') {
+    if (safeDur > wallElapsedMs + 25000) {
+      void recordSecurityEvent({
+        eventType: 'MP_DURATION_TAMPER',
+        category: 'multiplayer_integrity',
+        severity: 'high',
+        ip,
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/multiplayer/rooms/:roomId/sync',
+        details: `Multiplayer durationMs (${safeDur}) exceeded wallElapsed (${wallElapsedMs}) in room=${roomId}`,
+      });
+      return { status: 'tampered_telemetry' };
+    }
+    if (safeDist > plausibleMaxDist * 2 + 200 || safeZ < -((plausibleDurationMs / 1000) * 70 + 150)) {
+      void recordSecurityEvent({
+        eventType: 'MP_DISTANCE_TELEPORT',
+        category: 'multiplayer_integrity',
+        severity: 'high',
+        ip,
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/multiplayer/rooms/:roomId/sync',
+        details: `Multiplayer distance/position tamper (dist=${safeDist}, posZ=${safeZ}, max=${plausibleMaxDist}) room=${roomId}`,
+      });
+      return { status: 'tampered_telemetry' };
+    }
+    if (
+      (room.mode === 'x1' && safeCoins > 5) ||
+      (room.mode === 'coop' && safeCoins > plausibleMaxCoins * 2 + 50)
+    ) {
+      void recordSecurityEvent({
+        eventType: 'MP_COIN_INJECTION',
+        category: 'multiplayer_integrity',
+        severity: 'critical',
+        ip,
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/multiplayer/rooms/:roomId/sync',
+        details: `Multiplayer coin injection blocked (mode=${room.mode}, coins=${safeCoins}, max=${plausibleMaxCoins}) room=${roomId}`,
+      });
+      return { status: 'tampered_telemetry' };
+    }
+  }
+
+  const boundedDur = room.status === 'in_progress' ? plausibleDurationMs : 0;
+  const boundedDist =
+    room.status === 'in_progress' ? Math.min(safeDist, plausibleMaxDist) : 0;
+  const boundedCoins =
+    room.status === 'in_progress'
+      ? room.mode === 'x1'
+        ? me.coins
+        : Math.min(safeCoins, plausibleMaxCoins)
+      : 0;
+  const boundedScore =
+    room.status === 'in_progress'
+      ? Math.min(
+          safeScore,
+          Math.floor((boundedDur / 1000) * 400 + boundedCoins * 250 + 500)
+        )
+      : 0;
+  const boundedNoCoin =
+    room.status === 'in_progress' ? Math.min(safeNoCoin, boundedDur + 250) : 0;
+
   // Reject stale lower-sequence packets (still update stats monotonically & honor events below)
   const isStaleSequence = safeSeq > 0 && (me.seq || 0) > 0 && safeSeq < (me.seq || 0);
 
@@ -1400,7 +1502,7 @@ export async function mpSyncParticipantState(params: {
     if (!isStaleSequence) {
       me.posX = safeX;
       me.posY = safeY;
-      me.posZ = safeZ;
+      me.posZ = room.status === 'in_progress' ? safeZ : 0;
       me.vx = safeVx;
       me.vy = safeVy;
       me.vz = safeVz;
@@ -1414,11 +1516,11 @@ export async function mpSyncParticipantState(params: {
       me.hoverboard = Boolean(input.hoverboard);
       me.jetpack = Boolean(input.jetpack);
     }
-    me.distance = Math.max(me.distance, safeDist);
-    me.coins = Math.max(me.coins, safeCoins);
-    me.score = Math.max(me.score, safeScore);
-    me.noCoinTimeMs = Math.max(me.noCoinTimeMs, safeNoCoin);
-    me.durationMs = Math.max(me.durationMs, safeDur);
+    me.distance = Math.max(me.distance, boundedDist);
+    me.coins = Math.max(me.coins, boundedCoins);
+    me.score = Math.max(me.score, boundedScore);
+    me.noCoinTimeMs = Math.max(me.noCoinTimeMs, boundedNoCoin);
+    me.durationMs = Math.max(me.durationMs, boundedDur);
     me.collisionCount = Math.max(me.collisionCount, safeCollisions);
     me.connected = true;
     me.lastHeartbeatAt = nowMs;

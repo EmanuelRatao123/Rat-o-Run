@@ -410,7 +410,17 @@ async function runTests() {
     assert.equal(shopState.availableCoins, 1210);
     assert.equal(shopState.inventory.find((i) => i.skateId === 'skate_fogo')?.charges, 2);
 
-    // Consume 1 charge with idempotency check
+    // Consume 1 charge with idempotency check (against an owned active match)
+    await repoCreateActiveMatch({
+      matchId: `m_use_${suffix}`,
+      userId: u1.id,
+      mapId: 'brasil',
+      skinId: 'ratao',
+      mode: 'normal',
+      startedAt: Date.now() - 5000,
+      signature: `sig_use_${suffix}`,
+      completed: false,
+    });
     const use1 = await repoConsumeMatchSkateUse({
       userId: u1.id,
       matchId: `m_use_${suffix}`,

@@ -37,6 +37,7 @@ import {
   adminRevokeExclusiveSkinHandler,
   adminRevokeSecretSkinHandler,
   adminSearchPlayersHandler,
+  adminSecurityLogsHandler,
   adminStatsHandler,
   clientMatchDiagnosticHandler,
   equipSkinHandler,
@@ -109,7 +110,49 @@ import { ensureDbAndAdminReady } from './src/server/repository.ts';
 dotenv.config();
 
 const app = express();
-app.set('trust proxy', 1);
+app.disable('x-powered-by');
+app.set('trust proxy', process.env.VERCEL === '1' || process.env.TRUST_PROXY === '1' ? 1 : false);
+
+const isProdEnv = process.env.NODE_ENV === 'production';
+const PROD_CSP = [
+  "default-src 'self'",
+  "script-src 'self' https://apis.google.com https://www.gstatic.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https://*.googleusercontent.com https://lh3.googleusercontent.com",
+  "connect-src 'self' https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com wss://*.firebaseio.com",
+  "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+const DEV_CSP = [
+  "default-src 'self'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://www.gstatic.com",
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "font-src 'self' data: https://fonts.gstatic.com",
+  "img-src 'self' data: blob: https://*.googleusercontent.com https://lh3.googleusercontent.com",
+  "connect-src 'self' ws: wss: https://securetoken.googleapis.com https://identitytoolkit.googleapis.com https://www.googleapis.com https://*.firebaseio.com https://*.firebaseapp.com",
+  "frame-src 'self' https://accounts.google.com https://*.firebaseapp.com",
+  "worker-src 'self' blob:",
+  "object-src 'none'",
+  "base-uri 'self'",
+  "form-action 'self'",
+].join('; ');
+
+app.use((req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), geolocation=(), payment=(), usb=(), microphone=(self)');
+  res.setHeader('Content-Security-Policy', isProdEnv ? PROD_CSP : DEV_CSP);
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+  }
+  next();
+});
+
 const jsonSmall = express.json({ limit: '64kb' });
 const jsonCustomCharacter = express.json({ limit: '384kb' });
 app.use((req, res, next) => {
@@ -250,6 +293,26 @@ app.post('/api/admin/promo-codes', requireAdmin, wrap(adminCreatePromoCodeHandle
 app.patch('/api/admin/promo-codes/:id', requireAdmin, wrap(adminUpdatePromoCodeHandler));
 app.delete('/api/admin/promo-codes/:id', requireAdmin, wrap(adminDeletePromoCodeHandler));
 app.get('/api/admin/promo-codes/:id/redemptions', requireAdmin, wrap(adminListPromoRedemptionsHandler));
+app.get('/api/admin/security-logs', requireAdmin, wrap(adminSecurityLogsHandler));
+
+app.use((err: unknown, req: Request, res: Response, _next: NextFunction) => {
+  if (res.headersSent) return;
+  const errObj = err as { type?: string; status?: number; message?: string };
+  if (errObj?.type === 'entity.parse.failed' || (err instanceof SyntaxError && errObj?.status === 400)) {
+    res.status(400).json({ error: 'Formato JSON inválido na requisição.' });
+    return;
+  }
+  if (errObj?.type === 'entity.too.large' || errObj?.status === 413) {
+    res.status(413).json({ error: 'Payload excedeu o tamanho máximo permitido.' });
+    return;
+  }
+  console.error('Express error middleware:', err);
+  if (req.path.startsWith('/api/')) {
+    res.status(500).json({ error: 'Erro interno do servidor.' });
+  } else {
+    res.status(500).send('Erro interno do servidor.');
+  }
+});
 
 export default app;
 
@@ -283,6 +346,6 @@ async function startServer() {
   });
 }
 
-if (!process.env.VERCEL) {
+if (!process.env.VERCEL && !process.env.RATAO_DISABLE_AUTOSTART) {
   void startServer();
 }

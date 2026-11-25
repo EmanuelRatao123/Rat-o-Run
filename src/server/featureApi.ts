@@ -8,7 +8,9 @@ import {
   isGiftableSkinId,
   isValidAnySkinId,
 } from '../shared/constants.ts';
-import { AuthedRequest } from './auth.ts';
+import { AuthedRequest, getClientIp } from './auth.ts';
+import { SlidingRateLimiter } from './crypto.ts';
+import { recordSecurityEvent } from './securityAudit.ts';
 import {
   normalizePromoCode,
   repoCreatePromoCode,
@@ -43,6 +45,19 @@ const VALID_SUGGESTION_STATUSES: SuggestionStatus[] = [
   'rejected',
 ];
 const VALID_REWARD_TYPES: PromoRewardType[] = ['skin', 'coins', 'special', 'future_item'];
+const promoRedeemLimiter = new SlidingRateLimiter(10, 5 * 60 * 1000, 3 * 60 * 1000);
+const suggestionLimiter = new SlidingRateLimiter(8, 15 * 60 * 1000, 2 * 60 * 1000);
+
+function sanitizePromoMetadata(raw: unknown): Record<string, unknown> {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+  try {
+    const serialized = JSON.stringify(raw);
+    if (serialized.length > 2048) return {};
+    return JSON.parse(serialized) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
+}
 
 // --- Admin Ratão Rei Explicit Unlock ---
 
@@ -73,6 +88,11 @@ export async function markNotificationsSeenHandler(
 
 export async function createSuggestionHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const rate = suggestionLimiter.check(`sug:${user.id}`);
+  if (!rate.allowed) {
+    res.status(429).json({ error: `Muitas sugestões enviadas. Aguarde ${rate.retryAfterSec}s.` });
+    return;
+  }
   const { type, title, description } = req.body ?? {};
 
   if (!VALID_SUGGESTION_TYPES.includes(type)) {
@@ -175,6 +195,25 @@ export async function adminDeleteSuggestionHandler(
 
 export async function redeemPromoCodeHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const ip = getClientIp(req);
+  const userRate = promoRedeemLimiter.check(`promo_u:${user.id}`);
+  const ipRate = promoRedeemLimiter.check(`promo_ip:${ip}`);
+  if (!userRate.allowed || !ipRate.allowed) {
+    const retryAfterSec = Math.max(userRate.retryAfterSec, ipRate.retryAfterSec);
+    void recordSecurityEvent({
+      eventType: 'PROMO_BRUTE_FORCE_BLOCKED',
+      category: 'rate_limit',
+      severity: 'high',
+      ip,
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/promo-codes/redeem',
+      details: `Promo code redemption rate limit exceeded (retryAfter=${retryAfterSec}s)`,
+    });
+    res.status(429).json({ error: `Muitas tentativas de código promocional. Aguarde ${retryAfterSec}s.` });
+    return;
+  }
+
   const { code } = req.body ?? {};
   if (typeof code !== 'string' || !code.trim()) {
     res.status(400).json({ error: 'Digite um código promocional para resgatar.' });
@@ -183,6 +222,18 @@ export async function redeemPromoCodeHandler(req: AuthedRequest, res: Response):
 
   const result = await repoRedeemPromoCode({ user, rawCode: code });
   if (result.status !== 'ok') {
+    if (result.status === 'invalid') {
+      void recordSecurityEvent({
+        eventType: 'PROMO_INVALID_CODE_ATTEMPT',
+        category: 'economy_skate',
+        severity: 'low',
+        ip,
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/promo-codes/redeem',
+        details: `Invalid promo code attempt by ${user.nickname}`,
+      });
+    }
     const httpCode =
       result.status === 'already_redeemed'
         ? 409
@@ -303,10 +354,7 @@ export async function adminCreatePromoCodeHandler(
     rewardType,
     rewardSkinId: rewardType === 'skin' ? (rewardSkinId as SkinId) : null,
     rewardAmount: rewardType === 'coins' ? Math.round(Number(rewardAmount)) : 0,
-    rewardMetadata:
-      rewardMetadata && typeof rewardMetadata === 'object'
-        ? (rewardMetadata as Record<string, unknown>)
-        : {},
+    rewardMetadata: sanitizePromoMetadata(rewardMetadata),
     maxUses: isInfinite ? null : Math.max(1, Math.round(Number(maxUses) || 1)),
     isInfinite: Boolean(isInfinite),
     active: active !== undefined ? Boolean(active) : true,
@@ -368,9 +416,7 @@ export async function adminUpdatePromoCodeHandler(
     rewardSkinId: rewardSkinId as SkinId | null | undefined,
     rewardAmount: rewardAmount !== undefined ? Number(rewardAmount) : undefined,
     rewardMetadata:
-      rewardMetadata && typeof rewardMetadata === 'object'
-        ? (rewardMetadata as Record<string, unknown>)
-        : undefined,
+      rewardMetadata !== undefined ? sanitizePromoMetadata(rewardMetadata) : undefined,
     maxUses: maxUses !== undefined ? (maxUses === null ? null : Number(maxUses)) : undefined,
     isInfinite: isInfinite !== undefined ? Boolean(isInfinite) : undefined,
     active: active !== undefined ? Boolean(active) : undefined,

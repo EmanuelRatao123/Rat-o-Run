@@ -1,6 +1,6 @@
 import { Response } from 'express';
 import { VoiceCallSignalType } from '../shared/constants.ts';
-import { AuthedRequest } from './auth.ts';
+import { AuthedRequest, getClientIp } from './auth.ts';
 import {
   getVoiceCallIceConfig,
   repoEndVoiceCall,
@@ -11,6 +11,7 @@ import {
   repoRespondToVoiceCall,
 } from './callRepository.ts';
 import { SlidingRateLimiter } from './crypto.ts';
+import { recordSecurityEvent } from './securityAudit.ts';
 
 const callInviteLimiter = new SlidingRateLimiter(20, 5 * 60 * 1000, 60 * 1000);
 const callSignalLimiter = new SlidingRateLimiter(180, 60 * 1000, 10 * 1000);
@@ -75,6 +76,16 @@ export async function inviteCallHandler(req: AuthedRequest, res: Response): Prom
     return;
   }
   if (result.status === 'not_friends') {
+    void recordSecurityEvent({
+      eventType: 'CALL_NON_FRIEND_DENIED',
+      category: 'social_idor',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/calls/invite',
+      details: `Attempted voice call invite to non-friend targetUserId=${targetUserId}`,
+    });
     res.status(403).json({ error: 'Somente amigos aceitos podem iniciar chamadas de voz.' });
     return;
   }
@@ -117,6 +128,16 @@ export async function respondCallHandler(req: AuthedRequest, res: Response): Pro
     return;
   }
   if (result.status === 'forbidden') {
+    void recordSecurityEvent({
+      eventType: 'CALL_RESPOND_IDOR',
+      category: 'social_idor',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/calls/:callId/respond',
+      details: `Unauthorized call respond attempt on callId=${callId}`,
+    });
     res.status(403).json({ error: 'Você não tem permissão para responder esta chamada.' });
     return;
   }
@@ -173,6 +194,16 @@ export async function postCallSignalHandler(req: AuthedRequest, res: Response): 
     return;
   }
   if (result.status === 'forbidden') {
+    void recordSecurityEvent({
+      eventType: 'CALL_SIGNAL_HIJACK_DENIED',
+      category: 'social_idor',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/calls/:callId/signal',
+      details: `Unauthorized WebRTC signaling attempt on callId=${callId}`,
+    });
     res.status(403).json({ error: 'Acesso negado à sinalização desta chamada.' });
     return;
   }
@@ -197,6 +228,16 @@ export async function heartbeatCallHandler(req: AuthedRequest, res: Response): P
     return;
   }
   if (result.status === 'forbidden') {
+    void recordSecurityEvent({
+      eventType: 'CALL_HEARTBEAT_IDOR',
+      category: 'social_idor',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/calls/:callId/heartbeat',
+      details: `Unauthorized call heartbeat on callId=${callId}`,
+    });
     res.status(403).json({ error: 'Acesso negado.' });
     return;
   }
@@ -217,6 +258,16 @@ export async function endCallHandler(req: AuthedRequest, res: Response): Promise
     return;
   }
   if (result.status === 'forbidden') {
+    void recordSecurityEvent({
+      eventType: 'CALL_END_IDOR',
+      category: 'social_idor',
+      severity: 'high',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/calls/:callId/end',
+      details: `Unauthorized attempt to hang up callId=${callId}`,
+    });
     res.status(403).json({ error: 'Acesso negado.' });
     return;
   }

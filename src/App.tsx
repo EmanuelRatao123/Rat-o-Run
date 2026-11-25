@@ -13,6 +13,7 @@ import {
   Monitor,
   Play,
   Radio,
+  Shield,
   ShieldAlert,
   Shirt,
   ShoppingBag,
@@ -51,7 +52,7 @@ import { VoiceCallOverlay } from './components/VoiceCallOverlay.tsx';
 import { VoiceCallProvider } from './components/VoiceCallProvider.tsx';
 import { gameAudio } from './game/audio.ts';
 import { useFullscreen, useMobileMode } from './hooks/useDeviceDisplay.ts';
-import { ApiError, api, setMemorySessionToken } from './services/api.ts';
+import { ApiError, api, setMemoryAdminToken, setMemorySessionToken } from './services/api.ts';
 import { flushPendingMatchFinishes } from './services/pendingMatches.ts';
 import {
   GlobalMessage,
@@ -134,9 +135,9 @@ export default function App() {
   const [unseenGifts, setUnseenGifts] = useState<SkinGiftItem[]>([]);
   const [notifications, setNotifications] = useState<PlayerNotificationItem[]>([]);
 
-  // Secret admin portal trigger (double-tap F8 within 1s, Ctrl+Shift+A, or #admin)
+  // Secret admin portal trigger (double-tap F8 within 1s, Ctrl+Shift+A, #admin, or Samuka PAINEL ADMIN button)
   const [showSecretAdmin, setShowSecretAdmin] = useState(false);
-  const [adminEntryMode, setAdminEntryMode] = useState<'f8' | 'classic'>('f8');
+  const [adminEntryMode, setAdminEntryMode] = useState<'f8' | 'classic' | 'button'>('f8');
   const f8DetectorRef = useRef(createF8DoubleTapDetector(1000));
 
   // Discreet non-blocking inspection deterrent toast
@@ -319,8 +320,10 @@ export default function App() {
   }, [userId, activeModal, refreshUser]);
 
   const handleLogout = async () => {
-    await api.logout().catch(() => {});
+    await Promise.all([api.logout().catch(() => {}), api.adminLogout().catch(() => {})]);
     setMemorySessionToken(null);
+    setMemoryAdminToken(null);
+    setShowSecretAdmin(false);
     setUser(null);
     setPlaying(false);
     setActiveMpSession(null);
@@ -432,6 +435,9 @@ export default function App() {
     ? user.unlockedSkins.includes('meu_ratao') ||
       Boolean(user.allowedExclusiveSkins?.includes('meu_ratao'))
     : false;
+  const canShowSamukaAdminButton = Boolean(
+    !bootChecking && user && user.role === 'admin' && user.showAdminPanelButton === true
+  );
 
   return (
     <VoiceCallProvider user={user}>
@@ -540,8 +546,25 @@ export default function App() {
 
               <div className="hidden" />
 
-              {/* Top-Right: Map, Profile, Mobile Mode, Fullscreen, Quality & Logout */}
+              {/* Top-Right: Admin (Samuka only), Map, Profile, Mobile Mode, Fullscreen, Quality & Logout */}
               <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-1.5 sm:gap-2">
+                {canShowSamukaAdminButton && (
+                  <button
+                    type="button"
+                    data-testid="samuka-admin-panel-btn"
+                    onClick={() => {
+                      gameAudio.playUiClick();
+                      setAdminEntryMode('button');
+                      setShowSecretAdmin(true);
+                    }}
+                    title="Abrir Painel Administrativo"
+                    className="min-w-[44px] min-h-[44px] px-3 rounded-xl bg-gradient-to-r from-rose-700 to-rose-600 hover:from-rose-600 hover:to-rose-500 border border-rose-400/70 text-white shadow-lg shadow-rose-950/60 cursor-pointer flex items-center justify-center gap-1.5 text-xs font-display font-bold tracking-wide transition"
+                  >
+                    <Shield className="w-4 h-4 text-amber-300 shrink-0" />
+                    <span className="whitespace-nowrap">PAINEL ADMIN</span>
+                  </button>
+                )}
+
                 <button
                   type="button"
                   onClick={() => {

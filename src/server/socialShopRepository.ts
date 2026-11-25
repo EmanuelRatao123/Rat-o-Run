@@ -638,7 +638,7 @@ export async function repoConsumeMatchSkateUse(params: {
   eventKey: string;
 }): Promise<
   | { consumed: true; alreadyRecorded: boolean; remainingCharges: number; skateId: SkateId }
-  | { consumed: false; reason: 'invalid_skate' | 'no_charges' }
+  | { consumed: false; reason: 'invalid_skate' | 'no_charges' | 'invalid_match' }
 > {
   const { userId, matchId, skateId, mode, eventKey } = params;
   if (!isValidSkateId(skateId)) {
@@ -659,6 +659,19 @@ export async function repoConsumeMatchSkateUse(params: {
         skateId,
       };
     }
+
+    const soloActive = db.activeMatches[matchId];
+    const mpActive = db.multiplayerRooms[matchId];
+    const ownsSolo = Boolean(soloActive && soloActive.userId === userId && !soloActive.completed);
+    const ownsMp = Boolean(
+      mpActive &&
+        (mpActive.hostUserId === userId || mpActive.guestUserId === userId) &&
+        (mpActive.status === 'countdown' || mpActive.status === 'in_progress')
+    );
+    if (!ownsSolo && !ownsMp) {
+      return { consumed: false, reason: 'invalid_match' };
+    }
+
     if (!item || item.charges < 1) {
       return { consumed: false, reason: 'no_charges' };
     }
@@ -705,6 +718,28 @@ export async function repoConsumeMatchSkateUse(params: {
         remainingCharges: curInv.rows[0]?.charges ?? 0,
         skateId,
       };
+    }
+
+    const soloCheck = await client.query<{ match_id: string }>(
+      `SELECT match_id FROM active_matches
+       WHERE match_id = $1 AND user_id = $2 AND completed = FALSE
+       LIMIT 1`,
+      [matchId, userId]
+    );
+    let ownsMatch = soloCheck.rows.length > 0;
+    if (!ownsMatch) {
+      const mpCheck = await client.query<{ id: string }>(
+        `SELECT id FROM multiplayer_rooms
+         WHERE id = $1 AND (host_user_id = $2 OR guest_user_id = $2)
+           AND status IN ('countdown', 'in_progress')
+         LIMIT 1`,
+        [matchId, userId]
+      );
+      ownsMatch = mpCheck.rows.length > 0;
+    }
+    if (!ownsMatch) {
+      await client.query('ROLLBACK');
+      return { consumed: false, reason: 'invalid_match' };
     }
 
     const invRes = await client.query<{ id: string; charges: number }>(

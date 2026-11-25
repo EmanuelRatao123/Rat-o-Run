@@ -1,7 +1,8 @@
 import { Response } from 'express';
 import { SKATES_CATALOG, SkateId, isValidSkateId } from '../shared/constants.ts';
-import { AuthedRequest } from './auth.ts';
+import { AuthedRequest, getClientIp } from './auth.ts';
 import { SlidingRateLimiter } from './crypto.ts';
+import { recordSecurityEvent } from './securityAudit.ts';
 import {
   repoBuySkate,
   repoConsumeMatchSkateUse,
@@ -22,6 +23,8 @@ import {
 
 const friendRequestLimiter = new SlidingRateLimiter(15, 5 * 60 * 1000, 60 * 1000);
 const chatMessageLimiter = new SlidingRateLimiter(35, 60 * 1000, 15 * 1000);
+const shopBuyLimiter = new SlidingRateLimiter(25, 5 * 60 * 1000, 60 * 1000);
+const skateConsumeLimiter = new SlidingRateLimiter(45, 5 * 60 * 1000, 60 * 1000);
 
 // --- FRIENDS & PRIVATE CHAT HANDLERS ---
 
@@ -113,6 +116,16 @@ export async function respondFriendRequestHandler(
     return;
   }
   if (result.status === 'forbidden') {
+    void recordSecurityEvent({
+      eventType: 'FRIEND_REQUEST_IDOR',
+      category: 'social_idor',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/friends/request/:friendshipId/respond',
+      details: `Unauthorized respond attempt on friendshipId=${friendshipId}`,
+    });
     res.status(403).json({ error: 'Você não tem permissão para alterar esta solicitação.' });
     return;
   }
@@ -153,6 +166,16 @@ export async function getFriendMessagesHandler(req: AuthedRequest, res: Response
     limit: Number.isFinite(rawLimit) ? rawLimit : 60,
   });
   if (result.status === 'not_friends') {
+    void recordSecurityEvent({
+      eventType: 'FRIEND_CHAT_READ_DENIED',
+      category: 'social_idor',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'GET /api/friends/messages/:friendUserId',
+      details: `Attempted to read private chat of non-friend targetUserId=${friendUserId}`,
+    });
     res.status(403).json({ error: 'Somente amigos aceitos podem trocar mensagens.' });
     return;
   }
@@ -191,6 +214,16 @@ export async function sendFriendMessageHandler(req: AuthedRequest, res: Response
     return;
   }
   if (result.status === 'not_friends') {
+    void recordSecurityEvent({
+      eventType: 'FRIEND_CHAT_SEND_DENIED',
+      category: 'social_idor',
+      severity: 'medium',
+      ip: getClientIp(req),
+      userId: user.id,
+      nickname: user.nickname,
+      route: 'POST /api/friends/messages/:friendUserId',
+      details: `Attempted to message non-friend targetUserId=${friendUserId}`,
+    });
     res.status(403).json({ error: 'Você só pode enviar mensagens para amigos aceitos.' });
     return;
   }
@@ -241,6 +274,11 @@ export async function getShopStateHandler(req: AuthedRequest, res: Response): Pr
 
 export async function buySkateHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const rate = shopBuyLimiter.check(`shop_buy:${user.id}`);
+  if (!rate.allowed) {
+    res.status(429).json({ error: `Muitas compras em sequência. Aguarde ${rate.retryAfterSec}s.` });
+    return;
+  }
   const { skateId, quantity } = req.body ?? {};
   if (!isValidSkateId(skateId)) {
     res.status(400).json({ error: 'Skate selecionado inválido.' });
@@ -290,6 +328,11 @@ export async function equipSkateHandler(req: AuthedRequest, res: Response): Prom
 
 export async function consumeMatchSkateHandler(req: AuthedRequest, res: Response): Promise<void> {
   const user = req.authUser!;
+  const rate = skateConsumeLimiter.check(`skate_use:${user.id}`);
+  if (!rate.allowed) {
+    res.status(429).json({ error: `Limite de ativação de skate atingido. Aguarde ${rate.retryAfterSec}s.` });
+    return;
+  }
   const { matchId, skateId, mode, eventKey } = req.body ?? {};
   const chosenSkate: SkateId | null = isValidSkateId(skateId)
     ? skateId
@@ -306,15 +349,33 @@ export async function consumeMatchSkateHandler(req: AuthedRequest, res: Response
     return;
   }
 
+  const cleanMatchId = matchId.trim().slice(0, 64);
   const outcome = await repoConsumeMatchSkateUse({
     userId: user.id,
-    matchId: matchId.trim().slice(0, 64),
+    matchId: cleanMatchId,
     skateId: chosenSkate,
     mode: typeof mode === 'string' ? mode.slice(0, 24) : 'normal',
     eventKey: `${user.id}:${eventKey.trim().slice(0, 80)}`,
   });
 
   if (!outcome.consumed) {
+    if (outcome.reason === 'invalid_match') {
+      void recordSecurityEvent({
+        eventType: 'SKATE_INVALID_MATCH_CONSUME',
+        category: 'economy_skate',
+        severity: 'medium',
+        ip: getClientIp(req),
+        userId: user.id,
+        nickname: user.nickname,
+        route: 'POST /api/match/skate/use',
+        details: `Skate use attempted for invalid/unowned matchId=${cleanMatchId}`,
+      });
+      res.status(403).json({
+        error: 'Partida inválida ou não autorizada para uso de skate.',
+        reason: outcome.reason,
+      });
+      return;
+    }
     res.status(409).json({
       error: 'Você não possui usos restantes para este skate.',
       reason: outcome.reason,

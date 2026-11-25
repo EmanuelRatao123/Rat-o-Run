@@ -24,6 +24,7 @@ import {
   PlayerWalletStats,
   PromoCodeRecord,
   PromoCodeRedemptionRecord,
+  SecurityAuditLogItem,
   SkateId,
   SkinGiftItem,
   SkinGrantHistoryRecord,
@@ -234,6 +235,7 @@ export interface DatabaseState {
   voiceCalls: VoiceCallRecord[];
   voiceCallSignals: VoiceCallSignal[];
   voiceCallSignalSeq: number;
+  securityAuditLogs: SecurityAuditLogItem[];
 }
 
 const DATA_DIR = process.env.VERCEL
@@ -284,12 +286,69 @@ function createInitialState(): DatabaseState {
     voiceCalls: [],
     voiceCallSignals: [],
     voiceCallSignalSeq: 0,
+    securityAuditLogs: [],
   };
 }
 
 declare global {
   var _rataoDbState: DatabaseState | undefined;
   var _rataoAdminSeeded: boolean | undefined;
+  var _rataoAdminSeededKey: string | undefined;
+}
+
+export function getSamukaAdminUsername(): string {
+  const raw = process.env.ADMIN_SAMUKA_USERNAME?.trim();
+  return raw && raw.length >= 3 ? raw : 'Samuka';
+}
+
+export function isReservedAdminNickname(nickname: string): boolean {
+  const lower = nickname.trim().toLowerCase();
+  if (!lower) return false;
+  if (lower === 'samuka' || lower === getSamukaAdminUsername().toLowerCase()) {
+    return true;
+  }
+  const initialAdmin = process.env.ADMIN_INITIAL_USERNAME?.trim().toLowerCase();
+  if (initialAdmin && lower === initialAdmin) {
+    return true;
+  }
+  return false;
+}
+
+export function isSamukaAdminUser(
+  user: Pick<StoredUser, 'role' | 'nicknameLower'> | null | undefined
+): boolean {
+  if (!user || user.role !== 'admin') return false;
+  return user.nicknameLower === getSamukaAdminUsername().toLowerCase();
+}
+
+function buildAdminUserRecord(params: {
+  id: string;
+  nickname: string;
+  passwordHash: string;
+  mustChangePassword: boolean;
+  now: string;
+}): StoredUser {
+  return {
+    id: params.id,
+    nickname: params.nickname,
+    nicknameLower: params.nickname.toLowerCase(),
+    passwordHash: params.passwordHash,
+    recoveryHash: null,
+    role: 'admin',
+    mustChangePassword: params.mustChangePassword,
+    equippedSkin: 'ratao',
+    unlockedSkins: [...COMMON_SKIN_IDS],
+    giftedSkins: [],
+    bestNoCoinTimeMs: 0,
+    bestDistance: 0,
+    bestScore: 0,
+    totalMatches: 0,
+    totalCoins: 0,
+    favoriteSkin: 'ratao',
+    skinUsage: {},
+    createdAt: params.now,
+    lastSeenAt: params.now,
+  };
 }
 
 function loadFromDisk(): DatabaseState {
@@ -344,46 +403,68 @@ export function hasAdminAccount(): boolean {
 }
 
 export async function ensureAdminFromEnv(): Promise<void> {
-  if (global._rataoAdminSeeded) return;
-  global._rataoAdminSeeded = true;
+  const envUser = process.env.ADMIN_INITIAL_USERNAME?.trim() || '';
+  const envPass = process.env.ADMIN_INITIAL_PASSWORD || '';
+  const samukaUser = getSamukaAdminUsername();
+  const samukaLower = samukaUser.toLowerCase();
+  const samukaPass = process.env.ADMIN_SAMUKA_PASSWORD || '';
 
-  const envUser = process.env.ADMIN_INITIAL_USERNAME?.trim();
-  const envPass = process.env.ADMIN_INITIAL_PASSWORD;
-
-  if (!envUser || !envPass) {
+  const seedKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}`;
+  if (global._rataoAdminSeeded && global._rataoAdminSeededKey === seedKey) {
     return;
   }
 
   const db = getDb();
-  const existingAdmin = Object.values(db.users).find((u) => u.role === 'admin');
+  let changed = false;
 
-  if (!existingAdmin) {
-    const id = `adm_${generateToken(8)}`;
+  // 1. Primary admin (Ratão) — never blocks or touches Samuka
+  if (envUser && envPass) {
+    const existingPrimary = Object.values(db.users).find(
+      (u) =>
+        u.nicknameLower === envUser.toLowerCase() ||
+        (u.role === 'admin' && u.nicknameLower !== samukaLower)
+    );
+    if (!existingPrimary) {
+      const id = `adm_${generateToken(8)}`;
+      const now = new Date().toISOString();
+      const passwordHash = await hashPassword(envPass);
+      db.users[id] = buildAdminUserRecord({
+        id,
+        nickname: envUser,
+        passwordHash,
+        mustChangePassword: true,
+        now,
+      });
+      changed = true;
+    }
+  }
+
+  // 2. Second admin (Samuka) — provisioned idempotently, preserves updated passwords
+  const existingSamuka = Object.values(db.users).find(
+    (u) => u.nicknameLower === samukaLower
+  );
+  if (!existingSamuka && samukaPass) {
+    const id = db.users['adm_samuka'] ? `adm_${generateToken(8)}` : 'adm_samuka';
     const now = new Date().toISOString();
-    const passwordHash = await hashPassword(envPass);
-    db.users[id] = {
+    const passwordHash = await hashPassword(samukaPass);
+    db.users[id] = buildAdminUserRecord({
       id,
-      nickname: envUser,
-      nicknameLower: envUser.toLowerCase(),
+      nickname: samukaUser,
       passwordHash,
-      recoveryHash: null,
-      role: 'admin',
-      mustChangePassword: true,
-      equippedSkin: 'ratao',
-      unlockedSkins: [...COMMON_SKIN_IDS],
-      giftedSkins: [],
-      bestNoCoinTimeMs: 0,
-      bestDistance: 0,
-      bestScore: 0,
-      totalMatches: 0,
-      totalCoins: 0,
-      favoriteSkin: 'ratao',
-      skinUsage: {},
-      createdAt: now,
-      lastSeenAt: now,
-    };
+      mustChangePassword: false,
+      now,
+    });
+    changed = true;
+  } else if (existingSamuka && existingSamuka.role !== 'admin') {
+    existingSamuka.role = 'admin';
+    changed = true;
+  }
+
+  if (changed) {
     saveDb();
   }
+  global._rataoAdminSeeded = true;
+  global._rataoAdminSeededKey = seedKey;
 }
 
 export function cleanupExpiredSessions(): void {

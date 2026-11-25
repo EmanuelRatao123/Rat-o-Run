@@ -3,6 +3,7 @@ import {
   AdminLogItem,
   AdminPlayerRecord,
   AdminPlayerSkinsSummary,
+  AdminSecuritySummary,
   AdminStats,
   CoinsLeaderboardEntry,
   CustomCharacterConfig,
@@ -32,6 +33,8 @@ import {
   PromoCodeRedemptionRecord,
   PromoRewardType,
   PublicPlayerLookup,
+  SecurityAuditLogItem,
+  SecuritySeverity,
   SkateDefinition,
   SkateId,
   SkinGiftItem,
@@ -539,6 +542,16 @@ export const api = {
       gifts: SkinGiftItem[];
       logs: AdminLogItem[];
     }>('/api/admin/stats'),
+
+  getAdminSecurityLogs: (params?: { limit?: number; severity?: SecuritySeverity | 'all' }) => {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.severity) qs.set('severity', params.severity);
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
+    return apiFetch<{ logs: SecurityAuditLogItem[]; summary: AdminSecuritySummary }>(
+      `/api/admin/security-logs${suffix}`
+    );
+  },
 
   searchAdminPlayers: (q: string) =>
     apiFetch<{ players: AdminPlayerRecord[] }>(

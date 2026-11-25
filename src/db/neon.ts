@@ -660,6 +660,24 @@ export async function ensureNeonSchema(): Promise<void> {
       `;
       await sql`CREATE INDEX IF NOT EXISTS voice_signals_call_to_seq_idx ON voice_call_signals (call_id, to_user_id, seq)`;
 
+      await sql`
+        CREATE TABLE IF NOT EXISTS security_audit_logs (
+          id TEXT PRIMARY KEY,
+          event_type TEXT NOT NULL,
+          category TEXT NOT NULL,
+          severity TEXT NOT NULL,
+          ip TEXT NOT NULL DEFAULT 'unknown',
+          user_id TEXT,
+          nickname TEXT,
+          route TEXT,
+          details TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        )
+      `;
+      await sql`CREATE INDEX IF NOT EXISTS sec_audit_created_idx ON security_audit_logs (created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS sec_audit_sev_created_idx ON security_audit_logs (severity, created_at DESC)`;
+      await sql`CREATE INDEX IF NOT EXISTS sec_audit_ip_idx ON security_audit_logs (ip, created_at DESC)`;
+
       // One-time safe backfill of best_single_match_coins from historical normal matches
       await sql`
         UPDATE users u

@@ -117,6 +117,8 @@ interface RateBucket {
 
 export class SlidingRateLimiter {
   private buckets = new Map<string, RateBucket>();
+  private lastPrunedAt = 0;
+  private readonly maxBuckets = 10000;
 
   constructor(
     private maxAttempts: number,
@@ -124,8 +126,30 @@ export class SlidingRateLimiter {
     private lockoutMs: number = 0
   ) {}
 
+  private prune(now: number): void {
+    const pruneInterval = Math.max(30000, this.windowMs);
+    if (this.buckets.size < this.maxBuckets && now - this.lastPrunedAt < pruneInterval) {
+      return;
+    }
+    this.lastPrunedAt = now;
+    for (const [k, b] of this.buckets.entries()) {
+      const lockExpired = !b.lockedUntil || b.lockedUntil <= now;
+      const latest = b.timestamps[b.timestamps.length - 1] ?? 0;
+      if (lockExpired && now - latest >= this.windowMs) {
+        this.buckets.delete(k);
+      }
+    }
+    while (this.buckets.size >= this.maxBuckets) {
+      const oldestKey = this.buckets.keys().next().value;
+      if (!oldestKey) break;
+      this.buckets.delete(oldestKey);
+    }
+  }
+
   check(key: string): { allowed: boolean; retryAfterSec: number } {
     const now = Date.now();
+    this.prune(now);
+
     let bucket = this.buckets.get(key);
     if (!bucket) {
       bucket = { timestamps: [] };

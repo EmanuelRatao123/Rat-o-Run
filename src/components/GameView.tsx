@@ -312,27 +312,34 @@ export function GameView({
     (skateId: SkateId, useSeq: number) => {
       const currentUser = latestUserRef.current;
       const launch = latestLaunchPropsRef.current;
-      const matchId =
-        matchTokenRef.current?.matchId ||
-        mpRoom?.id ||
-        `run_${currentUser.id}_${runKey}`;
       const mode = launch.multiplayerSession ? launch.multiplayerSession.room.mode : launch.soloMode;
-      const eventKey = `${matchId}:${useSeq}`;
-      void api
-        .consumeMatchSkate({ matchId, skateId, mode, eventKey })
-        .then((res) => {
-          engineRef.current?.syncSkateCharges(res.remainingCharges);
-          if (onUserPatchRef.current) {
-            const currentInv = latestUserRef.current.skateInventory || [];
-            const nextInv = currentInv.map((item) =>
-              item.skateId === skateId ? { ...item, charges: res.remainingCharges } : item
-            );
-            onUserPatchRef.current({ skateInventory: nextInv });
+
+      const executeConsume = async () => {
+        let matchId = matchTokenRef.current?.matchId || mpRoom?.id || '';
+        if (!matchId && matchStartPromiseRef.current) {
+          const started = await matchStartPromiseRef.current.catch(() => null);
+          if (started?.matchId) {
+            matchId = started.matchId;
           }
-        })
-        .catch(() => {
-          // Transient error does not block in-match skate activation
-        });
+        }
+        if (!matchId) {
+          matchId = `run_${currentUser.id}_${runKey}`;
+        }
+        const eventKey = `${matchId}:${useSeq}`;
+        const res = await api.consumeMatchSkate({ matchId, skateId, mode, eventKey });
+        engineRef.current?.syncSkateCharges(res.remainingCharges);
+        if (onUserPatchRef.current) {
+          const currentInv = latestUserRef.current.skateInventory || [];
+          const nextInv = currentInv.map((item) =>
+            item.skateId === skateId ? { ...item, charges: res.remainingCharges } : item
+          );
+          onUserPatchRef.current({ skateInventory: nextInv });
+        }
+      };
+
+      void executeConsume().catch(() => {
+        // Transient error does not block in-match skate activation
+      });
     },
     [mpRoom?.id, runKey]
   );

@@ -890,6 +890,7 @@ export interface UserProfile {
   nickname: string;
   role: 'player' | 'admin';
   mustChangePassword?: boolean;
+  showAdminPanelButton?: boolean;
   equippedSkin: SkinId;
   unlockedSkins: SkinId[];
   giftedSkins: SkinId[];
@@ -1569,6 +1570,40 @@ export interface PublicPlayerLookup {
   rank: number | null;
   onlineRecently: boolean;
   competitiveStats: PlayerCompetitiveStats;
+}
+
+export type SecuritySeverity = 'low' | 'medium' | 'high' | 'critical';
+
+export type SecurityEventCategory =
+  | 'auth'
+  | 'csrf'
+  | 'rate_limit'
+  | 'admin_access'
+  | 'match_integrity'
+  | 'multiplayer_integrity'
+  | 'economy_skate'
+  | 'social_idor'
+  | 'input_validation';
+
+export interface SecurityAuditLogItem {
+  id: string;
+  eventType: string;
+  category: SecurityEventCategory;
+  severity: SecuritySeverity;
+  ip: string;
+  userId?: string | null;
+  nickname?: string | null;
+  route?: string | null;
+  details: string;
+  createdAt: string;
+}
+
+export interface AdminSecuritySummary {
+  totalEvents: number;
+  criticalCount: number;
+  highCount: number;
+  last24hCount: number;
+  blockedAttemptsCount: number;
 }
 
 export function formatStopwatch(ms: number): string {
