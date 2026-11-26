@@ -144,6 +144,15 @@ export function AdminPortalModal({
   const [secretGrantBusy, setSecretGrantBusy] = useState(false);
   const [secretRevokeBusyId, setSecretRevokeBusyId] = useState<string | null>(null);
 
+  // Admin Exclusive Skin (Baby Yoda) management state
+  const [babyYodaOwners, setBabyYodaOwners] = useState<AdminExclusiveSkinOwner[]>([]);
+  const [babyYodaOwnersLoading, setBabyYodaOwnersLoading] = useState(false);
+  const [babyYodaGrantNickname, setBabyYodaGrantNickname] = useState('');
+  const [babyYodaQuickMatches, setBabyYodaQuickMatches] = useState<AdminPlayerRecord[]>([]);
+  const [babyYodaGrantBusy, setBabyYodaGrantBusy] = useState(false);
+  const [babyYodaRevokeBusyId, setBabyYodaRevokeBusyId] = useState<string | null>(null);
+  const [babyYodaEquipBusy, setBabyYodaEquipBusy] = useState(false);
+
   // GERENCIAR SKINS (Bulk grant / revoke / player skin count / grant history)
   const [skinsSearchNickname, setSkinsSearchNickname] = useState('');
   const [manageQuickMatches, setManageQuickMatches] = useState<AdminPlayerRecord[]>([]);
@@ -325,6 +334,18 @@ export function AdminPortalModal({
     }
   }, []);
 
+  const loadBabyYodaOwners = useCallback(async () => {
+    setBabyYodaOwnersLoading(true);
+    try {
+      const res = await api.adminListSecretSkinOwners('baby_yoda');
+      setBabyYodaOwners(res.owners);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao consultar donos da skin Baby Yoda.');
+    } finally {
+      setBabyYodaOwnersLoading(false);
+    }
+  }, []);
+
   const loadGrantHistory = useCallback(async (nicknameFilter?: string) => {
     setHistoryLoading(true);
     try {
@@ -408,8 +429,9 @@ export function AdminPortalModal({
     if (isVerifiedAdmin && tab === 'admin_skins') {
       void loadExclusiveOwners(ownerSkinFilter);
       void loadSecretOwners();
+      void loadBabyYodaOwners();
     }
-  }, [isVerifiedAdmin, tab, ownerSkinFilter, loadExclusiveOwners, loadSecretOwners]);
+  }, [isVerifiedAdmin, tab, ownerSkinFilter, loadExclusiveOwners, loadSecretOwners, loadBabyYodaOwners]);
 
   useEffect(() => {
     if (!isVerifiedAdmin || tab !== 'admin_skins') return;
@@ -442,6 +464,22 @@ export function AdminPortalModal({
     }, 220);
     return () => window.clearTimeout(t);
   }, [isVerifiedAdmin, tab, secretGrantNickname]);
+
+  useEffect(() => {
+    if (!isVerifiedAdmin || tab !== 'admin_skins') return;
+    const q = babyYodaGrantNickname.trim();
+    if (q.length < 1) {
+      setBabyYodaQuickMatches([]);
+      return;
+    }
+    const t = window.setTimeout(() => {
+      void api
+        .searchAdminPlayers(q)
+        .then((res) => setBabyYodaQuickMatches(res.players.slice(0, 6)))
+        .catch(() => {});
+    }, 220);
+    return () => window.clearTimeout(t);
+  }, [isVerifiedAdmin, tab, babyYodaGrantNickname]);
 
   useEffect(() => {
     if (isVerifiedAdmin && tab === 'manage_skins') {
@@ -875,6 +913,94 @@ export function AdminPortalModal({
       setActionErr(err instanceof Error ? err.message : 'Erro ao remover skin secreta.');
     } finally {
       setSecretRevokeBusyId(null);
+    }
+  };
+
+  const handleGrantBabyYoda = async (nicknameOverride?: string) => {
+    const targetNickname = (nicknameOverride ?? babyYodaGrantNickname).trim();
+    if (!targetNickname) {
+      setActionErr('Informe o nickname do jogador para conceder Baby Yoda.');
+      return;
+    }
+    setBabyYodaGrantBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminGrantSecretSkin({
+        nickname: targetNickname,
+        skinId: 'baby_yoda',
+      });
+      setActionMsg(
+        `Skin administrativa "Baby Yoda" concedida para ${res.owner.nickname} por ${res.owner.grantedBy || adminProfile?.nickname || 'Admin'}!`
+      );
+      if (currentUser && currentUser.id === res.owner.userId) {
+        const nextAllowed = Array.from(
+          new Set([...(currentUser.allowedExclusiveSkins || []), 'baby_yoda' as SkinId])
+        );
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: nextAllowed,
+          unlockedSkins: Array.from(new Set([...currentUser.unlockedSkins, 'baby_yoda' as SkinId])),
+        });
+      }
+      if (!nicknameOverride) setBabyYodaGrantNickname('');
+      await Promise.all([loadBabyYodaOwners(), loadDashboard()]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao conceder skin Baby Yoda.');
+    } finally {
+      setBabyYodaGrantBusy(false);
+    }
+  };
+
+  const handleRevokeBabyYoda = async (userId: string, nickname: string) => {
+    setBabyYodaRevokeBusyId(userId);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.adminRevokeSecretSkin({ userId, skinId: 'baby_yoda' });
+      setActionMsg(
+        `Autorização da skin Baby Yoda revogada para ${res.targetNickname || nickname}${
+          res.resetEquipped ? ' (skin equipada voltou para Ratão)' : ''
+        }.`
+      );
+      if (currentUser && currentUser.id === userId) {
+        onUserUpdated({
+          ...currentUser,
+          allowedExclusiveSkins: (currentUser.allowedExclusiveSkins || []).filter(
+            (s) => s !== 'baby_yoda'
+          ),
+          unlockedSkins: currentUser.unlockedSkins.filter((s) => s !== 'baby_yoda'),
+          equippedSkin: res.resetEquipped ? 'ratao' : currentUser.equippedSkin,
+        });
+      }
+      await Promise.all([loadBabyYodaOwners(), loadDashboard()]);
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao revogar skin Baby Yoda.');
+    } finally {
+      setBabyYodaRevokeBusyId(null);
+    }
+  };
+
+  const handleEquipBabyYodaForAdmin = async () => {
+    if (!currentUser || currentUser.role !== 'admin') return;
+    setBabyYodaEquipBusy(true);
+    setActionErr(null);
+    setActionMsg(null);
+    try {
+      const res = await api.equipSkin('baby_yoda');
+      onUserUpdated({
+        ...currentUser,
+        equippedSkin: res.equippedSkin,
+        allowedExclusiveSkins: Array.from(
+          new Set([...(currentUser.allowedExclusiveSkins || []), 'baby_yoda' as SkinId])
+        ),
+        unlockedSkins: Array.from(new Set([...currentUser.unlockedSkins, 'baby_yoda' as SkinId])),
+      });
+      setActionMsg('Skin administrativa Baby Yoda equipada com sucesso!');
+    } catch (err) {
+      setActionErr(err instanceof Error ? err.message : 'Erro ao equipar Baby Yoda.');
+    } finally {
+      setBabyYodaEquipBusy(false);
     }
   };
 
@@ -2022,6 +2148,150 @@ export function AdminPortalModal({
                               >
                                 <Trash2 className="w-3 h-3" />
                                 {secretRevokeBusyId === owner.userId ? 'Removendo...' : 'Revogar'}
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Skin Administrativa Exclusiva: Baby Yoda */}
+                  <div className="p-5 rounded-2xl bg-gradient-to-br from-lime-950/60 via-slate-950 to-slate-950 border-2 border-lime-500/45 space-y-4">
+                    <div className="flex flex-wrap items-start justify-between gap-3">
+                      <div>
+                        <span className="px-2.5 py-1 rounded bg-lime-500/20 border border-lime-400/50 text-lime-300 text-[10px] font-extrabold uppercase tracking-wider">
+                          EXCLUSIVA DE ADMINISTRADOR · INVISÍVEL NO CATÁLOGO PÚBLICO
+                        </span>
+                        <h3 className="font-display text-xl font-bold text-white mt-2 flex items-center gap-2">
+                          <Sparkles className="w-5 h-5 text-lime-400" />
+                          SKIN ADMINISTRATIVA: BABY YODA
+                        </h3>
+                        <p className="text-xs text-slate-300 mt-1 max-w-2xl">
+                          Modelo 3D voxel com túnica bege de gola alta, orelhas animadas e celebração da Força. Nunca aparece bloqueada ou em silhueta para jogadores comuns, nem pode ser resgatada por códigos ou concessão em massa. <strong>Ratão</strong> e <strong>Samuka</strong> já possuem acesso direto automático.
+                        </p>
+                      </div>
+
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-3 py-1.5 rounded-xl bg-lime-500/15 border border-lime-400/50 text-lime-300 text-[11px] font-extrabold">
+                          ACESSO NATIVO: RATÃO & SAMUKA
+                        </span>
+                        {currentUser?.role === 'admin' && (
+                          <button
+                            type="button"
+                            disabled={babyYodaEquipBusy || currentUser.equippedSkin === 'baby_yoda'}
+                            onClick={() => void handleEquipBabyYodaForAdmin()}
+                            className="px-4 py-2 rounded-xl bg-lime-600 hover:bg-lime-500 text-slate-950 font-display font-bold text-xs flex items-center gap-1.5 shadow-lg cursor-pointer disabled:opacity-60"
+                          >
+                            <CheckCircle2 className="w-4 h-4" />
+                            {currentUser.equippedSkin === 'baby_yoda'
+                              ? 'BABY YODA EQUIPADA'
+                              : babyYodaEquipBusy
+                                ? 'EQUIPANDO...'
+                                : 'EQUIPAR BABY YODA'}
+                          </button>
+                        )}
+                      </div>
+                    </div>
+
+                    <form
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        void handleGrantBabyYoda();
+                      }}
+                      className="p-3.5 rounded-xl bg-slate-900/75 border border-slate-800 space-y-2.5"
+                    >
+                      <div className="flex flex-col sm:flex-row gap-2.5">
+                        <div className="relative flex-1">
+                          <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                          <input
+                            type="text"
+                            value={babyYodaGrantNickname}
+                            onChange={(e) => setBabyYodaGrantNickname(e.target.value)}
+                            placeholder="Conceder Baby Yoda a um jogador (nickname exato)..."
+                            className="w-full pl-8 pr-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs"
+                          />
+                        </div>
+                        <button
+                          type="submit"
+                          disabled={babyYodaGrantBusy || !babyYodaGrantNickname.trim()}
+                          className="px-4 py-2 rounded-lg bg-lime-600 hover:bg-lime-500 disabled:opacity-50 text-slate-950 font-display font-bold text-xs flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <Unlock className="w-3.5 h-3.5" />
+                          {babyYodaGrantBusy ? 'CONCEDENDO...' : 'CONCEDER BABY YODA'}
+                        </button>
+                      </div>
+
+                      {babyYodaQuickMatches.length > 0 && (
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <span className="text-[10px] font-bold uppercase text-slate-400 mr-1">
+                            Jogadores:
+                          </span>
+                          {babyYodaQuickMatches.map((mp) => (
+                            <button
+                              key={mp.id}
+                              type="button"
+                              onClick={() => setBabyYodaGrantNickname(mp.nickname)}
+                              className="px-2 py-0.5 rounded bg-slate-950 border border-slate-700 hover:border-lime-400 text-[11px] font-bold text-slate-200 cursor-pointer"
+                            >
+                              {mp.nickname}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                    </form>
+
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-xs font-extrabold uppercase text-lime-300">
+                          Jogadores com autorização Baby Yoda ({babyYodaOwners.length})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => void loadBabyYodaOwners()}
+                          className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-bold flex items-center gap-1 cursor-pointer"
+                        >
+                          <RefreshCw className={`w-3 h-3 ${babyYodaOwnersLoading ? 'animate-spin' : ''}`} />
+                          Atualizar
+                        </button>
+                      </div>
+                      {babyYodaOwnersLoading ? (
+                        <div className="text-xs text-slate-400">Consultando autorizações da skin Baby Yoda...</div>
+                      ) : babyYodaOwners.length === 0 ? (
+                        <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400">
+                          Nenhum jogador comum possui autorização para Baby Yoda no momento (apenas Ratão e Samuka).
+                        </div>
+                      ) : (
+                        <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
+                          {babyYodaOwners.map((owner) => (
+                            <div
+                              key={owner.id}
+                              className="p-2.5 rounded-xl bg-slate-900/80 border border-lime-500/30 flex flex-wrap items-center justify-between gap-2"
+                            >
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-bold text-xs text-white">{owner.nickname}</span>
+                                <span className="px-2 py-0.5 rounded bg-lime-500/20 text-lime-300 text-[10px] font-bold">
+                                  BABY YODA
+                                </span>
+                                {owner.equipped && (
+                                  <span className="px-2 py-0.5 rounded bg-sky-500/20 text-sky-300 text-[10px] font-bold">
+                                    EQUIPADA
+                                  </span>
+                                )}
+                                <span className="text-[11px] text-slate-400">
+                                  Concedida por <strong className="text-slate-200">{owner.grantedBy || 'Admin'}</strong>
+                                </span>
+                              </div>
+                              <button
+                                type="button"
+                                disabled={babyYodaRevokeBusyId === owner.userId}
+                                onClick={() =>
+                                  void handleRevokeBabyYoda(owner.userId, owner.nickname)
+                                }
+                                className="px-2.5 py-1 rounded-lg bg-rose-950 hover:bg-rose-900 border border-rose-700/60 text-rose-200 text-[11px] font-bold flex items-center gap-1 cursor-pointer disabled:opacity-60"
+                              >
+                                <Trash2 className="w-3 h-3" />
+                                {babyYodaRevokeBusyId === owner.userId ? 'Revogando...' : 'Revogar'}
                               </button>
                             </div>
                           ))}

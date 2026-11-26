@@ -55,6 +55,8 @@ export interface CharacterRig {
   rightLegPivot: THREE.Group;
   tailPivot?: THREE.Group;
   capePivot?: THREE.Group;
+  earLeftPivot?: THREE.Group;
+  earRightPivot?: THREE.Group;
   customCapePivot?: THREE.Group;
   customCapeMesh?: THREE.Mesh;
   customCapeTex?: THREE.CanvasTexture;
@@ -188,6 +190,8 @@ function buildCharacterBase(
 
   let tailPivot: THREE.Group | undefined;
   let capePivot: THREE.Group | undefined;
+  let earLeftPivot: THREE.Group | undefined;
+  let earRightPivot: THREE.Group | undefined;
   let followerMice: FollowerMouseRig[] | undefined;
   let auraParticles: AuraParticleRig[] | undefined;
   let policeBeaconRed: THREE.Mesh | undefined;
@@ -1779,6 +1783,111 @@ function buildCharacterBase(
     v(headPivot, { w: 0.09, h: 0.09, d: 0.09, x: -0.2, y: 0.49, z: 0, color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 1.2 });
     v(headPivot, { w: 0.09, h: 0.09, d: 0.09, x: 0.2, y: 0.49, z: 0, color: 0x4ade80, emissive: 0x22c55e, emissiveIntensity: 1.2 });
     buildLimbs(0x15803d, 0x15803d, 0x166534, 0x052e16, 0x4ade80);
+  } else if (skin === 'baby_yoda') {
+    // Baby Yoda (Exclusive Admin): Small green body, oversized head, long pointed ears, huge glossy eyes & cozy high-collar beige robe
+    torsoPivot.position.set(0, 0.44, 0);
+    leftLegPivot.position.set(-0.12, 0.44, 0);
+    rightLegPivot.position.set(0.12, 0.44, 0);
+    leftArmPivot.position.set(-0.32, 0.38, 0);
+    rightArmPivot.position.set(0.32, 0.38, 0);
+    headPivot.position.set(0, 0.50, 0);
+
+    // Cozy flared beige robe & inner brown tunic
+    v(torsoPivot, { w: 0.58, h: 0.22, d: 0.40, x: 0, y: 0.06, z: 0, color: 0xc2a87e, roughness: 0.88 });
+    v(torsoPivot, { w: 0.52, h: 0.28, d: 0.35, x: 0, y: 0.28, z: 0, color: 0xd6c29f, roughness: 0.86 });
+    v(torsoPivot, { w: 0.16, h: 0.44, d: 0.37, x: 0, y: 0.20, z: 0.01, color: 0x7c5c3b, roughness: 0.82 });
+    // High plush folded collar framing neck & chin
+    v(torsoPivot, { w: 0.60, h: 0.15, d: 0.42, x: 0, y: 0.46, z: 0, color: 0xe7d9be, roughness: 0.92 });
+    v(torsoPivot, { w: 0.22, h: 0.12, d: 0.06, x: -0.15, y: 0.48, z: 0.20, color: 0xefe5d0, roughness: 0.92, rz: -0.14 });
+    v(torsoPivot, { w: 0.22, h: 0.12, d: 0.06, x: 0.15, y: 0.48, z: 0.20, color: 0xefe5d0, roughness: 0.92, rz: 0.14 });
+
+    // Oversized cute sage-green head & plump cheeks
+    v(headPivot, { w: 0.56, h: 0.44, d: 0.46, x: 0, y: 0.24, z: 0, color: 0x8bc34a, roughness: 0.64 });
+    v(headPivot, { w: 0.46, h: 0.08, d: 0.38, x: 0, y: 0.48, z: 0, color: 0x9ccc65, roughness: 0.64 });
+    v(headPivot, { w: 0.62, h: 0.18, d: 0.40, x: 0, y: 0.15, z: 0.01, color: 0x9ccc65, roughness: 0.66 });
+    // Rosy cheek warmth & tiny brow ridges
+    v(headPivot, { w: 0.08, h: 0.06, d: 0.04, x: -0.22, y: 0.14, z: 0.22, color: 0xfda4af, roughness: 0.8 });
+    v(headPivot, { w: 0.08, h: 0.06, d: 0.04, x: 0.22, y: 0.14, z: 0.22, color: 0xfda4af, roughness: 0.8 });
+    v(headPivot, { w: 0.30, h: 0.03, d: 0.05, x: 0, y: 0.38, z: 0.22, color: 0x689f38, roughness: 0.68 });
+    // Subtle wispy baby fuzz tufts on crown
+    v(headPivot, { w: 0.10, h: 0.04, d: 0.06, x: -0.09, y: 0.53, z: 0.04, color: 0xe2e8f0, roughness: 0.9 });
+    v(headPivot, { w: 0.08, h: 0.04, d: 0.06, x: 0.09, y: 0.53, z: -0.03, color: 0xe2e8f0, roughness: 0.9 });
+
+    // Large dark glossy expressive eyes with dual specular catchlights
+    v(headPivot, { w: 0.17, h: 0.18, d: 0.04, x: -0.14, y: 0.25, z: 0.22, color: 0x689f38, roughness: 0.65 });
+    v(headPivot, { w: 0.17, h: 0.18, d: 0.04, x: 0.14, y: 0.25, z: 0.22, color: 0x689f38, roughness: 0.65 });
+    v(headPivot, { w: 0.15, h: 0.16, d: 0.05, x: -0.14, y: 0.25, z: 0.23, color: 0x09090b, roughness: 0.06, metalness: 0.25 });
+    v(headPivot, { w: 0.15, h: 0.16, d: 0.05, x: 0.14, y: 0.25, z: 0.23, color: 0x09090b, roughness: 0.06, metalness: 0.25 });
+    v(headPivot, { w: 0.045, h: 0.045, d: 0.055, x: -0.17, y: 0.29, z: 0.236, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.1 });
+    v(headPivot, { w: 0.045, h: 0.045, d: 0.055, x: 0.11, y: 0.29, z: 0.236, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.4, roughness: 0.1 });
+    v(headPivot, { w: 0.025, h: 0.025, d: 0.055, x: -0.11, y: 0.21, z: 0.236, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.25, roughness: 0.1 });
+    v(headPivot, { w: 0.025, h: 0.025, d: 0.055, x: 0.17, y: 0.21, z: 0.236, color: 0xffffff, emissive: 0xffffff, emissiveIntensity: 0.25, roughness: 0.1 });
+
+    // Cute tiny button nose & sweet gentle smile
+    v(headPivot, { w: 0.09, h: 0.055, d: 0.06, x: 0, y: 0.17, z: 0.24, color: 0x689f38, roughness: 0.62 });
+    v(headPivot, { w: 0.14, h: 0.035, d: 0.04, x: 0, y: 0.10, z: 0.23, color: 0x4d7c0f, roughness: 0.7 });
+
+    // Long pointed articulated voxel ears (outer sage green + inner pinkish-peach)
+    earLeftPivot = new THREE.Group();
+    earLeftPivot.position.set(-0.27, 0.27, -0.01);
+    headPivot.add(earLeftPivot);
+    v(earLeftPivot, { w: 0.20, h: 0.15, d: 0.08, x: -0.10, y: 0, z: 0, color: 0x7cb342, roughness: 0.66 });
+    v(earLeftPivot, { w: 0.16, h: 0.09, d: 0.06, x: -0.11, y: -0.01, z: 0.022, color: 0xf4a896, roughness: 0.78 });
+    v(earLeftPivot, { w: 0.18, h: 0.11, d: 0.07, x: -0.26, y: 0.02, z: -0.01, color: 0x8bc34a, roughness: 0.64, rz: 0.08 });
+    v(earLeftPivot, { w: 0.14, h: 0.06, d: 0.05, x: -0.26, y: 0.01, z: 0.012, color: 0xf4a896, roughness: 0.78, rz: 0.08 });
+    v(earLeftPivot, { w: 0.14, h: 0.065, d: 0.05, x: -0.40, y: 0.05, z: -0.02, color: 0x9ccc65, roughness: 0.64, rz: 0.14 });
+
+    earRightPivot = new THREE.Group();
+    earRightPivot.position.set(0.27, 0.27, -0.01);
+    headPivot.add(earRightPivot);
+    v(earRightPivot, { w: 0.20, h: 0.15, d: 0.08, x: 0.10, y: 0, z: 0, color: 0x7cb342, roughness: 0.66 });
+    v(earRightPivot, { w: 0.16, h: 0.09, d: 0.06, x: 0.11, y: -0.01, z: 0.022, color: 0xf4a896, roughness: 0.78 });
+    v(earRightPivot, { w: 0.18, h: 0.11, d: 0.07, x: 0.26, y: 0.02, z: -0.01, color: 0x8bc34a, roughness: 0.64, rz: -0.08 });
+    v(earRightPivot, { w: 0.14, h: 0.06, d: 0.05, x: 0.26, y: 0.01, z: 0.012, color: 0xf4a896, roughness: 0.78, rz: -0.08 });
+    v(earRightPivot, { w: 0.14, h: 0.065, d: 0.05, x: 0.40, y: 0.05, z: -0.02, color: 0x9ccc65, roughness: 0.64, rz: -0.14 });
+
+    // Wide beige robe sleeves & cute little green 3-fingered hands
+    v(leftArmPivot, { w: 0.20, h: 0.19, d: 0.20, x: 0, y: -0.09, z: 0, color: 0xd6c29f, roughness: 0.88 });
+    v(leftArmPivot, { w: 0.22, h: 0.06, d: 0.22, x: 0, y: -0.19, z: 0, color: 0xe7d9be, roughness: 0.9 });
+    v(leftArmPivot, { w: 0.13, h: 0.11, d: 0.13, x: 0, y: -0.26, z: 0.01, color: 0x8bc34a, roughness: 0.65 });
+    v(leftArmPivot, { w: 0.04, h: 0.05, d: 0.04, x: 0.05, y: -0.29, z: 0.05, color: 0x9ccc65, roughness: 0.65 });
+
+    v(rightArmPivot, { w: 0.20, h: 0.19, d: 0.20, x: 0, y: -0.09, z: 0, color: 0xd6c29f, roughness: 0.88 });
+    v(rightArmPivot, { w: 0.22, h: 0.06, d: 0.22, x: 0, y: -0.19, z: 0, color: 0xe7d9be, roughness: 0.9 });
+    v(rightArmPivot, { w: 0.13, h: 0.11, d: 0.13, x: 0, y: -0.26, z: 0.01, color: 0x8bc34a, roughness: 0.65 });
+    v(rightArmPivot, { w: 0.04, h: 0.05, d: 0.04, x: -0.05, y: -0.29, z: 0.05, color: 0x9ccc65, roughness: 0.65 });
+
+    // Tiny legs under robe & cute little green feet grounded cleanly at y ~ 0.01
+    v(leftLegPivot, { w: 0.16, h: 0.22, d: 0.16, x: 0, y: -0.16, z: 0, color: 0x5c4033, roughness: 0.84 });
+    v(leftLegPivot, { w: 0.18, h: 0.12, d: 0.24, x: 0, y: -0.37, z: 0.03, color: 0x7cb342, roughness: 0.68 });
+    v(leftLegPivot, { w: 0.18, h: 0.04, d: 0.05, x: 0, y: -0.41, z: 0.14, color: 0x558b2f, roughness: 0.72 });
+
+    v(rightLegPivot, { w: 0.16, h: 0.22, d: 0.16, x: 0, y: -0.16, z: 0, color: 0x5c4033, roughness: 0.84 });
+    v(rightLegPivot, { w: 0.18, h: 0.12, d: 0.24, x: 0, y: -0.37, z: 0.03, color: 0x7cb342, roughness: 0.68 });
+    v(rightLegPivot, { w: 0.18, h: 0.04, d: 0.05, x: 0, y: -0.41, z: 0.14, color: 0x558b2f, roughness: 0.72 });
+
+    // Subtle Force motes orbiting during meditation / victory
+    auraParticles = [];
+    for (let i = 0; i < 5; i++) {
+      const mote = v(bodyPivot, {
+        w: 0.06,
+        h: 0.06,
+        d: 0.06,
+        x: 0,
+        y: 0.85,
+        z: 0,
+        color: i % 2 === 0 ? 0x6ee7b7 : 0xa7f3d0,
+        emissive: 0x10b981,
+        emissiveIntensity: 1.5,
+      });
+      auraParticles.push({
+        mesh: mote,
+        radius: 0.56,
+        heightOffset: 0.65 + (i % 3) * 0.24,
+        speed: 1.8,
+        angle: (i / 5) * Math.PI * 2,
+      });
+    }
   } else {
     // Police Pursuer
     v(torsoPivot, { w: 0.58, h: 0.6, d: 0.34, x: 0, y: 0.3, z: 0, color: 0x1e3a8a, roughness: 0.65 });
@@ -1894,6 +2003,8 @@ function buildCharacterBase(
     rightLegPivot,
     tailPivot,
     capePivot,
+    earLeftPivot,
+    earRightPivot,
     followerMice,
     auraParticles,
     blinkLids,
@@ -2336,8 +2447,13 @@ function animateExclusiveExtras(
 
   // Orbiting exclusive aura particles
   if (rig.auraParticles) {
+    const isBabyYoda = rig.skinId === 'baby_yoda';
     for (const pt of rig.auraParticles) {
-      const a = pt.angle + elapsed * pt.speed;
+      if (isBabyYoda) {
+        pt.mesh.visible = state === 'victory' || state === 'idle' || state === 'jump' || state === 'jetpack';
+      }
+      const speedMult = isBabyYoda && state === 'victory' ? 1.85 : 1;
+      const a = pt.angle + elapsed * pt.speed * speedMult;
       pt.mesh.position.set(
         Math.cos(a) * pt.radius,
         pt.heightOffset + Math.sin(elapsed * 3.5 + pt.angle) * 0.16,
@@ -2458,6 +2574,38 @@ export function animateCharacterRig(
   };
 
   if (state === 'victory') {
+    if (rig.skinId === 'baby_yoda') {
+      // Signature Baby Yoda Force-levitation celebration with raised green Force hands & happy ear perk!
+      const levitate = 0.24 + Math.sin(elapsed * 3.2) * 0.08;
+      const sway = Math.sin(elapsed * 2.2) * 0.08;
+      rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, levitate, k);
+      rig.bodyPivot.rotation.set(0, 0, sway * 0.4);
+      rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, -0.06, k);
+      rig.torsoPivot.rotation.y = THREE.MathUtils.lerp(rig.torsoPivot.rotation.y, 0, k);
+      rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
+      rig.headPivot.rotation.x = THREE.MathUtils.lerp(rig.headPivot.rotation.x, -0.08, k);
+      rig.headPivot.rotation.y = THREE.MathUtils.lerp(rig.headPivot.rotation.y, Math.sin(elapsed * 1.6) * 0.15, k);
+      rig.headPivot.rotation.z = THREE.MathUtils.lerp(rig.headPivot.rotation.z, Math.sin(elapsed * 2.1) * 0.12, k);
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -1.45 + Math.sin(elapsed * 4.2) * 0.12, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -1.45 - Math.sin(elapsed * 4.2) * 0.12, k);
+      rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -0.25, k);
+      rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0.25, k);
+      rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.35, k);
+      rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0.2, k);
+      rig.leftLegPivot.rotation.z = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.z, -0.08, k);
+      rig.rightLegPivot.rotation.z = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.z, 0.08, k);
+      if (rig.earLeftPivot) {
+        rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, -0.14 + Math.sin(elapsed * 4.8) * 0.09, k);
+        rig.earLeftPivot.rotation.y = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.y, 0.08, k);
+      }
+      if (rig.earRightPivot) {
+        rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, 0.14 - Math.sin(elapsed * 4.8) * 0.09, k);
+        rig.earRightPivot.rotation.y = THREE.MathUtils.lerp(rig.earRightPivot.rotation.y, -0.08, k);
+      }
+      if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.25 + Math.sin(elapsed * 4) * 0.08;
+      return;
+    }
+
     // Signature open-arms victory celebration ("Siuuu!" stance for Cristiano Ronaldo & celebratory pose)
     const pulse = Math.sin(elapsed * 4.5);
     const hop = Math.max(0, Math.sin(elapsed * 3.0)) * 0.08;
@@ -2492,13 +2640,24 @@ export function animateCharacterRig(
 
     resetSecondaryAxes();
     const breath = Math.sin(elapsed * 3.0);
-    rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, 0, k);
+    rig.bodyPivot.position.y = THREE.MathUtils.lerp(
+      rig.bodyPivot.position.y,
+      rig.skinId === 'baby_yoda' ? Math.sin(elapsed * 2.2) * 0.025 : 0,
+      k
+    );
     rig.bodyPivot.rotation.set(0, 0, 0);
     rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, breath * 0.04, k);
     rig.torsoPivot.rotation.y = THREE.MathUtils.lerp(rig.torsoPivot.rotation.y, 0, k);
     rig.torsoPivot.rotation.z = THREE.MathUtils.lerp(rig.torsoPivot.rotation.z, 0, k);
-    rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, Math.sin(elapsed * 2.5) * 0.08, k);
-    rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -Math.sin(elapsed * 2.5) * 0.08, k);
+    if (rig.skinId === 'baby_yoda') {
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -0.24 + Math.sin(elapsed * 2.2) * 0.06, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.24 - Math.sin(elapsed * 2.2) * 0.06, k);
+      rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -0.12, k);
+      rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0.12, k);
+    } else {
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, Math.sin(elapsed * 2.5) * 0.08, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -Math.sin(elapsed * 2.5) * 0.08, k);
+    }
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0, k);
 
@@ -2510,6 +2669,17 @@ export function animateCharacterRig(
       rig.headPivot.rotation.z = twitchZ;
     } else if (rig.skinId === 'plankton') {
       rig.headPivot.rotation.y = Math.sin(elapsed * 2.8) * 0.18;
+    } else if (rig.skinId === 'baby_yoda') {
+      rig.headPivot.rotation.y = Math.sin(elapsed * 1.3) * 0.22;
+      rig.headPivot.rotation.z = Math.sin(elapsed * 1.5) * 0.1;
+      if (rig.earLeftPivot) {
+        rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, 0.14 + Math.sin(elapsed * 2.4) * 0.11, k);
+        rig.earLeftPivot.rotation.y = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.y, Math.sin(elapsed * 1.8) * 0.08, k);
+      }
+      if (rig.earRightPivot) {
+        rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, -0.14 - Math.sin(elapsed * 2.4 + 0.5) * 0.11, k);
+        rig.earRightPivot.rotation.y = THREE.MathUtils.lerp(rig.earRightPivot.rotation.y, -Math.sin(elapsed * 1.8) * 0.08, k);
+      }
     } else {
       rig.headPivot.rotation.y = Math.sin(elapsed * 1.4) * 0.14;
     }
@@ -2530,6 +2700,7 @@ export function animateCharacterRig(
     const isCR7 = rig.skinId === 'cristiano_ronaldo';
     const isEnderman = rig.skinId === 'enderman';
     const isPlankton = rig.skinId === 'plankton';
+    const isBabyYoda = rig.skinId === 'baby_yoda';
     const isFootballer =
       isCR7 || rig.skinId === 'ronaldinho_gaucho' || rig.skinId === 'vini_jr';
 
@@ -2537,17 +2708,19 @@ export function animateCharacterRig(
       ? 1.25
       : isPlankton
         ? 1.32
-        : isTungTung
-          ? 1.15
-          : isFootballer
-            ? 1.1
-            : 1.0;
+        : isBabyYoda
+          ? 1.28
+          : isTungTung
+            ? 1.15
+            : isFootballer
+              ? 1.1
+              : 1.0;
     const strideFreq = 13.5 * speedFactor * freqMult;
     const phase = elapsed * strideFreq;
     const swing = isFreddy
       ? Math.round(Math.sin(phase) * 4) / 4 // Mechanical stepped animatronic cadence
       : Math.sin(phase);
-    const bob = Math.abs(Math.sin(phase)) * (isTungTung ? 0.17 : 0.1);
+    const bob = Math.abs(Math.sin(phase)) * (isTungTung ? 0.17 : isBabyYoda ? 0.08 : 0.1);
 
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(
       rig.bodyPivot.position.y,
@@ -2556,7 +2729,7 @@ export function animateCharacterRig(
     );
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(
       rig.bodyPivot.rotation.x,
-      state === 'stumble' ? 0.25 : isSonic ? 0.24 : isFootballer ? 0.18 : 0.12,
+      state === 'stumble' ? 0.25 : isSonic ? 0.24 : isBabyYoda ? 0.18 : isFootballer ? 0.18 : 0.12,
       k
     );
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(
@@ -2565,9 +2738,11 @@ export function animateCharacterRig(
         ? Math.sin(elapsed * 28) * 0.25
         : isTungTung
           ? Math.cos(phase) * 0.11
-          : ridingBoard
-            ? Math.sin(elapsed * 4.5) * 0.08
-            : 0,
+          : isBabyYoda
+            ? Math.sin(phase) * 0.06
+            : ridingBoard
+              ? Math.sin(elapsed * 4.5) * 0.08
+              : 0,
       k
     );
     rig.torsoPivot.rotation.x = THREE.MathUtils.lerp(rig.torsoPivot.rotation.x, isSonic ? 0.18 : 0.1, k);
@@ -2581,6 +2756,14 @@ export function animateCharacterRig(
       rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.35, k);
       rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -0.32, k);
       rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0.32, k);
+    } else if (isBabyYoda) {
+      // Adorable fast toddling run with outstretched little arms & bouncy ears
+      rig.leftLegPivot.rotation.x = swing * 0.85;
+      rig.rightLegPivot.rotation.x = -swing * 0.85;
+      rig.leftArmPivot.rotation.x = -0.35 - swing * 0.55;
+      rig.rightArmPivot.rotation.x = -0.35 + swing * 0.55;
+      rig.leftArmPivot.rotation.z = -0.28;
+      rig.rightArmPivot.rotation.z = 0.28;
     } else if (isTungTung) {
       // Hilarious exaggerated comedic running gait for Tung Tung Tung Sahur
       rig.leftLegPivot.rotation.x = swing * 1.25;
@@ -2622,10 +2805,19 @@ export function animateCharacterRig(
     } else if (isTungTung) {
       rig.headPivot.rotation.y = Math.sin(phase) * 0.14;
       rig.headPivot.rotation.z = Math.cos(phase) * 0.09;
+    } else if (isBabyYoda) {
+      rig.headPivot.rotation.y = Math.sin(phase * 0.5) * 0.08;
+      rig.headPivot.rotation.z = Math.cos(phase) * 0.05;
     } else {
       rig.headPivot.rotation.y = 0;
     }
 
+    if (isBabyYoda && rig.earLeftPivot && rig.earRightPivot) {
+      rig.earLeftPivot.rotation.z = 0.14 + Math.sin(phase) * 0.16;
+      rig.earRightPivot.rotation.z = -0.14 + Math.sin(phase) * 0.16;
+      rig.earLeftPivot.rotation.y = state === 'stumble' ? 0.25 : 0.14;
+      rig.earRightPivot.rotation.y = state === 'stumble' ? -0.25 : -0.14;
+    }
     if (rig.tailPivot) rig.tailPivot.rotation.y = Math.sin(phase) * 0.35;
     if (rig.capePivot) rig.capePivot.rotation.x = 0.35 + Math.sin(phase * 1.4) * 0.18;
     if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.35 + Math.sin(phase * 1.4) * 0.18;
@@ -2636,6 +2828,17 @@ export function animateCharacterRig(
     if (rig.skinId === 'mario' || rig.skinId === 'luigi') {
       rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -0.35, k);
       rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -2.75, k);
+    } else if (rig.skinId === 'baby_yoda') {
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -1.95, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -1.95, k);
+      rig.leftArmPivot.rotation.z = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.z, -0.35, k);
+      rig.rightArmPivot.rotation.z = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.z, 0.35, k);
+      if (rig.earLeftPivot && rig.earRightPivot) {
+        rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, -0.18 + Math.sin(elapsed * 12) * 0.16, k);
+        rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, 0.18 - Math.sin(elapsed * 12) * 0.16, k);
+        rig.earLeftPivot.rotation.y = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.y, 0.24, k);
+        rig.earRightPivot.rotation.y = THREE.MathUtils.lerp(rig.earRightPivot.rotation.y, -0.24, k);
+      }
     } else {
       rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -2.2, k);
       rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -2.2, k);
@@ -2645,13 +2848,20 @@ export function animateCharacterRig(
     if (rig.capePivot) rig.capePivot.rotation.x = 0.55;
     if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.55;
   } else if (state === 'slide') {
-    rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, -0.34, k);
-    rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, -1.05, k);
+    const isBabyYoda = rig.skinId === 'baby_yoda';
+    rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, isBabyYoda ? -0.26 : -0.34, k);
+    rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, isBabyYoda ? -0.95 : -1.05, k);
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(rig.bodyPivot.rotation.z, 0, k);
     rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, 0.9, k);
     rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, 0.9, k);
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, 0.4, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, 0.4, k);
+    if (isBabyYoda && rig.earLeftPivot && rig.earRightPivot) {
+      rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, 0.32, k);
+      rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, -0.32, k);
+      rig.earLeftPivot.rotation.y = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.y, 0.42, k);
+      rig.earRightPivot.rotation.y = THREE.MathUtils.lerp(rig.earRightPivot.rotation.y, -0.42, k);
+    }
     if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.72;
   } else if (state === 'jetpack') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, Math.sin(elapsed * 8) * 0.08, k);
@@ -2660,11 +2870,23 @@ export function animateCharacterRig(
     rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.8, k);
     rig.leftLegPivot.rotation.x = THREE.MathUtils.lerp(rig.leftLegPivot.rotation.x, -0.2, k);
     rig.rightLegPivot.rotation.x = THREE.MathUtils.lerp(rig.rightLegPivot.rotation.x, -0.2, k);
+    if (rig.skinId === 'baby_yoda' && rig.earLeftPivot && rig.earRightPivot) {
+      rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, 0.1 + Math.sin(elapsed * 14) * 0.15, k);
+      rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, -0.1 - Math.sin(elapsed * 14) * 0.15, k);
+      rig.earLeftPivot.rotation.y = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.y, 0.35, k);
+      rig.earRightPivot.rotation.y = THREE.MathUtils.lerp(rig.earRightPivot.rotation.y, -0.35, k);
+    }
     if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.65;
   } else if (state === 'crash') {
     rig.bodyPivot.position.y = THREE.MathUtils.lerp(rig.bodyPivot.position.y, -0.2, k);
     rig.bodyPivot.rotation.x = THREE.MathUtils.lerp(rig.bodyPivot.rotation.x, -1.35, k);
     rig.bodyPivot.rotation.z = THREE.MathUtils.lerp(rig.bodyPivot.rotation.z, 0.35, k);
+    if (rig.skinId === 'baby_yoda' && rig.earLeftPivot && rig.earRightPivot) {
+      rig.earLeftPivot.rotation.z = THREE.MathUtils.lerp(rig.earLeftPivot.rotation.z, 0.55, k);
+      rig.earRightPivot.rotation.z = THREE.MathUtils.lerp(rig.earRightPivot.rotation.z, -0.55, k);
+      rig.leftArmPivot.rotation.x = THREE.MathUtils.lerp(rig.leftArmPivot.rotation.x, -1.2, k);
+      rig.rightArmPivot.rotation.x = THREE.MathUtils.lerp(rig.rightArmPivot.rotation.x, -0.9, k);
+    }
     if (rig.customCapePivot) rig.customCapePivot.rotation.x = 0.25;
   }
 

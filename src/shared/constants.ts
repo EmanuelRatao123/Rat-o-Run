@@ -49,7 +49,7 @@ export type LockedExclusiveSkinId =
   | 'patrick'
   | 'lula_molusco';
 
-export type SecretExclusiveSkinId = 'plankton';
+export type SecretExclusiveSkinId = 'plankton' | 'baby_yoda';
 
 export type SkinId =
   | CommonSkinId
@@ -566,6 +566,17 @@ export const SECRET_EXCLUSIVE_SKINS: SkinDefinition[] = [
     exclusiveRule: 'admin',
     unlockConditionText: 'Skin secreta exclusiva liberada apenas pelo Administrador',
   },
+  {
+    id: 'baby_yoda',
+    name: 'Baby Yoda',
+    subtitle: 'Skin administrativa exclusiva: pequeno ser verde da Força com orelhas compridas e túnica bege',
+    primaryColor: '#7cb342',
+    accentColor: '#d6c29f',
+    badgeText: 'EXCLUSIVA ADMIN',
+    isExclusive: true,
+    exclusiveRule: 'admin',
+    unlockConditionText: 'Skin exclusiva de administrador · Uso direto de Ratão e Samuka ou liberação administrativa',
+  },
 ];
 
 export const PUBLIC_CATALOG_SKINS: SkinDefinition[] = [
@@ -1025,6 +1036,7 @@ export interface AdminExclusiveSkinOwner {
   nickname: string;
   skinId: SkinId;
   reason: ExclusiveSkinPermissionRecord['reason'];
+  grantedBy?: string | null;
   grantedAt: string;
   equipped: boolean;
 }
@@ -1233,6 +1245,7 @@ export interface ExclusiveSkinPermissionRecord {
     | 'admin_bulk_grant'
     | 'special_rule';
   rankPosition: number | null;
+  grantedBy?: string | null;
   active: boolean;
   grantedAt: string;
   revokedAt: string | null;

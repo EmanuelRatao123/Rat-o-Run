@@ -2281,7 +2281,8 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
           (p) => p.userId === u.id && p.skinId === u.equippedSkin && p.active
         );
         const isValidKing = u.equippedSkin !== 'ratao_rei' || u.role === 'admin';
-        if (!hasPerm || !isValidKing) {
+        const isValidBabyYodaAdmin = u.equippedSkin === 'baby_yoda' && u.role === 'admin';
+        if ((!hasPerm && !isValidBabyYodaAdmin) || !isValidKing) {
           u.equippedSkin = 'ratao';
           changed = true;
         }
@@ -2386,7 +2387,8 @@ export async function repoSyncExclusiveSkinPermissions(): Promise<void> {
       (p) => p.userId === u.id && p.skinId === u.equippedSkin
     );
     const isValidKing = u.equippedSkin !== 'ratao_rei' || u.role === 'admin';
-    if (!hasPerm || !isValidKing) {
+    const isValidBabyYodaAdmin = u.equippedSkin === 'baby_yoda' && u.role === 'admin';
+    if ((!hasPerm && !isValidBabyYodaAdmin) || !isValidKing) {
       await db.update(users).set({ equippedSkin: 'ratao' }).where(eq(users.id, u.id));
     }
   }
@@ -2490,7 +2492,9 @@ export async function repoGetAllowedExclusiveSkinsForUser(user: StoredUser): Pro
       .filter((p) => p.userId === user.id && p.active)
       .map((p) => p.skinId);
     const set = new Set<SkinId>(perms);
-    if (freshUser.role !== 'admin') {
+    if (freshUser.role === 'admin') {
+      set.add('baby_yoda');
+    } else {
       set.delete('ratao_rei');
     }
     return Array.from(set);
@@ -2508,8 +2512,11 @@ export async function repoGetAllowedExclusiveSkinsForUser(user: StoredUser): Pro
   if (freshRows[0]) {
     user.equippedSkin = freshRows[0].equippedSkin;
   }
+  const effectiveRole = freshRows[0]?.role ?? user.role;
   const set = new Set<SkinId>(perms.map((p) => p.skinId));
-  if (user.role !== 'admin') {
+  if (effectiveRole === 'admin') {
+    set.add('baby_yoda');
+  } else {
     set.delete('ratao_rei');
   }
   return Array.from(set);
@@ -2518,6 +2525,7 @@ export async function repoGetAllowedExclusiveSkinsForUser(user: StoredUser): Pro
 export async function repoCanUserEquipSkin(user: StoredUser, skinId: SkinId): Promise<boolean> {
   if (isCommonSkinId(skinId)) return true;
   if (skinId === 'ratao_rei' && user.role !== 'admin') return false;
+  if (skinId === 'baby_yoda' && user.role === 'admin') return true;
   const allowed = await repoGetAllowedExclusiveSkinsForUser(user);
   return allowed.includes(skinId);
 }
@@ -3737,7 +3745,8 @@ export async function repoCreditWalletCoins(params: {
 }
 
 // ============================================================
-// SECRET EXCLUSIVE SKINS (PLANKTON — ADMIN-ONLY MANAGEMENT)
+// ============================================================
+// SECRET / ADMIN EXCLUSIVE SKINS (PLANKTON, BABY YODA — ADMIN-ONLY MANAGEMENT)
 // ============================================================
 
 export async function repoAdminListSecretSkinOwners(
@@ -3760,6 +3769,7 @@ export async function repoAdminListSecretSkinOwners(
           nickname: u?.nickname || 'Jogador removido',
           skinId: p.skinId,
           reason: p.reason,
+          grantedBy: p.grantedBy ?? null,
           grantedAt: p.grantedAt,
           equipped: u?.equippedSkin === p.skinId,
         };
@@ -3791,6 +3801,7 @@ export async function repoAdminListSecretSkinOwners(
       nickname: u?.nickname || 'Jogador removido',
       skinId: p.skinId,
       reason: p.reason,
+      grantedBy: p.grantedBy ?? null,
       grantedAt: p.grantedAt,
       equipped: u?.equippedSkin === p.skinId,
     };
@@ -3817,6 +3828,9 @@ export async function repoAdminGrantSecretSkin(params: {
     return { status: 'not_found' };
   }
   const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
+  if (params.skinId === 'baby_yoda' && target.role === 'admin') {
+    return { status: 'already_unlocked', targetNickname: target.nickname, skinName };
+  }
   const nowIso = new Date().toISOString();
 
   if (!isNeonConfigured()) {
@@ -3834,6 +3848,7 @@ export async function repoAdminGrantSecretSkin(params: {
       skinId: params.skinId,
       reason: 'admin_secret',
       rankPosition: null,
+      grantedBy: params.adminUser.nickname,
       active: true,
       grantedAt: nowIso,
       revokedAt: null,
@@ -3846,7 +3861,7 @@ export async function repoAdminGrantSecretSkin(params: {
     await addLocalAdminLog(
       params.adminUser.nickname,
       'LIBERAR_SKIN_SECRETA',
-      `Liberou a skin secreta "${skinName}" (${params.skinId}) para ${target.nickname}`
+      `Liberou a skin administrativa "${skinName}" (${params.skinId}) para ${target.nickname} (concedida por ${params.adminUser.nickname})`
     );
     saveLocalDb();
     return {
@@ -3857,6 +3872,7 @@ export async function repoAdminGrantSecretSkin(params: {
         nickname: target.nickname,
         skinId: params.skinId,
         reason: 'admin_secret',
+        grantedBy: params.adminUser.nickname,
         grantedAt: nowIso,
         equipped: target.equippedSkin === params.skinId,
       },
@@ -3888,6 +3904,7 @@ export async function repoAdminGrantSecretSkin(params: {
     skinId: params.skinId,
     reason: 'admin_secret',
     rankPosition: null,
+    grantedBy: params.adminUser.nickname,
     active: true,
     grantedAt: nowIso,
     revokedAt: null,
@@ -3904,7 +3921,7 @@ export async function repoAdminGrantSecretSkin(params: {
   await addNeonAdminLog(
     params.adminUser.nickname,
     'LIBERAR_SKIN_SECRETA',
-    `Liberou a skin secreta "${skinName}" (${params.skinId}) para ${target.nickname}`
+    `Liberou a skin administrativa "${skinName}" (${params.skinId}) para ${target.nickname} (concedida por ${params.adminUser.nickname})`
   );
 
   return {
@@ -3915,6 +3932,7 @@ export async function repoAdminGrantSecretSkin(params: {
       nickname: target.nickname,
       skinId: params.skinId,
       reason: 'admin_secret',
+      grantedBy: params.adminUser.nickname,
       grantedAt: nowIso,
       equipped: target.equippedSkin === params.skinId,
     },
@@ -3927,7 +3945,7 @@ export async function repoAdminRevokeSecretSkin(params: {
   skinId: SkinId;
 }): Promise<
   | { status: 'ok'; targetNickname: string; resetEquipped: boolean }
-  | { status: 'forbidden' | 'invalid_skin' | 'not_found' }
+  | { status: 'forbidden' | 'invalid_skin' | 'not_found' | 'admin_protected' }
 > {
   if (params.adminUser.role !== 'admin') {
     return { status: 'forbidden' };
@@ -3938,6 +3956,9 @@ export async function repoAdminRevokeSecretSkin(params: {
   const target = await repoFindUserById(params.userId);
   if (!target) {
     return { status: 'not_found' };
+  }
+  if (params.skinId === 'baby_yoda' && target.role === 'admin') {
+    return { status: 'admin_protected' };
   }
   const skinName = ALL_SKINS.find((s) => s.id === params.skinId)?.name || params.skinId;
   const nowIso = new Date().toISOString();
@@ -3967,7 +3988,7 @@ export async function repoAdminRevokeSecretSkin(params: {
     await addLocalAdminLog(
       params.adminUser.nickname,
       'REVOGAR_SKIN_SECRETA',
-      `Removeu a skin secreta "${skinName}" (${params.skinId}) de ${target.nickname}`
+      `Removeu a skin administrativa "${skinName}" (${params.skinId}) de ${target.nickname}`
     );
     saveLocalDb();
     return { status: 'ok', targetNickname: target.nickname, resetEquipped };
@@ -4007,7 +4028,7 @@ export async function repoAdminRevokeSecretSkin(params: {
   await addNeonAdminLog(
     params.adminUser.nickname,
     'REVOGAR_SKIN_SECRETA',
-    `Removeu a skin secreta "${skinName}" (${params.skinId}) de ${target.nickname}`
+    `Removeu a skin administrativa "${skinName}" (${params.skinId}) de ${target.nickname}`
   );
   return { status: 'ok', targetNickname: target.nickname, resetEquipped };
 }

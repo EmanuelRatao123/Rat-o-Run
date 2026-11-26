@@ -416,6 +416,7 @@ export const exclusiveSkinPermissions = pgTable(
       >()
       .notNull(),
     rankPosition: integer('rank_position'),
+    grantedBy: text('granted_by'),
     active: boolean('active').notNull().default(true),
     grantedAt: text('granted_at').notNull(),
     revokedAt: text('revoked_at'),

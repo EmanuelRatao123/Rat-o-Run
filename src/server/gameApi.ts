@@ -1055,6 +1055,12 @@ export async function adminRevokeSecretSkinHandler(
     userId: userId.trim(),
     skinId: chosenSkin,
   });
+  if (result.status === 'admin_protected') {
+    res.status(409).json({
+      error: 'Contas administrativas (Ratão e Samuka) mantêm acesso nativo permanente à skin Baby Yoda.',
+    });
+    return;
+  }
   if (result.status !== 'ok') {
     res.status(result.status === 'forbidden' ? 403 : 404).json({
       error: 'Não foi possível revogar a skin secreta.',

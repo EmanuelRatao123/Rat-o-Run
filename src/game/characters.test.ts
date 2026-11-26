@@ -86,6 +86,14 @@ function runTests() {
       }
       assert.ok(rig.leftArmPivot.rotation.z < -0.9, 'CR7 deve abrir o braço esquerdo na vitória');
       assert.ok(rig.rightArmPivot.rotation.z > 0.9, 'CR7 deve abrir o braço direito na vitória');
+    } else if (skinId === 'baby_yoda') {
+      assert.ok(rig.earLeftPivot && rig.earRightPivot, 'Baby Yoda deve ter orelhas articuladas');
+      assert.ok((rig.auraParticles?.length ?? 0) >= 4, 'Baby Yoda deve ter partículas sutis da Força');
+      for (let i = 0; i < 40; i++) {
+        animateCharacterRig(rig, 'victory', i * 0.05, 0.05, 1);
+      }
+      assert.ok(rig.bodyPivot.position.y > 0.1, 'Baby Yoda deve levitar usando a Força na vitória');
+      assert.ok(rig.leftArmPivot.rotation.x < -0.9, 'Baby Yoda deve erguer a mão na vitória da Força');
     }
 
     rig.dispose();

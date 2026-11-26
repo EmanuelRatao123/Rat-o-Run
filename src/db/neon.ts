@@ -376,6 +376,7 @@ export async function ensureNeonSchema(): Promise<void> {
           updated_at TEXT NOT NULL
         )
       `;
+      await sql`ALTER TABLE exclusive_skin_permissions ADD COLUMN IF NOT EXISTS granted_by TEXT`;
       await sql`CREATE INDEX IF NOT EXISTS excl_perm_user_active_idx ON exclusive_skin_permissions (user_id, active)`;
       await sql`CREATE INDEX IF NOT EXISTS excl_perm_skin_active_idx ON exclusive_skin_permissions (skin_id, active)`;
 
