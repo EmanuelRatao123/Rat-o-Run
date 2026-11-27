@@ -54,7 +54,14 @@ import {
   repoGetPlayerSkateInventory,
   repoGetUnreadAndPendingCounts,
 } from './socialShopRepository.ts';
-import { StoredUser, isReservedAdminNickname, isSamukaAdminUser } from './store.ts';
+import {
+  StoredUser,
+  getDollyaAdminUsername,
+  getSamukaAdminUsername,
+  isDollyaAdminUser,
+  isReservedAdminNickname,
+  isSamukaAdminUser,
+} from './store.ts';
 
 export const SESSION_COOKIE_NAME = 'ratao_session';
 export const ADMIN_SESSION_COOKIE_NAME = 'ratao_admin_session';
@@ -159,7 +166,7 @@ export function sanitizeUserProfile(
     ? computeAvailableCoins(walletStats, user.totalCoins)
     : Math.max(0, user.totalCoins);
 
-  const showAdminPanelButton = isSamukaAdminUser(user);
+  const showAdminPanelButton = isSamukaAdminUser(user) || isDollyaAdminUser(user);
 
   return {
     id: user.id,
@@ -1039,6 +1046,101 @@ export async function adminBootstrapHandler(req: Request, res: Response): Promis
     user: sanitizeUserProfile(adminUser, null, []),
     sessionToken: adminSessionToken,
     adminSessionToken,
+  });
+}
+
+export async function adminSecondaryAccountsStatusHandler(
+  _req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  await ensureDbAndAdminReady();
+  const samukaNick = getSamukaAdminUsername();
+  const dollyaNick = getDollyaAdminUsername();
+  const admins = await repoFindAllAdminAccounts();
+  const byLower = new Map(admins.map((a) => [a.nicknameLower, a]));
+
+  res.json({
+    accounts: [samukaNick, dollyaNick].map((nick) => {
+      const existing = byLower.get(nick.toLowerCase());
+      return {
+        nickname: existing ? existing.nickname : nick,
+        active: Boolean(existing && existing.role === 'admin' && existing.passwordHash),
+      };
+    }),
+  });
+}
+
+export async function adminProvisionSecondaryAdminHandler(
+  req: AuthedRequest,
+  res: Response
+): Promise<void> {
+  const actor = req.adminUser || req.authUser;
+  if (!actor || actor.role !== 'admin') {
+    res.status(403).json({ error: 'Apenas administradores podem ativar contas administrativas.' });
+    return;
+  }
+
+  const { nickname: rawNick, password, confirmPassword } = req.body ?? {};
+  const allowedTargets = [getSamukaAdminUsername(), getDollyaAdminUsername()];
+  const matchedNick =
+    typeof rawNick === 'string'
+      ? allowedTargets.find((t) => t.toLowerCase() === rawNick.trim().toLowerCase())
+      : undefined;
+
+  if (!matchedNick) {
+    res.status(400).json({ error: 'Conta administrativa secundária inválida.' });
+    return;
+  }
+  if (typeof password !== 'string' || password.length < 6 || password.length > 100) {
+    res.status(400).json({ error: 'A senha deve ter entre 6 e 100 caracteres.' });
+    return;
+  }
+  if (password !== confirmPassword) {
+    res.status(400).json({ error: 'A confirmação da senha não confere.' });
+    return;
+  }
+
+  const existing = await repoFindUserByNickname(matchedNick);
+  if (existing) {
+    res.status(409).json({ error: `A conta administrativa ${existing.nickname} já está ativa.` });
+    return;
+  }
+
+  const id = `adm_${matchedNick.toLowerCase().replace(/[^a-z0-9]/g, '')}_${generateToken(6)}`;
+  const now = new Date().toISOString();
+  const passwordHash = await hashPassword(password);
+  const newAdmin: StoredUser = {
+    id,
+    nickname: matchedNick,
+    nicknameLower: matchedNick.toLowerCase(),
+    passwordHash,
+    recoveryHash: null,
+    role: 'admin',
+    mustChangePassword: false,
+    equippedSkin: 'ratao',
+    unlockedSkins: [...COMMON_SKIN_IDS],
+    giftedSkins: [],
+    bestNoCoinTimeMs: 0,
+    bestDistance: 0,
+    bestScore: 0,
+    totalMatches: 0,
+    totalCoins: 0,
+    favoriteSkin: 'ratao',
+    skinUsage: {},
+    createdAt: now,
+    lastSeenAt: now,
+  };
+  await repoCreateUser(newAdmin);
+
+  await repoRecordAdminLog(
+    actor.nickname,
+    'ADMIN_SECONDARY_CREATED',
+    `Conta administrativa "${matchedNick}" ativada no sistema`
+  );
+
+  res.status(201).json({
+    ok: true,
+    nickname: matchedNick,
   });
 }
 

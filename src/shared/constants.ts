@@ -575,7 +575,7 @@ export const SECRET_EXCLUSIVE_SKINS: SkinDefinition[] = [
     badgeText: 'EXCLUSIVA ADMIN',
     isExclusive: true,
     exclusiveRule: 'admin',
-    unlockConditionText: 'Skin exclusiva de administrador · Uso direto de Ratão e Samuka ou liberação administrativa',
+    unlockConditionText: 'Skin exclusiva de administrador · Uso direto de Ratão, Samuka e Dollya ou liberação administrativa',
   },
 ];
 

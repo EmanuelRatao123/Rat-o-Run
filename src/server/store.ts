@@ -301,10 +301,18 @@ export function getSamukaAdminUsername(): string {
   return raw && raw.length >= 3 ? raw : 'Samuka';
 }
 
+export function getDollyaAdminUsername(): string {
+  const raw = process.env.ADMIN_DOLLYA_USERNAME?.trim();
+  return raw && raw.length >= 3 ? raw : 'Dollya';
+}
+
 export function isReservedAdminNickname(nickname: string): boolean {
   const lower = nickname.trim().toLowerCase();
   if (!lower) return false;
   if (lower === 'samuka' || lower === getSamukaAdminUsername().toLowerCase()) {
+    return true;
+  }
+  if (lower === 'dollya' || lower === getDollyaAdminUsername().toLowerCase()) {
     return true;
   }
   const initialAdmin = process.env.ADMIN_INITIAL_USERNAME?.trim().toLowerCase();
@@ -319,6 +327,13 @@ export function isSamukaAdminUser(
 ): boolean {
   if (!user || user.role !== 'admin') return false;
   return user.nicknameLower === getSamukaAdminUsername().toLowerCase();
+}
+
+export function isDollyaAdminUser(
+  user: Pick<StoredUser, 'role' | 'nicknameLower'> | null | undefined
+): boolean {
+  if (!user || user.role !== 'admin') return false;
+  return user.nicknameLower === getDollyaAdminUsername().toLowerCase();
 }
 
 function buildAdminUserRecord(params: {
@@ -408,8 +423,11 @@ export async function ensureAdminFromEnv(): Promise<void> {
   const samukaUser = getSamukaAdminUsername();
   const samukaLower = samukaUser.toLowerCase();
   const samukaPass = process.env.ADMIN_SAMUKA_PASSWORD || '';
+  const dollyaUser = getDollyaAdminUsername();
+  const dollyaLower = dollyaUser.toLowerCase();
+  const dollyaPass = process.env.ADMIN_DOLLYA_PASSWORD || '';
 
-  const seedKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}`;
+  const seedKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}:${dollyaLower}:${Boolean(dollyaPass)}`;
   if (global._rataoAdminSeeded && global._rataoAdminSeededKey === seedKey) {
     return;
   }
@@ -417,12 +435,14 @@ export async function ensureAdminFromEnv(): Promise<void> {
   const db = getDb();
   let changed = false;
 
-  // 1. Primary admin (Ratão) — never blocks or touches Samuka
+  // 1. Primary admin (Ratão) — never blocks or touches Samuka or Dollya
   if (envUser && envPass) {
     const existingPrimary = Object.values(db.users).find(
       (u) =>
         u.nicknameLower === envUser.toLowerCase() ||
-        (u.role === 'admin' && u.nicknameLower !== samukaLower)
+        (u.role === 'admin' &&
+          u.nicknameLower !== samukaLower &&
+          u.nicknameLower !== dollyaLower)
     );
     if (!existingPrimary) {
       const id = `adm_${generateToken(8)}`;
@@ -457,6 +477,27 @@ export async function ensureAdminFromEnv(): Promise<void> {
     changed = true;
   } else if (existingSamuka && existingSamuka.role !== 'admin') {
     existingSamuka.role = 'admin';
+    changed = true;
+  }
+
+  // 3. Third admin (Dollya) — provisioned idempotently, preserves updated passwords
+  const existingDollya = Object.values(db.users).find(
+    (u) => u.nicknameLower === dollyaLower
+  );
+  if (!existingDollya && dollyaPass) {
+    const id = db.users['adm_dollya'] ? `adm_${generateToken(8)}` : 'adm_dollya';
+    const now = new Date().toISOString();
+    const passwordHash = await hashPassword(dollyaPass);
+    db.users[id] = buildAdminUserRecord({
+      id,
+      nickname: dollyaUser,
+      passwordHash,
+      mustChangePassword: false,
+      now,
+    });
+    changed = true;
+  } else if (existingDollya && existingDollya.role !== 'admin') {
+    existingDollya.role = 'admin';
     changed = true;
   }
 

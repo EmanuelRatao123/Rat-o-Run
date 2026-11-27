@@ -1057,7 +1057,7 @@ export async function adminRevokeSecretSkinHandler(
   });
   if (result.status === 'admin_protected') {
     res.status(409).json({
-      error: 'Contas administrativas (Ratão e Samuka) mantêm acesso nativo permanente à skin Baby Yoda.',
+      error: 'Contas administrativas (Ratão, Samuka e Dollya) mantêm acesso nativo permanente à skin Baby Yoda.',
     });
     return;
   }

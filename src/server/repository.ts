@@ -75,8 +75,10 @@ import {
   ensureAdminFromEnv as ensureLocalAdminFromEnv,
   findUserByNickname as findLocalUserByNickname,
   getDb as getLocalDb,
+  getDollyaAdminUsername,
   getSamukaAdminUsername,
   hasAdminAccount as hasLocalAdminAccount,
+  isDollyaAdminUser,
   isSamukaAdminUser,
   saveDb as saveLocalDb,
 } from './store.ts';
@@ -174,15 +176,18 @@ export async function ensureDbAndAdminReady(): Promise<void> {
   const samukaUser = getSamukaAdminUsername();
   const samukaLower = samukaUser.toLowerCase();
   const samukaPass = process.env.ADMIN_SAMUKA_PASSWORD || '';
+  const dollyaUser = getDollyaAdminUsername();
+  const dollyaLower = dollyaUser.toLowerCase();
+  const dollyaPass = process.env.ADMIN_DOLLYA_PASSWORD || '';
 
-  const checkKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}`;
+  const checkKey = `${envUser}:${Boolean(envPass)}:${samukaLower}:${Boolean(samukaPass)}:${dollyaLower}:${Boolean(dollyaPass)}`;
   if (global._rataoNeonAdminChecked && global._rataoNeonAdminCheckedKey === checkKey) {
     return;
   }
 
   const db = getNeonDb();
 
-  // 1. Primary admin (Ratão) — independent from Samuka
+  // 1. Primary admin (Ratão) — independent from Samuka and Dollya
   if (envUser && envPass) {
     const existingPrimary = await db
       .select({ id: users.id })
@@ -190,7 +195,10 @@ export async function ensureDbAndAdminReady(): Promise<void> {
       .where(
         or(
           eq(users.nicknameLower, envUser.toLowerCase()),
-          and(eq(users.role, 'admin'), sql`${users.nicknameLower} <> ${samukaLower}`)
+          and(
+            eq(users.role, 'admin'),
+            sql`${users.nicknameLower} <> ${samukaLower} AND ${users.nicknameLower} <> ${dollyaLower}`
+          )
         )
       )
       .limit(1);
@@ -270,6 +278,50 @@ export async function ensureDbAndAdminReady(): Promise<void> {
       .update(users)
       .set({ role: 'admin' })
       .where(eq(users.id, existingSamuka[0].id));
+  }
+
+  // 3. Third admin (Dollya) — created idempotently, preserves updated passwords
+  const existingDollya = await db
+    .select({ id: users.id, role: users.role })
+    .from(users)
+    .where(eq(users.nicknameLower, dollyaLower))
+    .limit(1);
+
+  if (existingDollya.length === 0 && dollyaPass) {
+    const id = `adm_dollya_${generateToken(6)}`;
+    const now = new Date().toISOString();
+    const passwordHash = await hashPassword(dollyaPass);
+
+    await db
+      .insert(users)
+      .values({
+        id,
+        nickname: dollyaUser,
+        nicknameLower: dollyaLower,
+        passwordHash,
+        recoveryHash: null,
+        googleUid: null,
+        role: 'admin',
+        mustChangePassword: false,
+        equippedSkin: 'ratao',
+        unlockedSkins: [...COMMON_SKIN_IDS],
+        giftedSkins: [],
+        bestNoCoinTimeMs: 0,
+        bestDistance: 0,
+        bestScore: 0,
+        totalMatches: 0,
+        totalCoins: 0,
+        favoriteSkin: 'ratao',
+        skinUsage: {},
+        createdAt: now,
+        lastSeenAt: now,
+      })
+      .onConflictDoNothing();
+  } else if (existingDollya[0] && existingDollya[0].role !== 'admin') {
+    await db
+      .update(users)
+      .set({ role: 'admin' })
+      .where(eq(users.id, existingDollya[0].id));
   }
 
   global._rataoNeonAdminChecked = true;
@@ -2050,9 +2102,9 @@ export async function repoGiftSkinToPlayer(params: {
 export async function repoFindAllAdminAccounts(): Promise<StoredUser[]> {
   const sortAdmins = (list: StoredUser[]) =>
     [...list].sort((a, b) => {
-      const aSamuka = isSamukaAdminUser(a) ? 1 : 0;
-      const bSamuka = isSamukaAdminUser(b) ? 1 : 0;
-      return aSamuka - bSamuka;
+      const aSec = isSamukaAdminUser(a) || isDollyaAdminUser(a) ? 1 : 0;
+      const bSec = isSamukaAdminUser(b) || isDollyaAdminUser(b) ? 1 : 0;
+      return aSec - bSec;
     });
 
   if (!isNeonConfigured()) {

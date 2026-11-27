@@ -226,14 +226,22 @@ export function AdminPortalModal({
   const [playersLoading, setPlayersLoading] = useState(false);
   const [selectedPlayer, setSelectedPlayer] = useState<AdminPlayerRecord | null>(null);
 
+  // Secondary admin accounts (Samuka, Dollya)
+  const [secondaryAdmins, setSecondaryAdmins] = useState<{ nickname: string; active: boolean }[]>([]);
+  const [provisionNick, setProvisionNick] = useState<string | null>(null);
+  const [provisionPass, setProvisionPass] = useState('');
+  const [provisionConfirm, setProvisionConfirm] = useState('');
+  const [provisionBusy, setProvisionBusy] = useState(false);
+
   const isVerifiedAdmin = Boolean(adminProfile && !adminProfile.mustChangePassword);
 
   const loadDashboard = useCallback(async () => {
     setRefreshing(true);
     try {
-      const [res, secRes] = await Promise.all([
+      const [res, secRes, secAdminsRes] = await Promise.all([
         api.getAdminStats(),
         api.getAdminSecurityLogs({ limit: 50 }).catch(() => null),
+        api.getSecondaryAdminAccounts().catch(() => null),
       ]);
       setStats(res.stats);
       setMessages(res.messages);
@@ -243,6 +251,9 @@ export function AdminPortalModal({
       if (secRes) {
         setSecurityLogs(secRes.logs);
         setSecuritySummary(secRes.summary);
+      }
+      if (secAdminsRes?.accounts) {
+        setSecondaryAdmins(secAdminsRes.accounts);
       }
     } catch (err) {
       setActionErr(err instanceof Error ? err.message : 'Erro ao carregar painel.');
@@ -2168,7 +2179,7 @@ export function AdminPortalModal({
                           SKIN ADMINISTRATIVA: BABY YODA
                         </h3>
                         <p className="text-xs text-slate-300 mt-1 max-w-2xl">
-                          Modelo 3D voxel com túnica bege de gola alta, orelhas animadas e celebração da Força. Nunca aparece bloqueada ou em silhueta para jogadores comuns, nem pode ser resgatada por códigos ou concessão em massa. <strong>Ratão</strong> e <strong>Samuka</strong> já possuem acesso direto automático.
+                          Modelo 3D voxel com túnica bege de gola alta, orelhas animadas e celebração da Força. Nunca aparece bloqueada ou em silhueta para jogadores comuns, nem pode ser resgatada por códigos ou concessão em massa. <strong>Ratão</strong>, <strong>Samuka</strong> e <strong>Dollya</strong> já possuem acesso direto automático.
                         </p>
                       </div>
 
@@ -2259,7 +2270,7 @@ export function AdminPortalModal({
                         <div className="text-xs text-slate-400">Consultando autorizações da skin Baby Yoda...</div>
                       ) : babyYodaOwners.length === 0 ? (
                         <div className="p-3 rounded-xl bg-slate-900/50 border border-slate-800 text-xs text-slate-400">
-                          Nenhum jogador comum possui autorização para Baby Yoda no momento (apenas Ratão e Samuka).
+                          Nenhum jogador comum possui autorização para Baby Yoda no momento (apenas Ratão, Samuka e Dollya).
                         </div>
                       ) : (
                         <div className="space-y-1.5 max-h-48 overflow-y-auto pr-1">
@@ -3496,6 +3507,116 @@ export function AdminPortalModal({
               {/* Tab F: Admin Audit Logs */}
               {tab === 'logs' && (
                 <div className="space-y-4">
+                  {/* Contas Administrativas Secundárias */}
+                  {secondaryAdmins.length > 0 && (
+                    <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
+                      <h4 className="text-xs font-extrabold uppercase text-emerald-300 flex items-center gap-1.5">
+                        <KeyRound className="w-3.5 h-3.5" /> Contas Administrativas Secundárias
+                      </h4>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {secondaryAdmins.map((acc) => (
+                          <div
+                            key={acc.nickname}
+                            className="p-2.5 rounded-lg bg-slate-900 border border-slate-800 flex items-center justify-between gap-2 text-xs"
+                          >
+                            <div>
+                              <div className="font-bold text-white">{acc.nickname}</div>
+                              <div
+                                className={`text-[10px] font-semibold ${
+                                  acc.active ? 'text-emerald-400' : 'text-amber-300'
+                                }`}
+                              >
+                                {acc.active ? 'Ativa no servidor' : 'Aguardando ativação'}
+                              </div>
+                            </div>
+                            {!acc.active && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setProvisionNick(acc.nickname);
+                                  setProvisionPass('');
+                                  setProvisionConfirm('');
+                                }}
+                                className="px-2.5 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-[11px] font-bold cursor-pointer"
+                              >
+                                Ativar
+                              </button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                      {provisionNick && (
+                        <form
+                          onSubmit={async (e) => {
+                            e.preventDefault();
+                            setActionErr(null);
+                            setActionMsg(null);
+                            setProvisionBusy(true);
+                            try {
+                              await api.provisionSecondaryAdmin({
+                                nickname: provisionNick,
+                                password: provisionPass,
+                                confirmPassword: provisionConfirm,
+                              });
+                              setActionMsg(`Conta administrativa ${provisionNick} ativada com sucesso!`);
+                              setProvisionNick(null);
+                              setProvisionPass('');
+                              setProvisionConfirm('');
+                              await loadDashboard();
+                            } catch (err) {
+                              setActionErr(
+                                err instanceof Error ? err.message : 'Erro ao ativar conta administrativa.'
+                              );
+                            } finally {
+                              setProvisionBusy(false);
+                            }
+                          }}
+                          className="p-3 rounded-lg bg-slate-900 border border-emerald-500/40 space-y-2"
+                        >
+                          <div className="text-xs font-bold text-emerald-200">
+                            Definir senha inicial para {provisionNick}
+                          </div>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <input
+                              type="password"
+                              required
+                              minLength={6}
+                              value={provisionPass}
+                              onChange={(e) => setProvisionPass(e.target.value)}
+                              placeholder="Senha (mín. 6 caracteres)"
+                              className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs"
+                            />
+                            <input
+                              type="password"
+                              required
+                              minLength={6}
+                              value={provisionConfirm}
+                              onChange={(e) => setProvisionConfirm(e.target.value)}
+                              placeholder="Confirmar senha"
+                              className="px-3 py-2 rounded-lg bg-slate-950 border border-slate-700 text-white text-xs"
+                            />
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="submit"
+                              disabled={provisionBusy}
+                              className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold cursor-pointer disabled:opacity-60"
+                            >
+                              {provisionBusy ? 'ATIVANDO...' : `ATIVAR ${provisionNick.toUpperCase()}`}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setProvisionNick(null)}
+                              className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold cursor-pointer"
+                            >
+                              Cancelar
+                            </button>
+                          </div>
+                        </form>
+                      )}
+                    </div>
+                  )}
+
                   {/* Alertas e Auditoria de Segurança */}
                   <div className="p-3 rounded-xl bg-slate-950 border border-slate-800 space-y-2.5">
                     <div className="flex flex-wrap items-center justify-between gap-2">

@@ -7,6 +7,8 @@ import {
   adminBootstrapHandler,
   adminBootstrapStatusHandler,
   adminLogoutHandler,
+  adminProvisionSecondaryAdminHandler,
+  adminSecondaryAccountsStatusHandler,
   adminSessionStatusHandler,
   attachAuth,
   changePasswordHandler,
@@ -256,6 +258,8 @@ app.post('/api/match/skate/use', requireAuth, wrap(consumeMatchSkateHandler));
 
 // Protected Admin Panel routes
 app.get('/api/admin/stats', requireAdmin, wrap(adminStatsHandler));
+app.get('/api/admin/secondary-admins', requireAdmin, wrap(adminSecondaryAccountsStatusHandler));
+app.post('/api/admin/secondary-admins/provision', requireAdmin, wrap(adminProvisionSecondaryAdminHandler));
 app.get('/api/admin/players', requireAdmin, wrap(adminSearchPlayersHandler));
 app.post('/api/admin/unlock-king-skin', requireAdmin, wrap(adminUnlockKingSkinHandler));
 app.get(

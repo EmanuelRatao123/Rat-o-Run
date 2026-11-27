@@ -553,6 +553,21 @@ export const api = {
     );
   },
 
+  getSecondaryAdminAccounts: () =>
+    apiFetch<{ accounts: { nickname: string; active: boolean }[] }>(
+      '/api/admin/secondary-admins'
+    ),
+
+  provisionSecondaryAdmin: (payload: {
+    nickname: string;
+    password: string;
+    confirmPassword: string;
+  }) =>
+    apiFetch<{ ok: boolean; nickname: string }>('/api/admin/secondary-admins/provision', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    }),
+
   searchAdminPlayers: (q: string) =>
     apiFetch<{ players: AdminPlayerRecord[] }>(
       `/api/admin/players?q=${encodeURIComponent(q)}`

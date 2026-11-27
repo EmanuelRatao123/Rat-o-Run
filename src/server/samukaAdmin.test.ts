@@ -55,6 +55,8 @@ const PREV_ENV = {
   ADMIN_INITIAL_PASSWORD: process.env.ADMIN_INITIAL_PASSWORD,
   ADMIN_SAMUKA_USERNAME: process.env.ADMIN_SAMUKA_USERNAME,
   ADMIN_SAMUKA_PASSWORD: process.env.ADMIN_SAMUKA_PASSWORD,
+  ADMIN_DOLLYA_USERNAME: process.env.ADMIN_DOLLYA_USERNAME,
+  ADMIN_DOLLYA_PASSWORD: process.env.ADMIN_DOLLYA_PASSWORD,
 };
 
 function buildTestServer() {
@@ -212,6 +214,8 @@ async function runSamukaAdminTests() {
     process.env.ADMIN_INITIAL_PASSWORD = rataoInitialPass;
     process.env.ADMIN_SAMUKA_USERNAME = 'Samuka';
     process.env.ADMIN_SAMUKA_PASSWORD = samukaInitialPass;
+    delete process.env.ADMIN_DOLLYA_USERNAME;
+    delete process.env.ADMIN_DOLLYA_PASSWORD;
 
     global._rataoAdminSeeded = false;
     global._rataoAdminSeededKey = undefined;
@@ -551,6 +555,8 @@ async function runSamukaAdminTests() {
     process.env.ADMIN_INITIAL_PASSWORD = PREV_ENV.ADMIN_INITIAL_PASSWORD;
     process.env.ADMIN_SAMUKA_USERNAME = PREV_ENV.ADMIN_SAMUKA_USERNAME;
     process.env.ADMIN_SAMUKA_PASSWORD = PREV_ENV.ADMIN_SAMUKA_PASSWORD;
+    process.env.ADMIN_DOLLYA_USERNAME = PREV_ENV.ADMIN_DOLLYA_USERNAME;
+    process.env.ADMIN_DOLLYA_PASSWORD = PREV_ENV.ADMIN_DOLLYA_PASSWORD;
     global._rataoAdminSeeded = false;
     global._rataoAdminSeededKey = undefined;
     global._rataoDbState = undefined;
